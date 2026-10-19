@@ -1030,6 +1030,17 @@ LAST_NARRATOR = (
 # 欢迎屏选择的画面风格（与 config.VISUAL_STYLE_OPTIONS 一致）
 LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
+
+def current_visual_style() -> str:
+    """当前画面风格：项目的 visual_style，没有就用上次选的（全局）。用于找按风格分目录的形象图。"""
+    pc = PROJECT_CONFIG if isinstance(globals().get("PROJECT_CONFIG"), dict) else {}
+    return (
+        config.match_visual_style((pc.get("visual_style") or "").strip())
+        or (pc.get("visual_style") or "").strip()
+        or LAST_VISUAL_STYLE
+        or ""
+    )
+
 LAST_YT_LANGUAGE = "tw"
 
 # 创建项目时的画面比例。没有上次选择时用竖屏。

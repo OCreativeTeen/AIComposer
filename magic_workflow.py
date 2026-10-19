@@ -27,6 +27,7 @@ from utility.file_util import get_file_path, safe_remove, build_scene_media_pref
 from utility.llm_api import LLMApi
 import project_manager
 from project_manager import refresh_scene_media, save_project_config
+from magic_workflow_episodes import EpisodeOpsMixin
 import tkinter as tk
 
 
@@ -41,7 +42,7 @@ def _safe_stem(path: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', "_", stem)[:80]
 
 
-class MagicWorkflow:
+class MagicWorkflow(EpisodeOpsMixin):
 
     def __init__(self, pid, language, channel, video_width=None, video_height=None):
         self.pid = pid
@@ -1373,6 +1374,29 @@ class MagicWorkflow:
             n += 1
         return str(n)
 
+    def episode_groups_from(self, scene) -> list[str]:
+        """从 ``scene`` 所在的集起，到项目最后一集，按 scenes.json 里各集第一次出现的顺序。"""
+        start = self.scene_group(scene) if isinstance(scene, dict) else ""
+        order: list[str] = []
+        for s in self.scenes or []:
+            if isinstance(s, dict):
+                g = self.scene_group(s)
+                if g and g not in order:
+                    order.append(g)
+        if start not in order:
+            return [start] if start else []
+        return order[order.index(start):]
+
+    def scenes_from_episode_to_end(self, scene) -> tuple[list, list]:
+        """本集到结束：本集和后面各集的全部场景（按集，再按场景顺序），以及每一场所属的集名。"""
+        scenes: list = []
+        groups: list = []
+        for g in self.episode_groups_from(scene):
+            for i in self.group_scene_indices(g):
+                scenes.append(self.scenes[i])
+                groups.append(g)
+        return scenes, groups
+
     def group_scene_indices(self, group_name: str) -> list[int]:
         group_name = (group_name or "").strip() or "1"
         return [
@@ -2026,55 +2050,6 @@ class MagicWorkflow:
             doc.close()
         return os.path.abspath(pdf_path)
 
-    def split_group_at(self, index: int) -> str:
-        """从当前场景起划成新的一集。页面图跟着挪过去，保留原来的页码，不在这里合成 PDF。"""
-        if not self.scenes or index < 0 or index >= len(self.scenes):
-            return ""
-        old_name = self.scene_group(self.scenes[index])
-        episode_indices = self.group_scene_indices(old_name)
-        stay_indices = [i for i in episode_indices if i < index]
-        move_indices: list[int] = []
-        i = index
-        while i < len(self.scenes) and self.scene_group(self.scenes[i]) == old_name:
-            move_indices.append(i)
-            i += 1
-        if not move_indices:
-            return ""
-        new_name = self.next_group_name()
-        pages = self._episode_png_paths(old_name)
-        move_pages = pages[len(stay_indices) :]
-        if move_pages:
-            new_folder = self.episode_media_dir(new_name)
-            os.makedirs(new_folder, exist_ok=True)
-            for src in move_pages:
-                dest = os.path.join(new_folder, os.path.basename(src))
-                if os.path.abspath(src) != os.path.abspath(dest):
-                    shutil.move(src, dest)
-        for scene_i, png in zip(move_indices, move_pages):
-            scene = self.scenes[scene_i]
-            if isinstance(scene, dict):
-                scene["episode_page"] = int(os.path.splitext(os.path.basename(png))[0])
-        for scene_i in move_indices:
-            scene = self.scenes[scene_i]
-            scene["episode"] = new_name
-            if move_pages:
-                scene["episode_pdf"] = f"{new_name}.pdf"
-            scene.pop("group", None)
-            scene.pop("group_page", None)
-            scene.pop("group_pdf", None)
-        if pages[: len(stay_indices)]:
-            for scene_i in stay_indices:
-                scene = self.scenes[scene_i]
-                if isinstance(scene, dict):
-                    scene["episode_pdf"] = f"{old_name}.pdf"
-        self.touch_episode_media(old_name)
-        self.touch_episode_media(new_name)
-        for scene in self.scenes:
-            if isinstance(scene, dict) and not str(scene.get("episode") or "").strip():
-                scene["episode"] = "1"
-                scene.pop("group", None)
-        return new_name
-
     def episode_run_bounds(self, index: int) -> tuple[int, int]:
         """当前场景所在这一集的起止下标（连续的同一集）。没有返回 (-1, -1)。"""
         scenes = self.scenes or []
@@ -2089,138 +2064,7 @@ class MagicWorkflow:
             end += 1
         return start, end
 
-    def move_to_adjacent_episode(self, index: int, direction: str) -> tuple[str, str]:
-        """手动调整集的边界。
-
-        direction == "prev"：本集开头到当前场景（含当前场景）并进上一集（接在上一集最后）。
-        direction == "next"：本集里从当前场景（含）起到本集结束的场景并进下一集（放在下一集最前）。
-        页面图跟着场景走，两集的页码按场景顺序重排。成功返回 (目标集号, "")，否则返回 ("", 原因)。
-        """
-        scenes = self.scenes or []
-        start, end = self.episode_run_bounds(index)
-        if start < 0:
-            return "", "没有当前场景。"
-        cur_name = self.scene_group(scenes[index])
-        if direction == "prev":
-            if start == 0:
-                return "", "没有上一集。"
-            moved = list(range(start, index + 1))
-            target = self.scene_group(scenes[start - 1])
-        elif direction == "next":
-            if end >= len(scenes) - 1:
-                return "", "没有下一集。"
-            moved = list(range(index, end + 1))
-            target = self.scene_group(scenes[end + 1])
-        else:
-            return "", "不认识的方向。"
-        if not target or target == cur_name:
-            return "", "找不到相邻的集。"
-
-        affected = [cur_name, target]
-        snapshot: dict[int, tuple[str, int]] = {}
-        for sc in scenes:
-            if not isinstance(sc, dict):
-                continue
-            ep = self.scene_group(sc)
-            if ep not in affected:
-                continue
-            try:
-                page = int(sc.get("episode_page") or 0)
-            except (TypeError, ValueError):
-                page = 0
-            snapshot[id(sc)] = (ep, page)
-
-        # 同一集的场景共用一份 zero：搬过来的场景用目标集里的那一份。
-        ref = next(
-            (
-                s for s in scenes
-                if isinstance(s, dict)
-                and self.scene_group(s) == target
-                and id(s) not in {id(scenes[i]) for i in moved}
-                and (s.get("zero") or s.get("zero_audio"))
-            ),
-            None,
-        )
-        for i in moved:
-            sc = scenes[i]
-            sc["episode"] = target
-            sc.pop("group", None)
-            sc.pop("group_page", None)
-            sc.pop("group_pdf", None)
-            if ref is not None:
-                for key in ("zero", "zero_audio"):
-                    if ref.get(key):
-                        sc[key] = ref[key]
-
-        # 两集的页面图按场景顺序重排：先拷到临时目录，再删原文件，再放到新位置。
-        image_exts = (".webp", ".jpg", ".jpeg", ".png")
-        media = config.get_media_path(self.pid)
-        assigned: dict[tuple[str, int, str], int] = {}
-        new_pages: list[tuple[dict, int]] = []
-        counters = {name: 0 for name in affected}
-        for sc in scenes:
-            if not isinstance(sc, dict):
-                continue
-            ep = self.scene_group(sc)
-            if ep not in affected or id(sc) not in snapshot:
-                continue
-            old_ep, old_page = snapshot[id(sc)]
-            if old_page <= 0:
-                continue
-            key = (old_ep, old_page, ep)
-            if key not in assigned:
-                counters[ep] += 1
-                assigned[key] = counters[ep]
-            new_pages.append((sc, assigned[key]))
-
-        tmp_dir = ""
-        staged: list[tuple[str, str, int, str]] = []
-        sources: set[tuple[str, int]] = set()
-        if assigned:
-            os.makedirs(media, exist_ok=True)
-            tmp_dir = tempfile.mkdtemp(prefix=".regroup_", dir=media)
-            for (old_ep, old_page, dest_ep), new_page in assigned.items():
-                sources.add((old_ep, old_page))
-                src_dir = self.episode_media_dir(old_ep)
-                for ext in image_exts:
-                    src = os.path.join(src_dir, f"{old_page}{ext}")
-                    if not os.path.isfile(src):
-                        continue
-                    stage = os.path.join(tmp_dir, f"{len(staged)}{ext}")
-                    shutil.copy2(src, stage)
-                    staged.append((stage, dest_ep, new_page, ext))
-            for old_ep, old_page in sources:
-                src_dir = self.episode_media_dir(old_ep)
-                for ext in image_exts:
-                    src = os.path.join(src_dir, f"{old_page}{ext}")
-                    if os.path.isfile(src):
-                        try:
-                            os.remove(src)
-                        except OSError:
-                            pass
-            for stage, dest_ep, new_page, ext in staged:
-                dest_dir = self.episode_media_dir(dest_ep)
-                os.makedirs(dest_dir, exist_ok=True)
-                dest = os.path.join(dest_dir, f"{new_page}{ext}")
-                try:
-                    os.replace(stage, dest)
-                except OSError:
-                    shutil.copy2(stage, dest)
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        for sc, page in new_pages:
-            sc["episode_page"] = page
-
-        for sc in scenes:
-            if isinstance(sc, dict) and "episode_pdf" in sc and self.scene_group(sc) in affected:
-                sc["episode_pdf"] = f"{self.scene_group(sc)}.pdf"
-        if not any(isinstance(s, dict) and self.scene_group(s) == cur_name for s in scenes):
-            try:
-                os.rmdir(self.episode_media_dir(cur_name))
-            except OSError:
-                pass
-        for name in affected:
-            self.touch_episode_media(name)
-        return target, ""
+    # move_to_adjacent_episode / merge_adjacent_episode 在 magic_workflow_episodes.EpisodeOpsMixin 里。
 
     def _apply_cover_media_to_scenes(self, scene_list: list) -> None:
         """scene_content 多场景 → PDF 页对 clip_image；单场景 → 封面图作 clip_image。"""
@@ -2607,7 +2451,21 @@ class MagicWorkflow:
         telegram_title: Telegram 通知用展示标题；默认与 youtube_title 相同。
 
         返回 Telegram 旁路状态行列表（与 downloader 发布一致）。
+        同步版本 = upload_video_file（可放后台线程）+ finish_video_upload（要在主线程）。
         """
+        up = self.upload_video_file(youtube_title, publish_at=publish_at, description=description)
+        return self.finish_video_upload(up, publish_at=publish_at, telegram_title=telegram_title)
+
+    def upload_video_file(
+        self,
+        youtube_title,
+        publish_at=None,
+        description=None,
+        *,
+        progress_cb=None,
+        cancel_event=None,
+    ) -> dict:
+        """只做 YouTube 上传（可在后台线程跑）。返回 {video_id, summary, final_video_path, title}。"""
         final_video_path = config.publish_final_video_path(self.pid)
         if not os.path.isfile(final_video_path):
             raise FileNotFoundError(
@@ -2642,7 +2500,22 @@ class MagicWorkflow:
             tags=[],
             privacy="unlisted",
             publish_at=publish_at,
+            progress_cb=progress_cb,
+            cancel_event=cancel_event,
         )
+        return {
+            "video_id": video_id,
+            "summary": summary,
+            "final_video_path": final_video_path,
+            "title": youtube_title,
+        }
+
+    def finish_video_upload(self, up: dict, publish_at=None, *, telegram_title: str | None = None):
+        """上传完成后的收尾（主线程）：记 published_youtube_video_id、Telegram。返回 Telegram 状态行。"""
+        video_id = up.get("video_id")
+        summary = up.get("summary") or ""
+        final_video_path = up.get("final_video_path") or config.publish_final_video_path(self.pid)
+        youtube_title = up.get("title") or ""
         # 仅用 published_youtube_video_id 记录 YouTube 成片 id；不写入 pid / 列表行 id / project_profile.pid
         pc = project_manager.PROJECT_CONFIG
         if pc is not None:

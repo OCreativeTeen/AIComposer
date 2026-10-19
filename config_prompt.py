@@ -388,17 +388,20 @@ def episode_actor_cast(scenes: list) -> list[dict]:
 
 
 def notebooklm_actor_reference_note(
-    name: str, output: str, narrative: str, content_name: str = "content.pdf", silent: bool = False
+    name: str, output: str, narrative: str, content_name: str = "content.pdf", silent: bool = False,
+    episodes: list | None = None,
 ) -> str:
     """全集生成：actor.pdf 是本集人物（全名 + 形象图）。语音概览只用名字和身份。
 
     ``silent``：讲述 / 汇报没有讲员，名单在 ``人物（不说话，只表演）/ Silent actors`` 栏，这些人只表演不说话。
     """
+    span_zh, span_en = episode_span_labels(episodes)  # 跨集时「第 X–Y 集的内容」，单集照旧「本集内容」
     field = "人物（不说话，只表演）/ Silent actors" if silent else "人物 / Actors"
     short = SILENT_ACTORS_FIELD if silent else "Actors"
     lines = [
-        f"{content_name} 是本集内容；{name} 是这些内容里出场 / 讲话的人物：每人一页，写着全名和形象图。",
-        f"{content_name} is the episode content; {name} contains the people who appear or speak in this content: "
+        f"{content_name} 是{span_zh + '的内容' if span_zh else '本集内容'}；{name} 是这些内容里出场 / 讲话的人物：每人一页，写着全名和形象图。",
+        f"{content_name} is {'the content of ' + span_en if span_en else 'the episode content'}; "
+        f"{name} contains the people who appear or speak in this content: "
         "each one's full name and appearance image, one person per page.",
     ]
     if output == "audio_overview":
@@ -713,6 +716,51 @@ NOTEBOOKLM_SPEAKER_RULE = (
     "- Never mention \"the material\", \"the source\", \"the document\" or \"what we were given\".\n"
     "- Present the ideas as the speaker's own first-person experience, thinking and views, shared and discussed with the audience from their own mind."
 )
+# 语音概览 / 视频概览：讲出来的内容要口语化、层层推进，不列点、不编号。替换 NOTEBOOKLM_SPEAKER_RULE 的第一条（中英各一条）。
+NOTEBOOKLM_SPOKEN_FLOW_ZH = (
+    "- 口语化、层层推进地讲：像一个人在和朋友聊天，一层接一层往下说，前一句自然带出后一句，生动、有来有往，不像在念文件。\n"
+    "- 绝对不要列点、不要编号：不说「有几点」「我们有几点」「分为几个方面」「第一点 / 第二点」「第一、第二」「一是……二是……」，"
+    "也不用「一、二、三」「1. 2. 3.」之类的编号或项目符号；不要先预告要讲几点，最后也不要「总结一下这几点」。\n"
+    "- 即使下面的内容本身是编号、小标题或要点的结构，也只取它的意思，用说话的方式串起来，不要照着念，不要像做汇报那样逐条展开。\n"
+    "- 用口语的过渡把内容串起来，比如「首先」「那接下来我们又……」「然后呢」「说到这儿」「你可能会想」「更有意思的是」「最后」，"
+    "每次换着用，不要每一场都机械地用「首先 / 然后」开头。\n"
+    "- 不要报场景号或段号（不说「第一场」「第二段」「下一部分」），场景之间靠内容和过渡自然衔接。\n"
+    "- 技术方案汇报、高管简报也一样：讲清楚先后和关系，但用说话的口气一步步带过去，不列条目。\n"
+)
+NOTEBOOKLM_SPOKEN_FLOW_EN = (
+    "- Speak conversationally and build up layer by layer, like a person talking with friends: each thought leads naturally into the next. "
+    "Keep it lively and engaged, never like reading a document.\n"
+    "- Never list or number anything: do not say \"there are a few points\", \"we have several points\", \"this falls into N aspects\", "
+    "\"point one / point two\", \"first, second, third\" as a list, or \"one is... two is...\"; never use 一、二、三, 1. 2. 3., or bullets. "
+    "Do not announce how many points are coming, and do not end with \"to sum up these points\".\n"
+    "- Even if the content below is numbered, headed, or laid out as bullet points, take only its meaning and tell it as speech; "
+    "do not read it out or walk through it item by item like a report.\n"
+    "- Link the ideas with spoken transitions such as 首先 (to start), 那接下来我们又… (and then we…), 然后呢 (and then), 说到这儿 (speaking of which), "
+    "你可能会想 (you might wonder), 更有意思的是 (what is even more interesting), 最后 (finally). Vary them; do not open every scene with the same 首先 / 然后.\n"
+    "- Do not announce scene or segment numbers (no \"scene one\", \"the second part\", \"next section\"); let the content and the transitions carry the move from one scene to the next.\n"
+    "- The same holds for a technical solution report or an executive brief: make the order and the relations clear, but walk through them in a speaking voice, never as a list of items.\n"
+)
+_SPEAKER_RULE_FIRST_ZH = (
+    "- 即使下面的内容用了文章式的编号或结构（一、二、三 / 1. 2. 3. / 小标题），也不要照着念，不要像汇报一样逐条展开；要像一个人在自然地讲解、和大家聊这件事。\n"
+)
+_SPEAKER_RULE_FIRST_EN = (
+    "- Even if the content below uses article-style numbering or structure (一、二、三 / 1. 2. 3. / headings), do not read it out or walk through it like a report. Speak naturally, like a person explaining and discussing.\n"
+)
+
+
+def notebooklm_speaker_rule(output: str) -> str:
+    """语音概览 / 视频概览把第一条换成 NOTEBOOKLM_SPOKEN_FLOW_*；幻灯片、信息图原样。"""
+    rule = NOTEBOOKLM_SPEAKER_RULE
+    if output in ("audio_overview", "video_overview"):
+        if _SPEAKER_RULE_FIRST_ZH in rule and _SPEAKER_RULE_FIRST_EN in rule:
+            rule = rule.replace(_SPEAKER_RULE_FIRST_ZH, NOTEBOOKLM_SPOKEN_FLOW_ZH).replace(
+                _SPEAKER_RULE_FIRST_EN, NOTEBOOKLM_SPOKEN_FLOW_EN
+            )
+        else:  # 第一条被改过时，仍把口语规则放在最前
+            rule = NOTEBOOKLM_SPOKEN_FLOW_ZH + NOTEBOOKLM_SPOKEN_FLOW_EN + rule
+    return rule
+
+
 NOTEBOOKLM_VISUAL_RULE = (
     "- 幻灯片和信息图上也不要出现「材料中的第一点」「资料指出」这类说法；画面上若有文字（标题或关键词），也用第一人称、自己的视角来写。\n"
     "- Slides and infographics: no \"point one of the material\" style wording; any text that does appear (a title or a keyword) keeps the first-person, own-perspective framing."
@@ -823,6 +871,7 @@ def build_slide_flow_prompt(
     content_source: str = "",
     actor_source: str = "",
     content_images: bool = False,
+    episodes: list | None = None,
 ) -> str:
     """``actor_source``（如 "actor.pdf"）非空且本次带 Actors 时，加一段 ``Actor_Reference``。
 
@@ -971,7 +1020,7 @@ def build_slide_flow_prompt(
         lines.extend(["", ACTOR_AGE_LOOK])
     parts = {}
     if output in NOTEBOOKLM_OUTPUT_LEADS:
-        rule = NOTEBOOKLM_SPEAKER_RULE
+        rule = notebooklm_speaker_rule(output)
         if output in ("slides", "infographic"):
             rule += "\n" + NOTEBOOKLM_VISUAL_RULE
         if narrative == "story":
@@ -1005,9 +1054,13 @@ def build_slide_flow_prompt(
             content_source, output, silent=silent, images=content_images,
             actor_source=actor_source if with_actor else "",
         )
+        span_note = notebooklm_episode_span_note(content_source, output, episodes, len(scenes))
+        if span_note:
+            parts["Scene_Content_Source"] += "\n" + span_note
         if with_actor:
             parts["Actor_Reference"] = notebooklm_actor_reference_note(
-                actor_source, output, narrative, content_name=content_source, silent=silent
+                actor_source, output, narrative, content_name=content_source, silent=silent,
+                episodes=episodes,
             )
     else:
         parts["Story_Scene_Content"] = json_content
@@ -1051,7 +1104,8 @@ SLIDE_FLOW_ACTOR_OVERRIDES: list[tuple[str, str]] = [
     ("中国人 · 明朝", "Chinese people of the Ming dynasty, in Ming dynasty clothing and hairstyles"),
     ("中国人 · 清朝", "Chinese people of the Qing dynasty, in Qing dynasty clothing and hairstyles"),
     ("中国人 · 民国", "Chinese people of Republican China in the 1920s and 1930s, in period clothing"),
-    ("中国人 · 70年代", "ordinary Chinese people of the 1970s, in plain 1970s clothing"),
+    ("中国人 · 文革", "ordinary Chinese people of the 1960s (culture revolution period), in plain 1960s clothing (Mao suit)"),
+    ("中国人 · 80年代", "ordinary Chinese people of the 1980s, in plain 1980s clothing"),
     ("日本人 · 现代", "modern Japanese people of today"),
     ("日本人 · 江户时代", "Japanese people of the Edo period, in Edo period clothing and hairstyles"),
     ("日本人 · 明治时代", "Japanese people of the Meiji period, in Meiji period clothing"),
@@ -1461,7 +1515,15 @@ def _picture_flow_text_rule(text: str) -> str:
     return flow_caption_rule(text)
 
 
-def _picture_flow_refs() -> str:
+def _picture_flow_refs(listed: bool = False) -> str:
+    """``listed``: the pasted pictures are numbered in ``Reference_images`` below (base picture + actor portraits)."""
+    if listed:
+        return (
+            "Picture 1 is the picture to change.\n"
+            "The pictures pasted after it are the people's reference portraits, numbered in Reference_images below. "
+            "Follow that list for who is who.\n\n"
+            + ACTOR_AGE_LOOK
+        )
     return (
         "Picture 1 is the picture to change.\n"
         "Pictures after it, if any are pasted, are reference portraits of people already in picture 1, "
@@ -1567,12 +1629,19 @@ def build_picture_flow_prompt(
     main_character: str = "",
     actor_override: str = "",
     edit_request: str = "",
+    actor_images: list | None = None,
+    base_image: bool = True,
 ) -> str:
     """按画风改变、说明文字，以及叙事风格，组装这一次的图片提示词。
+
+    ``actor_images``（``content_pdf.scene_actor_reference_images`` 的结果）不为空时加一段 ``Reference_images``：
+    第几张图是基础图、第几张是哪位人物的形象图。``base_image`` 表示第 1 张是不是场景的基础图。
+    仅修改（什么都没勾）和人物提取不加。
 
     叙事风格与幻灯提示同一套，以及 visual / speaking / actor 的勾选。
     人物提取不用叙事风格。其余情况三项至少要选一项。
     """
+    _refs_listed = bool(base_image) and any(isinstance(r, dict) and r.get("image_no") for r in (actor_images or []))
     if task not in {k for k, _ in PICTURE_FLOW_TASK_CHOICES}:
         task = "keep"
     if text not in {k for k, _ in PICTURE_FLOW_TEXT_CHOICES}:
@@ -1641,7 +1710,7 @@ def build_picture_flow_prompt(
                 f"Place and period: {phrase}. "
                 "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
             )
-        lines.extend(["", _picture_flow_refs()])
+        lines.extend(["", _picture_flow_refs(_refs_listed)])
         body = "\n".join(lines)
         label = picture_flow_choice_label("restyle", text, style)
     else:
@@ -1673,7 +1742,7 @@ def build_picture_flow_prompt(
                 f"Place and period: {phrase}. "
                 "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
             )
-        lines.extend(["", _picture_flow_refs()])
+        lines.extend(["", _picture_flow_refs(_refs_listed)])
         body = "\n".join(lines)
         label = picture_flow_choice_label("keep", text, style)
     if story_on:
@@ -1704,12 +1773,70 @@ def build_picture_flow_prompt(
             ensure_ascii=False,
             indent=2,
         )
+        refs = picture_reference_images_note(actor_images, task=task, narrative=narrative, base_image=base_image)
+        refs_part = f"Reference_images:\n{refs}\n\n" if refs else ""
         return (
             f"Picture_choices:\n{label}\n\n"
             f"Instruction_for_image:\n{body}\n\n"
+            f"{refs_part}"
             f"Story_Scene_Content:\n{payload}"
         )
     return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
+
+
+def picture_reference_images_note(actor_images: list | None, *, task: str, narrative: str, base_image: bool = True) -> str:
+    """图片提示：发出去的图各是什么，以及人物形象图怎么用。没有任何人物形象图返回 ""。"""
+    rows = [r for r in (actor_images or []) if isinstance(r, dict) and (r.get("name") or "").strip()]
+    if not any(r.get("image_no") for r in rows):
+        return ""
+    zh = ["参考图（必须遵守）："]
+    en = ["Reference images (must follow):"]
+    if base_image:
+        zh.append("- 第1张图是这一场的基础图。")
+        en.append("- Image 1 is the base picture of this scene.")
+    for r in rows:
+        ov = (r.get("override") or "").strip()
+        who_zh = f"{r.get('label') or '人物'}「{r['name']}」" + (f"（换成{ov}）" if ov else "")
+        who_en = (f"{'the 讲员 (host)' if r.get('role') == 'host' else (r.get('label') or '人物')} \"{r['name']}\""
+                  + (f" (overridden to {ov})" if ov else ""))
+        if r.get("image_no"):
+            zh.append(f"- 第{r['image_no']}张图是{who_zh}的形象图。")
+            en.append(f"- Image {r['image_no']} is the appearance reference of {who_en}.")
+        elif ov:
+            zh.append(f"- {who_zh}没有形象图（不对应任何一张图）：按上面的人物覆盖，以及名字里的性别、年龄段来画，前后保持一致。")
+            en.append(f"- {who_en} has no reference image (no image belongs to them): draw them from the people override above "
+                      "and the gender and age band in the name, and keep that look consistent.")
+        else:
+            zh.append(f"- {who_zh}没有形象图（不对应任何一张图）：按名字里的性别、年龄段、族裔来画，前后保持一致。")
+            en.append(f"- {who_en} has no reference image (no image belongs to them): draw them from the gender, "
+                      "age band, and origin in the name, and keep that look consistent.")
+    zh += [
+        "- 这一场里出现的每个人，长相（脸、发型、年龄、衣着）都照他自己的形象图。把场景里原有的人换成他们；"
+        "场景描述或讲话需要他们出现而图里没有时，把他们加进去。不要为他们另编长相。",
+        "- 形象图只提供长相，不提供画风：画风照上面「画风改变」的规则"
+        + ("（转成项目风格：整张图转成项目风格，人物也是）" if task == "restyle" else "（保持画风：保持基础图的画风，人物也画成这个画风）")
+        + "；形象图的画风、背景和光线都不要带进来。",
+        "- 只画这一场列出的人，不要加没列出的人，也不要加默认讲员。",
+    ]
+    en += [
+        "- Every person who appears in this scene takes the look from their own reference image: face, hair, age, and clothes. "
+        "Replace the people already in the scene with them, or add them where the scene description or the lines need them. "
+        "Never invent another look for them.",
+        "- The reference images only supply faces and looks, not their art style: follow the style rule above"
+        + (" (convert to the project style: the whole picture, people included, takes the project style)" if task == "restyle"
+           else " (keep the style: keep the base picture's style and draw the people in that style)")
+        + "; never carry over the portraits' art style, background, or lighting.",
+        "- Draw only the people listed for this scene. Do not add anyone else, and never add a default 讲员.",
+    ]
+    if narrative in TELLING_NARRATIVES:
+        zh.append("- 讲述 / 汇报：画面里的人只表演、不说话；讲员只有在这一场列出时才出现。")
+        en.append("- Telling / report: the people in the picture act silently; the 讲员 appears only if listed for this scene.")
+    else:
+        zh.append("- 故事：人物在场景里演、彼此对话。")
+        en.append("- Story: the characters act and talk with each other inside the scene.")
+    zh.append("- 如果最前面的「注意 / FYI」另有要求（例如把主角换成某位人物），以它为准。")
+    en.append("- If the 注意 / FYI note at the very top asks for something else (for example, swap the lead for one of these people), it takes priority.")
+    return "\n".join(zh + en)
 
 
 EDIT_KEEP_STYLE_LINE = (
@@ -2734,6 +2861,87 @@ def _video_flow_instruction(
         chunks.append(motion_line)
     chunks.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip())
     return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
+
+
+def build_video_fyi_only_prompt(
+    *,
+    frames: str,
+    evolve: str,
+    visual_style: str,
+    camera: str = "none",
+    text: str = "erase",
+    duration: str = "",
+    fyi: str = "",
+) -> str:
+    """生场视频「只按注意 / FYI」：场景描述、讲话、人物都没勾，只有 FYI。同图片提示「仅修改」。
+
+    FYI 是这段视频的主要动作说明（人做什么、发生什么）。让给出的起始图（多画面时到终止图）动起来，
+    保留画面里的场景、人物和画风；不加人；不写叙事风格的讲话规则，默认没有旁白和对白（除非 FYI 另说）。
+    运镜、长度、画风（风格演进）、说明文字照常；背景条件（地域 / 时代）由外层接在后面。
+    """
+    request = (fyi or "").strip()
+    if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
+        frames = "one"
+    if evolve not in {k for k, _ in VIDEO_FLOW_EVOLVE_CHOICES} or frames == "two":
+        evolve = "keep"
+    if camera not in {k for k, _ in VIDEO_FLOW_CAMERA_CHOICES}:
+        camera = "none"
+    if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
+        text = "erase"
+    style = (visual_style or "").strip() or "realistic"
+    lines = ["Main action (most important):", request or "(no action given: keep a gentle, natural motion)", ""]
+    if frames == "two":
+        lines += [
+            "Picture 1 is the opening frame. Picture 2 is the ending frame.",
+            "Animate from picture 1 to picture 2, carrying out the main action on the way.",
+        ]
+    else:
+        lines += [
+            "One picture is attached. Picture 1 is the first frame of the clip.",
+            "Animate picture 1, carrying out the main action.",
+        ]
+    lines += [
+        "Keep the place, the people, their faces and clothes, and the objects of the picture. "
+        "Only what the main action asks for moves or changes.",
+        "Do not add people. Do not remove anyone unless the main action says so.",
+    ]
+    if evolve == "keep":
+        lines.append(f"Keep the visual style of picture 1 for the whole clip. Do not restyle it toward {style}.")
+    else:
+        how = {
+            "to_style": "a slow continuous change",
+            "to_style_page": "turning pages, each page closer to the target style",
+            "to_style_dissolve": "several soft dissolves, each closer to the target style",
+        }[evolve]
+        lines.append(
+            f"Open on picture 1's own style, then evolve the look into the target visual style: {style}, by {how}. "
+            "The same people and place stay recognizable throughout."
+        )
+    lines.append(flow_caption_rule(text))
+    secs = "".join(ch for ch in (duration or "") if ch.isdigit())
+    if secs:
+        lines.append(f"Clip length: about {secs} seconds. Pace the main action to fill the clip; do not rush it or freeze at the end.")
+    cam = _video_flow_camera_line(camera)
+    if cam:
+        lines.append(cam.lstrip("* ").strip())
+    lines.append(
+        "Sound: no narration, no voice-over, and no dialogue, unless the main action asks for speech. "
+        "Natural ambient sound only."
+    )
+    lines.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip().lstrip("* ").strip())
+    frame_label = dict(VIDEO_FLOW_FRAME_CHOICES).get(frames, frames)
+    parts = ["只按注意 / FYI", frame_label, dict(FLOW_CAPTION_CHOICES).get(text, text)]
+    if frames != "two":
+        parts.append(dict(VIDEO_FLOW_EVOLVE_CHOICES).get(evolve, evolve))
+    if camera != "none":
+        parts.append(dict(VIDEO_FLOW_CAMERA_CHOICES).get(camera, camera))
+    if secs:
+        parts.append(f"{secs}s")
+    return (
+        f"Visual_Style:\n{style}\n\n"
+        f"Video_choices:\n{' · '.join(parts)}\n\n"
+        "Instruction_for_video_generation:\n" + "\n".join(lines)
+    )
 
 
 # 性别 / 年龄段 / 民族 → 商业声音名。同一档有多个时，按书写顺序往下用。
@@ -4732,6 +4940,42 @@ ANIMATE_SOURCE = ANIMATE_S2V + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_WS2V + ANIMA
 
 
 # ---------------------------------------------------------------------------
+def episode_span_labels(episodes: list | None) -> tuple[str, str]:
+    """["1","1","2","3"] → ("第 1–3 集", "episodes 1–3")；只有一集返回 ("", "")。"""
+    order: list = []
+    for g in episodes or []:
+        g = str(g or "").strip()
+        if g and g not in order:
+            order.append(g)
+    if len(order) < 2:
+        return "", ""
+    first, last = order[0], order[-1]
+    return f"第 {first}–{last} 集", f"episodes {first}–{last}"
+
+
+def notebooklm_episode_span_note(name: str, output: str, episodes: list | None, scene_count: int) -> str:
+    """全集生成「本集到结束」：content.pdf 跨了几集时，说明范围、连续编号和总场数。只有一集返回 ""。"""
+    span_zh, span_en = episode_span_labels(episodes)
+    if not span_zh:
+        return ""
+    m = int(scene_count)
+    lines = [
+        f"范围：{name} 这次包含{span_zh}（共 {m} 场）。场景从 1 到 {m} 连续编号，换集不重新编号；"
+        "「第N集 / Episode N」标题只是分隔，给你看的，不是场景：不要为它单独做一页、一段或一个部分，也不要显示出来。",
+        f"Range: this {name} spans {span_en} ({m} scenes in total). Scenes are numbered 1 to {m} continuously across episodes; "
+        "the 第N集 / Episode N headings are only separators for you: they are not scenes, never get their own slide, "
+        "segment, or section, and are never shown.",
+    ]
+    counts = {
+        "slides": f"幻灯片共 {m} 页（第 N 页 = 场景 N）。The slide deck has exactly {m} slides (slide N = scene N).",
+        "video_overview": f"视频共 {m} 段，一场一段。The video has exactly {m} segments, one per scene.",
+        "infographic": f"信息图共 {m} 个部分，一场一个。The infographic has {m} sections, one per scene.",
+    }
+    if output in counts:
+        lines.append(counts[output])
+    return "\n".join(lines)
+
+
 def strip_actor_reference(prompt: str, actor_name: str = "actor.pdf") -> str:
     """去掉提示词里所有依赖 actor.pdf 的部分：``Actor_Reference:`` 整段、场景图片的「人物以 actor.pdf 为准」两行、
     以及「except actor.pdf ...」。actor.pdf 没有真正上传就绪时用，保证提示词不提一个不存在的来源。"""

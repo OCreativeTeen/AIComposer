@@ -77,8 +77,13 @@ def build_content_pdf(
     keywords: bool = False,
     actor_override: str = "",
     dest: str = CONTENT_PDF_PATH,
+    episodes: list | None = None,
 ) -> str:
-    """生成 content.pdf（覆盖），返回路径。"""
+    """生成 content.pdf（覆盖），返回路径。
+
+    ``episodes``（和 scenes 等长，每场所属的集名）跨了不止一集时，每集开头加「第N集 / Episode N」分隔标题；
+    场景编号始终是 1..M 连续，不按集重新编号。
+    """
     import fitz
     from PIL import Image
 
@@ -105,6 +110,7 @@ def build_content_pdf(
         (f"@font-face {{font-family: cjk; src: url({os.path.basename(font)});}}\n" if font else "")
         + "* {font-family: cjk, sans-serif;}\n"
         "body {font-size: 11pt; line-height: 1.45;}\n"
+        "h1 {font-size: 18pt; margin: 18pt 0 4pt 0; color: #444444;}\n"
         "h2 {font-size: 15pt; margin: 14pt 0 6pt 0;}\n"
         "p.label {font-weight: bold; margin: 6pt 0 1pt 0;}\n"
         "p.text {margin: 0 0 4pt 0;}\n"
@@ -112,7 +118,13 @@ def build_content_pdf(
     )
     parts = ["<body>"]
     override = (actor_override or "").strip()
+    groups = [str(g or "").strip() for g in (episodes or [])]
+    multi = len(groups) == len(scenes) and len(set(groups)) > 1
+    last_group = None
     for n, (scene, item) in enumerate(zip(scenes, payload), start=1):
+        if multi and groups[n - 1] != last_group:
+            last_group = groups[n - 1]
+            parts.append(f"<h1>第{html.escape(last_group)}集 / Episode {html.escape(last_group)}</h1>")
         parts.append(f"<h2>场景 {n} / Scene {n}</h2>")
         if use_image:
             src = _scene_image(scene)
@@ -184,29 +196,156 @@ def portrait_stem(name: str) -> str:
     return stem.strip(" .")
 
 
-def actor_portrait_path(role: str, name: str, avatar_dir: str = "") -> str:
+def _style_or_current(style) -> str:
+    if style is not None:
+        return style
+    try:
+        import project_manager
+
+        return project_manager.current_visual_style()
+    except Exception:
+        return ""
+
+
+def actor_portrait_path(role: str, name: str, avatar_dir: str = "", style: str | None = None) -> str:
     """同 ``wf_actors._actor_entry_portrait``：讲员在 config.AVATAR_PATH，人物在项目 avatar 目录。找不到返回 ""。"""
     import config
 
     name = (name or "").strip()
     if not name:
         return ""
+    style = _style_or_current(style)
     if role == "host":
+        # 讲员：avatar/<风格>/ → avatar/Realistic/ → avatar/，每一层先全名、再前三段。
         names = [name]
         bits = [b for b in name.split("/") if b]
         if len(bits) >= 3:
             names.append("/".join(bits[:3]))
-        for n in names:
-            stem = portrait_stem(n)
-            path = os.path.join(config.AVATAR_PATH, stem + ".png") if stem else ""
-            if path and os.path.isfile(path):
-                return path
-        return ""
+        return config.find_avatar_png([portrait_stem(n) for n in names], style)
+    # 项目人物：<项目>/avatar/<风格>/ → <项目>/avatar/；不退到通用头像库。
     stem = portrait_stem(name)
     if not stem or not avatar_dir:
         return ""
-    path = os.path.join(avatar_dir, stem + ".png")
-    return path if os.path.isfile(path) else ""
+    token = config.visual_style_token(style)
+    for folder in ([os.path.join(avatar_dir, token)] if token else []) + [avatar_dir]:
+        path = config.find_image_by_stem(folder, stem)  # .png / .jpg / .jpeg / .webp，.png 优先
+        if path:
+            return path
+    return ""
+
+
+# 「换成」覆盖 → D:\AI_MEDIA\avatar\<gender>_<era>_<ethnicity>.png（例：中国人 · 民国 + woman → woman_民国_chinese.png）。
+# 族裔沿用头像库已有的词：chinese / english（西方人）；新加 japanese / black / tribal。
+OVERRIDE_ETHNICITY = {"中国人": "chinese", "日本人": "japanese", "西方人": "english", "黑人": "black", "原始部落人": "tribal"}
+
+
+def override_label_short(label: str) -> str:
+    """'中国人 · 民国' → '中国人·民国'（提示词里用）。"""
+    return "".join((label or "").split())
+
+
+def override_portrait_tokens(label: str) -> tuple[str, str]:
+    """「换成」选项 → (era, ethnicity) 文件名片段；不覆盖 / 不认识返回 ("", "")。"""
+    short = override_label_short(label)
+    if not short:
+        return "", ""
+    if "·" in short:
+        people, era = short.split("·", 1)
+    else:
+        people, era = short, ""
+    eth = OVERRIDE_ETHNICITY.get(people, "")
+    if not eth:
+        return "", ""
+    if not era:
+        era = people[:-1] if people.endswith("人") else people  # 原始部落人 → 原始部落
+    return era, eth
+
+
+def override_portrait_path(name: str, override_label: str, style: str | None = None) -> tuple[str, str]:
+    """覆盖时这个人的形象图：返回 (找到的路径或 "", 期望的文件名)。性别取名字第一段 man / woman。
+
+    「现代」先找 ``<gender>_现代_<eth>.png``，没有再找按名字年龄段的 ``<gender>_<age>_<eth>.png``（头像库原有的现代人像）。
+    """
+    import config
+
+    era, eth = override_portrait_tokens(override_label)
+    bits = [b.strip().lower() for b in (name or "").split("/") if b.strip()]
+    gender = bits[0] if bits and bits[0] in ("man", "woman") else ""
+    if not era or not gender:
+        return "", ""
+    exts = config.AVATAR_IMAGE_EXTS_LABEL
+    tries = [f"{gender}_{era}_{eth}"]
+    if era == "现代" and len(bits) >= 2:
+        tries.append(f"{gender}_{bits[1]}_{eth}")
+    expected = f"{tries[0]}.{exts}"
+    # 每一层（avatar/<风格>/ → Realistic/ → 根目录）先试时代图，再试「现代」的年龄段图；每个 stem 接受四种格式。
+    path = config.find_avatar_image(tries, _style_or_current(style))
+    if path:
+        return os.path.abspath(path), expected
+    return "", " 或 ".join(f"{t}.{exts}" for t in tries)
+
+
+def actor_image_for(role: str, name: str, avatar_dir: str = "", override_label: str = "", style: str | None = None) -> str:
+    """人物形象图：有「换成」覆盖时按覆盖查头像库（找不到就没有图，并记下期望的文件名），否则同人物栏。"""
+    import config
+
+    if override_portrait_tokens(override_label)[0]:
+        path, expected = override_portrait_path(name, override_label, style)
+        if not path:
+            where = " → ".join(config.avatar_style_dirs(_style_or_current(style)))
+            print(f"[portrait] 换成 {override_label_short(override_label)}：{name} 没有形象图，期望 "
+                  f"{expected or '(名字里没有 man / woman，无法确定性别)'}（找过 {where}）")
+        return path
+    return actor_portrait_path(role, name, avatar_dir, style)
+
+
+MAX_INPUT_IMAGES = 5  # Grok Imagine 编辑最多 5 张输入图（xAI 文档：image edit up to 5 source images）
+
+
+def scene_actor_reference_images(
+    scene: dict, avatar_dir: str = "", base_image: str = "", max_actors: int = 4, override_label: str = "",
+    style: str | None = None,
+) -> list:
+    """图片提示：当前场景 Actors（按顺序，最多 4 位）各自的形象图，查法同 actor.pdf / 人物栏。
+
+    返回 [{label, role, name, image, image_no}]。``image_no`` 是这张图在发出去的图里的序号（从 1 起）：
+    有基础图时基础图是第 1 张，人物从第 2 张起；没有形象图的人 image 为 ""、image_no 为 0（不占序号）。
+    两个人用的是同一个文件时共用一个序号。总数不超过 ``MAX_INPUT_IMAGES``，超出的人当作没有图。
+    ``override_label``（「换成」选项，如 '中国人 · 民国'）不为空时，形象图按覆盖从头像库查，每行带 ``override``。
+    """
+    short = override_label_short(override_label) if override_portrait_tokens(override_label)[0] else ""
+    import project_manager
+
+    if not isinstance(scene, dict):
+        return []
+    text = project_manager.actor_text_for_generation(scene.get("actor") or "")
+    rows = []
+    for row in project_manager.active_actor_entries(text):
+        body, _motion = project_manager.split_actor_motion((row.get("body") or "").strip())
+        body = body.strip()
+        if not body or project_manager.actor_is_absent(body):
+            continue
+        role = "host" if row.get("role") == "host" else "person"
+        rows.append({"label": "讲员" if role == "host" else (row.get("label") or "人物"), "role": role, "name": body,
+                     "override": short})
+        if len(rows) >= max_actors:
+            break
+    sent = [os.path.abspath(base_image)] if base_image and os.path.isfile(base_image) else []
+    for row in rows:
+        path = actor_image_for(row["role"], row["name"], avatar_dir, override_label, style)
+        row["image"] = ""
+        row["image_no"] = 0
+        if not path:
+            continue
+        path = os.path.abspath(path)
+        if path in sent:
+            row["image"], row["image_no"] = path, sent.index(path) + 1
+            continue
+        if len(sent) >= MAX_INPUT_IMAGES:
+            continue
+        sent.append(path)
+        row["image"], row["image_no"] = path, len(sent)
+    return rows
 
 
 def _write_pdf(stories_html: list, css: str, archive) -> bytes:
@@ -236,9 +375,13 @@ def _write_pdf(stories_html: list, css: str, archive) -> bytes:
         doc.close()
 
 
-def build_actor_pdf(scenes: list, *, avatar_dir: str = "", dest: str = ACTOR_PDF_PATH) -> tuple[str, list]:
+def build_actor_pdf(
+    scenes: list, *, avatar_dir: str = "", dest: str = ACTOR_PDF_PATH, override_label: str = "",
+    style: str | None = None,
+) -> tuple[str, list]:
     """本集所有场景里出现的人物写成 actor.pdf（覆盖）：一人一页，全名标题 + 形象图（没有图就注明 no image）。
 
+    ``override_label``（「换成」选项）不为空时，形象图按覆盖从头像库查（同图片提示），每页注明换成什么。
     人物按全名去重（名字和 content.pdf「人物 / Actors」栏里的一样）。没有人物就不生成，返回 ("", [])，
     并删掉旧的 actor.pdf，免得上传过期文件。返回 (路径, [{name, role, label, image}])。
     """
@@ -270,8 +413,10 @@ def build_actor_pdf(scenes: list, *, avatar_dir: str = "", dest: str = ACTOR_PDF
     pages = []
     out = []
     for n, row in enumerate(cast, start=1):
-        image = actor_portrait_path(row["role"], row["name"], avatar_dir)
+        image = actor_image_for(row["role"], row["name"], avatar_dir, override_label, style)
         role_line = "讲员 / Host (narrator)" if row["role"] == "host" else "人物 / Person"
+        if override_portrait_tokens(override_label)[0]:
+            role_line += f"　（换成{override_label_short(override_label)} / overridden to {override_label_short(override_label)}）"
         parts = [
             "<body>",
             f"<h1>{html.escape(row['name'])}</h1>",

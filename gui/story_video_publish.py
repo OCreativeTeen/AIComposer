@@ -159,8 +159,12 @@ def _patch_list_row(item: dict, updates: dict) -> None:
     config.write_channel_list_json(list_path, arr)
 
 
-def publish_current_story(*, source_key: str | None = None) -> dict:
-    """立即 unlisted 上传当前成片。返回 ``watch_url`` / ``video_id`` 等。"""
+def publish_current_story(
+    *, source_key: str | None = None, progress_cb=None, cancel_event=None
+) -> dict:
+    """立即 unlisted 上传当前成片。返回 ``watch_url`` / ``video_id`` 等。
+
+    progress_cb(sent, total) / cancel_event 直接传给分块上传（不传就和以前一样，只在控制台打进度）。"""
     ctx = resolve_current_publish_context()
     meta = build_publish_metadata(ctx, source_key)
     ch_key = ctx["channel_id"]
@@ -193,6 +197,8 @@ def publish_current_story(*, source_key: str | None = None) -> dict:
         [],
         privacy="unlisted",
         publish_at=None,
+        progress_cb=progress_cb,
+        cancel_event=cancel_event,
     )
     vid_s = str(vid).strip() if vid is not None else ""
     watch = f"https://www.youtube.com/watch?v={vid_s}" if vid_s else ""

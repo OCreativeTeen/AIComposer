@@ -1492,10 +1492,12 @@ class MediaGUIManager:
         )
         return video_detail
 
-    def _format_analyze_prompt(self, video_detail=None) -> str:
+    def _format_analyze_prompt(self, video_detail=None, analyze_key: str = "") -> str:
+        """``analyze_key``：频道分析方式（config.get_channel_analyze_options 的 key）；空 = 第一项（原来的分析提示）。"""
         raw = config.get_channel_analyze_prompt(
             self._channel_config_key(),
             language=self.language,
+            key=analyze_key or "",
         )
 
         url = ""
@@ -1508,20 +1510,36 @@ class MediaGUIManager:
             return raw
 
     def generate_analyzed_content_for_video(
-        self, video_detail, *, force_rewrite: bool = False
+        self,
+        video_detail,
+        *,
+        force_rewrite: bool = False,
+        analyze_key: str = "",
+        source_text: str | None = None,
+        append: bool = False,
     ) -> bool:
-        """用 LLM 从转录/字幕文本生成 ``analyzed_content``（纯文本，当前频道语言）。"""
+        """用 LLM 从转录/字幕文本生成 ``analyzed_content``（纯文本，当前频道语言）。
+
+        ``analyze_key``：用哪一种分析方式（空 = 第一项）。``source_text``：只用这段文字作原始材料
+        （STORY 窗材料列表的「分析」：PDF 文字或文字稿）。``append``：追加到原分析报告末尾，而不是替换。
+        """
         if not isinstance(video_detail, dict):
             return False
         if not force_rewrite and video_detail.get("analyzed_content"):
             return True
-        text_content = self._analyze_content_source_text(video_detail)
-        url = (video_detail.get("url") or "").strip()
+        if source_text is not None:
+            text_content = (source_text or "").strip()
+            url = ""
+            if not text_content:
+                return False
+        else:
+            text_content = self._analyze_content_source_text(video_detail)
+            url = (video_detail.get("url") or "").strip()
         if not text_content and not url:
             return False
-        if text_content and len(text_content) < 100 and not url:
+        if text_content and len(text_content) < 100 and not url and source_text is None:
             return False
-        prompt = self._format_analyze_prompt(video_detail)
+        prompt = self._format_analyze_prompt(video_detail, analyze_key=analyze_key)
         lang_label = config.llm_language_label(self.language)
         user_prompt = text_content if text_content else (f"YouTube URL: {url}" if url else " ")
         rewritten = self.llm_api_manual.generate_text(
@@ -1531,7 +1549,8 @@ class MediaGUIManager:
         rewritten = (rewritten or "").strip()
         if not rewritten:
             return False
-        video_detail["analyzed_content"] = rewritten
+        old = (video_detail.get("analyzed_content") or "").rstrip() if append else ""
+        video_detail["analyzed_content"] = (old + "\n\n" + rewritten) if old else rewritten
         return True
 
     def _generate_analyzed_content_summary_text(

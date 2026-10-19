@@ -473,7 +473,7 @@ class LLMApi:
             if not path or not os.path.isfile(path) or path in kept:
                 continue
             kept.append(path)
-            if len(kept) >= 3:
+            if len(kept) >= 5:  # Grok Imagine 编辑最多 5 张输入图
                 break
         return kept
 
@@ -1241,7 +1241,7 @@ class LLMApi:
             input_box.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
             input_box.columnconfigure(0, weight=1)
             photo_ref = []
-            thumb_h = {1: 420, 2: 200, 3: 130}[len(image_paths)]
+            thumb_h = {1: 420, 2: 200, 3: 130, 4: 95, 5: 75}.get(len(image_paths), 75)
             for index, path in enumerate(image_paths):
                 input_box.rowconfigure(index, weight=1)
                 slot = ttk.Frame(input_box)
@@ -1540,7 +1540,8 @@ class LLMApi:
 
                         _cli_ui(_apply_file)
                     elif image_path:
-                        img = grok_cdp.make_image(prompt, image_path, status=_cli_set_status)
+                        # 全部输入图按顺序贴进 Grok Imagine（基础图 + 人物形象图，最多 5 张）
+                        img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
 
                         def _apply_image():
                             _cli_done_ui()

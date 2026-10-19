@@ -318,16 +318,22 @@ class ActorsMixin:
         if project_manager.actor_is_absent(body):
             return ""
         if entry.get("role") == "host":
+            # 讲员：avatar/<风格>/ → avatar/Realistic/ → avatar/，每一层先全名、再前三段（同 actor.pdf）。
             names = [body]
             bits = [part for part in body.split("/") if part]
             if len(bits) >= 3:
                 names.append("/".join(bits[:3]))
-            for name in names:
-                path = self._narrator_portrait_path(name)
-                if path:
-                    return path
-            return ""
+            return config.find_avatar_png([self._portrait_stem(n) for n in names], self._portrait_style())
         return self._person_portrait_path(body)
+
+    def _portrait_style(self) -> str:
+        """找形象图用的画面风格：界面上的场景画面风格 → 项目 visual_style → 上次选的。"""
+        var = getattr(self, "scene_visual_style", None)
+        try:
+            value = (var.get() or "").strip() if var is not None else ""
+        except Exception:
+            value = ""
+        return config.match_visual_style(value) or value or project_manager.current_visual_style()
 
     def _set_actor_text(self, text: str, *, save_scene: bool = False) -> None:
         self._actor_text = project_manager.normalize_actor_text(text)
@@ -397,20 +403,21 @@ class ActorsMixin:
         safe_copy_overwrite(wav, dest)
         return dest
 
-    @staticmethod
-    def _narrator_portrait_path(name: str) -> str:
-        """voices.json 的 name 把 / 换成 _，对应 avatar 目录里的 png。"""
+    def _narrator_portrait_path(self, name: str) -> str:
+        """voices.json 的 name 把 / 换成 _：avatar/<风格>/ → avatar/Realistic/ → avatar/ 里的 png。"""
         stem = WorkflowGUI._portrait_stem(name)
         if not stem:
             return ""
-        path = os.path.join(config.AVATAR_PATH, stem + ".png")
-        return path if os.path.isfile(path) else ""
+        return config.find_avatar_png([stem], self._portrait_style())
 
     def _narrator_portrait_dest(self, name: str) -> str:
+        """讲员贴图存到 avatar/<当前风格>/（不动根目录和其他风格的图）。"""
         stem = self._portrait_stem(name)
         if not stem:
             return ""
-        return os.path.join(config.AVATAR_PATH, stem + ".png")
+        folder = config.avatar_style_dest_dir(self._portrait_style())
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, stem + ".png")
 
     def _blank_portrait_path(self) -> str:
         """背景讲员用的白板图。确定时拷进剪贴板，表示这个人只在背景里说话。"""
@@ -438,12 +445,16 @@ class ActorsMixin:
             folder = self._project_avatar_dir()
         except Exception:
             folder = ""
-        if folder and os.path.isdir(folder):
+        token = config.visual_style_token(self._portrait_style())
+        folders = [folder] + ([os.path.join(folder, token)] if folder and token else [])
+        for folder in folders:
+            if not folder or not os.path.isdir(folder):
+                continue
             for fn in sorted(os.listdir(folder)):
                 low = fn.lower()
-                if not low.endswith(".png") or ".bak" in low:
+                if not low.endswith(config.AVATAR_IMAGE_EXTS) or ".bak" in low:
                     continue
-                stem = os.path.splitext(fn)[0]
+                stem = os.path.splitext(fn)[0]  # 同一 stem 的 png / jpg / webp 只列一次
                 if not stem or stem.startswith("_"):
                     continue
                 raw = stem.replace("_", "/")
@@ -470,8 +481,17 @@ class ActorsMixin:
         return os.path.join(self._project_avatar_dir(), stem + ".png")
 
     def _person_portrait_path(self, name: str) -> str:
-        path = self._person_portrait_dest(name)
-        return path if path and os.path.isfile(path) else ""
+        """项目人物：<项目>/avatar/<风格>/ → <项目>/avatar/（贴图仍存在 <项目>/avatar/）。不退到通用头像库。"""
+        dest = self._person_portrait_dest(name)
+        if not dest:
+            return ""
+        folder, stem = os.path.dirname(dest), os.path.splitext(os.path.basename(dest))[0]
+        token = config.visual_style_token(self._portrait_style())
+        for level in ([os.path.join(folder, token)] if token else []) + [folder]:
+            path = config.find_image_by_stem(level, stem)  # .png / .jpg / .jpeg / .webp，.png 优先
+            if path:
+                return path
+        return ""
 
     @staticmethod
     def _backup_portrait(path: str) -> None:

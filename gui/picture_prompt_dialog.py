@@ -60,8 +60,11 @@ def open_picture_prompt_dialog(
     main_character: str = "",
     saved_choice=None,
     save_choice=None,
+    actor_avatar_dir: str = "",
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
+
+    勾了「人物」且这一场有人物时，交给 LLM 的图 = 选中的场景图 + 各人物形象图（按 Actors 顺序，最多共 5 张）。
 
     ``saved_choice`` 是项目里记下的上次选择；关窗或提交时 ``save_choice(dict)`` 记回去。
     """
@@ -221,6 +224,26 @@ def open_picture_prompt_dialog(
         images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
         if not images:
             messagebox.showinfo("图片提示", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
+        # 人物形象图：勾了人物、不是仅修改 / 人物提取时才加。
+        actor_images = []
+        override_en = dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), "")
+        if actor_var.get() and not edit_only and not extract:
+            from utility.content_pdf import scene_actor_reference_images
+
+            # 「换成」覆盖时形象图从头像库按 性别_时代_族裔 查（找不到就只用文字描述）。
+            actor_images = scene_actor_reference_images(
+                scene, avatar_dir=actor_avatar_dir, base_image=images[0] if images else "",
+                override_label=override_var.get() if override_en else "",
+                style=style,  # 形象图按画面风格分目录查：avatar/<风格>/ → Realistic/ → 根目录
+            )
+            for row in actor_images:
+                if row.get("image") and row["image"] not in images:
+                    images.append(row["image"])
+            sent = [f"1 基础图 {os.path.basename(images[0])}"] if path in images else []
+            for r in actor_images:
+                sent.append(f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no")
+                            else f"（{r['label']} {r['name']} 没有形象图）")
+            print("图片提示：发出的图 = " + " | ".join(sent))
         try:
             prompt = config_prompt.build_picture_flow_prompt(
                 task=task_var.get(),
@@ -237,6 +260,8 @@ def open_picture_prompt_dialog(
                 main_character=main_character or "",
                 actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
                 edit_request=fyi_now if edit_only else "",
+                actor_images=actor_images,
+                base_image=bool(path and isinstance(path, str) and os.path.isfile(path)),
             )
         except ValueError as exc:
             messagebox.showwarning("图片提示", str(exc), parent=dlg)

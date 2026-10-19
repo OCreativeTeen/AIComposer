@@ -986,6 +986,7 @@ Input:
     - The original text content (in user-prompt) may be messy, fragmented, repetitive, or jump between ideas. Some parts may appear out of order or loosely connected.
 
 Important requirements:
+    - Organize and analyze the text in detail, following its original meaning. Do not drop anything: every idea, story, example, and detail of the original must still be there.
     - Do NOT summarize, compress, or remove meaningful content.
     - Preserve all narrative details, storytelling elements, examples, and descriptions.
     - If ideas appear scattered in different parts of the text, you may group them together into clearer thematic sections.
@@ -1506,6 +1507,7 @@ Input:
     - The original text may be fragmented notes, slide bullets, meeting minutes, case descriptions, or mixed technical + business material.
 
 Important requirements:
+    - Organize and analyze the text in detail, following its original meaning. Do not drop anything: every fact, figure, scenario, and example of the original must still be there.
     - Do NOT remove meaningful technical facts, scenario parameters, or deployment details.
     - Preserve examples: routes, aircraft types, communication links, workshop stages, regulatory constraints, ROI logic.
     - Group scattered ideas into thematic sections (e.g., communication stack, manufacturing flow, scenario ops, governance).
@@ -1658,6 +1660,7 @@ COMIC_ANALYZE = """
 Role:
     - You are an editor for picture stories.
     - Read the text and put the story in order. Keep the events. Do not add a moral.
+    - Follow the original meaning in detail. Do not drop anything: every event, person, and line of the original stays.
 
 Output:
     - Rewritten story in {language}.
@@ -1927,3 +1930,216 @@ _STEP_STORY_CORES = {
     COUNSELING_STORY_STEP: COUNSELING_STORY_CORE,
     FLYLINK_STORY_STEP: FLYLINK_STORY_CORE,
 }
+
+
+# ---------------------------------------------------------------------------
+# 分析报告：每个频道可以有几种「分析」方式（STORY 窗材料列表的「分析」按钮、分析报告双击都会先选）。
+# 每项 {"key", "label", "prompt"}；第一项是原来的分析提示（批量 / 魔法流程只用第一项）。
+# 占位符同原来的分析提示：{language}（输出语言），MV 的原提示还用 {url}。原文放在 user prompt 里。
+# ---------------------------------------------------------------------------
+
+ANALYZE_DETAIL_LABEL = "详细分析（原样整理）"
+
+COUNSELING_ANALYZE_LIFE_STORY = """
+角色：
+    - 你是一位擅长心理咨询与个人成长主题的故事作者，也是细心的编辑。
+    - 你的任务：读懂用户提示里的原文（理论、观点、讲座、文章或笔记），抓住它的中心思想，
+      再写一个有血有肉的现代生活故事，让读者在故事里自然地体会到这个中心思想。
+
+输入：
+    - 原文可能是理论讲解、要点列表、讲座记录或零散笔记，可能重复、跳跃、不完整。
+
+重要要求：
+    - 先弄清原文的中心思想和关键观点。故事必须忠实于这些意思：不歪曲、不加原文没有的结论。
+    - 原文里重要的观点都要在故事里有所体现（通过事件、对话、人物的领悟或改变），不要漏掉。
+    - 故事发生在今天的日常生活里（家庭、学校、职场、伴侣、朋友、邻里等）。
+    - 人物要具体可信：有名字、年龄、身份和处境；有对话、动作、表情、心理活动和感官细节。
+    - 用情节来体现中心思想：有困境，有冲突，有转折，有领悟或改变，有结果。
+      不要在故事里直接讲道理、贴标签或说教；道理要让读者从人物的经历里自己看出来。
+    - 可以有一位咨询师、老师或长辈引导，但重心是主人公自己的经历和成长。
+    - 人物和情节都是虚构的，不要写成某个真实人物的经历，不出现可识别的真实个人信息。
+
+输出格式：
+    - 用 {language} 输出。
+    - 第一部分「中心思想」：用一两句话写清原文的中心思想。
+    - 第二部分「故事」：故事标题一行，然后是故事正文，分成若干段（可加小标题），
+      篇幅充实，大约 1500–3000 字，有开头、发展、高潮和结尾。
+    - 第三部分「故事与中心思想」：用两三句话点出故事里哪些情节体现了中心思想，简洁，不说教。
+"""
+
+COUNSELING_ANALYZE_HISTORY_STORY = """
+角色：
+    - 你是一位熟悉中外历史、擅长讲故事的作者，也是细心的编辑。
+    - 你的任务：读懂用户提示里的原文（理论、观点、讲座、文章或笔记），抓住它的中心思想，
+      再写一个有血有肉的历史故事，让读者在故事里自然地体会到这个中心思想。
+
+输入：
+    - 原文可能是理论讲解、要点列表、讲座记录或零散笔记，可能重复、跳跃、不完整。
+
+重要要求：
+    - 先弄清原文的中心思想和关键观点。故事必须忠实于这些意思：不歪曲、不加原文没有的结论。
+    - 原文里重要的观点都要在故事里有所体现（通过事件、对话、人物的选择和结局），不要漏掉。
+    - 故事放在一个真实的历史时代和地方（中国或世界历史都可以），写清是什么朝代 / 年代、什么地方。
+    - 可以取材于真实的历史人物、事件或典故，但不能歪曲已知的史实；
+      没有史料依据的人物和情节要写成虚构的普通人，放在真实的时代背景里，不要冒充史实。
+    - 时代细节要对：衣着、居所、器物、称呼、礼俗、说话的味道都符合那个时代，不出现时代错误。
+    - 人物要具体：有名字、身份、处境；有对话、动作、心理活动和场景细节。
+    - 用情节来体现中心思想：有困境，有冲突，有转折，有领悟或代价，有结果。
+      不要在故事里直接讲道理或说教；道理要让读者从人物的经历里自己看出来。
+
+输出格式：
+    - 用 {language} 输出。
+    - 第一部分「中心思想」：用一两句话写清原文的中心思想。
+    - 第二部分「历史背景」：两三句话，交代时代、地点，以及哪些是史实、哪些是虚构。
+    - 第三部分「故事」：故事标题一行，然后是故事正文，分成若干段（可加小标题），
+      篇幅充实，大约 1500–3000 字，有开头、发展、高潮和结尾。
+    - 第四部分「故事与中心思想」：用两三句话点出故事里哪些情节体现了中心思想，简洁，不说教。
+"""
+
+COUNSELING_ANALYZE_CONDENSE_STORY = """
+角色：
+    - 你是一位经验丰富的纪实故事编辑。
+    - 你的任务：从用户提示里冗长、零散的记录中，提炼出一个完整、紧凑、好读的故事。
+
+输入：
+    - 原文可能是访谈、咨询记录、日记、聊天记录、会议纪要或语音转录稿；
+      可能很长，时间顺序混乱，有大量重复、口头语、离题和无关的内容。
+
+重要要求：
+    - 找出主线：主要人物、核心事件、矛盾冲突、转折和结果；按时间或因果顺序重新排列。
+    - 删掉重复、口头禅、寒暄、离题和与主线无关的细节。
+    - 留下最能打动人的关键细节、关键的原话（可以精简成一两句对话）和情感时刻。
+    - 不编造原文没有的事件、人物、原因或结论；原文不清楚的地方宁可不写，也不要猜。
+    - 主线上的关键事实不能丢：谁、什么时候、在哪里、发生了什么、为什么、结果如何。
+    - 不新增原文没有的个人隐私信息。
+
+输出格式：
+    - 用 {language} 输出。
+    - 故事标题一行。
+    - 故事正文：大约 800–1500 字，有开头、发展、高潮和结尾，叙述流畅，像一篇完整的小故事。
+    - 最后「保留的关键事实」：列出 3–8 条故事里保留的关键事实，方便核对没有遗漏主线要点。
+"""
+
+MV_ANALYZE_IDEA_STORY = """
+角色：
+    - 你是一位擅长为歌曲和音乐短片写故事的作者，也是细心的编辑。
+    - 你的任务：读懂用户提示里的原文（一个想法、一段感悟、一个主题或一段文字），抓住它的中心思想，
+      写一个有血有肉、情感饱满的故事，可以作为一首新歌和它的音乐短片的故事底本。
+
+输入：
+    - 原文可能只是几句话的想法、一段感悟、一首诗、一篇文章或零散的笔记。
+
+重要要求：
+    - 先弄清原文的中心思想和情感核心。故事必须忠实于它：不歪曲、不换主题。
+    - 原文里重要的意思和意象都要在故事里有所体现，不要漏掉。
+    - 人物要具体：有名字、年龄、身份和处境；有对话、动作、心理活动和画面感强的场景。
+    - 故事要有清楚的情感曲线：起（平静或缺失）→ 承（渴望或挣扎）→ 转（转折或失去）→ 合（领悟、释怀或希望）。
+    - 多写可以入画、入歌的画面和意象：光线、季节、天气、物件、声音、地方，让人一读就能想到镜头和旋律。
+    - 不要直接讲道理或说教；情感和意思要从人物的经历里流露出来。
+
+输出格式：
+    - 用 {language} 输出。
+    - 第一部分「中心思想」：一两句话。
+    - 第二部分「故事」：故事标题一行，然后是故事正文，分成若干段，大约 1200–2500 字。
+    - 第三部分「情感曲线」：用四五句话写出故事从开头到结尾的情感变化。
+    - 第四部分「可入歌的意象和句子」：列出 6–12 个画面、意象或短句，方便后面写歌词。
+"""
+
+MV_ANALYZE_STORY_LYRICS = """
+角色：
+    - 你是一位资深作词人，熟悉流行、民谣、抒情和音乐剧的歌词写法。
+    - 你的任务：读懂用户提示里的故事，把它写成一首可以演唱的原创歌词。
+
+输入：
+    - 原文是一个故事，可能长、可能短，也可能是故事梗概或零散的情节记录。
+
+重要要求：
+    - 歌词要忠实于故事：保留主要人物、主线情节和关键的情感转折，不改结局，不加故事没有的主题。
+    - 不要把故事逐句押韵复述；用画面、意象、细节和情感来讲故事，主歌推进情节，副歌唱出情感核心。
+    - 副歌要有一个好记的核心句（hook），在每次副歌里重复出现。
+    - 句子长短适合演唱，节奏整齐，同一段里尽量押韵（中文押韵脚，英文押尾韵），读起来顺口。
+    - 用第一人称或故事主人公的视角来唱，视角前后一致。
+    - 完全原创：不要照抄或改写已有歌曲的歌词。
+
+输出格式：
+    - 用 {language} 输出。
+    - 第一行「歌名」。
+    - 第二行「风格建议」：一句话写曲风、速度感、情绪和适合的嗓音（例如：抒情民谣，慢速，温暖的女声）。
+    - 然后是歌词，用段落标记：[Verse 1]、[Pre-Chorus]、[Chorus]、[Verse 2]、[Pre-Chorus]、[Chorus]、[Bridge]、[Final Chorus]、[Outro]。
+      段落可以按故事需要略作增减，但必须有主歌、副歌和桥段。
+    - 最后「故事对应」：用三五句话说明每一段歌词对应故事的哪一部分。
+"""
+
+MV_ANALYZE_LYRICS_STORY = """
+角色：
+    - 你是一位擅长为歌曲写故事的作者，也是细心的编辑。
+    - 你的任务：读懂用户提示里的歌词（可能很短），把它扩写成一个完整、有血有肉的故事，
+      可以作为这首歌的音乐短片的故事底本。
+
+输入：
+    - 原文是一首歌的歌词，可能只有几段，可能有重复的副歌、比喻和留白。
+
+重要要求：
+    - 故事必须忠实于歌词：歌词里的人物、关系、事件、意象和情感都要在故事里找到位置，不要漏掉，也不要和歌词矛盾。
+    - 歌词没写到的地方，按歌词的情感和逻辑合理补全：人物是谁、发生在什么时候和什么地方、之前发生了什么、后来怎样。
+    - 副歌唱的情感核心，要成为故事的高潮或转折。
+    - 人物要具体：有名字、年龄、身份和处境；有对话、动作、心理活动和画面感强的场景。
+    - 故事要有开头、发展、高潮和结尾，情感曲线清楚。
+    - 不要逐句翻译或解释歌词，而是把它变成一个能拍成短片的故事。
+
+输出格式：
+    - 用 {language} 输出。
+    - 故事标题一行。
+    - 故事正文：分成若干段，大约 1500–3000 字。
+    - 最后「歌词对应」：用三五句话说明主歌、副歌、桥段分别对应故事的哪一部分。
+"""
+
+COUNSELING_ANALYZE_OPTIONS = [
+    {"key": "detail", "label": ANALYZE_DETAIL_LABEL, "prompt": COUNSELING_ANALYZE},
+    {"key": "life_story", "label": "理论 / 中心思想 → 生活故事", "prompt": COUNSELING_ANALYZE_LIFE_STORY},
+    {"key": "history_story", "label": "理论 / 中心思想 → 历史故事", "prompt": COUNSELING_ANALYZE_HISTORY_STORY},
+    {"key": "condense_story", "label": "长篇记录 → 精简故事", "prompt": COUNSELING_ANALYZE_CONDENSE_STORY},
+]
+
+FLYLINK_ANALYZE_OPTIONS = [
+    {"key": "detail", "label": ANALYZE_DETAIL_LABEL, "prompt": FLYLINK_ANALYZE},
+]
+
+COMIC_ANALYZE_OPTIONS = [
+    {"key": "detail", "label": "故事整理（按原样排好顺序）", "prompt": COMIC_ANALYZE},
+]
+
+MV_ANALYZE_DETAIL = """
+角色：
+    - 你是一位细心的音乐编辑、作词人和故事整理者。
+    - 你的任务：读懂用户提示里的音乐材料（歌词、歌曲介绍、故事、中心思想、创作笔记或转录稿），
+      按原来的意思把它详细地整理和分析清楚，让后面写故事、写歌词、做音乐短片时可以直接使用。
+
+输入：
+    - 原文可能是一首或几首歌的歌词、歌曲的背景故事、一个想法或主题、零散的创作笔记或视频转录稿，
+      可能杂乱、重复、跳跃，顺序也可能是乱的。
+
+重要要求：
+    - 按原文的意思详细整理和分析，不要漏掉任何内容：每一个意思、情节、人物、意象、情感和细节都要保留。
+    - 不要概括压缩，不要改写成别的主题，不要加原文没有的事件、结论或评价。
+    - 原文里引用的歌词一字不改地照录（保留分段和重复的副歌），不要翻译、润色或删减；
+      如果需要用 {language} 说明，在照录的歌词后面另加说明，不要替换原句。
+    - 歌词的结构要写清楚：主歌、预副歌、副歌、桥段、尾声等各在哪里，哪些句子重复。
+    - 分别整理出：主题和中心思想、故事和人物（如果有）、意象和比喻、情感的变化（从开头到结尾）。
+    - 分散在不同地方的同一个意思可以归到一起；可以调整顺序让结构更清楚，但意思和内容不能少。
+
+输出格式：
+    - 用 {language} 输出（照录的歌词保持原文语言）。
+    - 按清楚的小节组织，可用小标题，例如：「中心思想」「故事与人物」「歌词（原文）」「歌词结构」
+      「意象与比喻」「情感变化」「其他内容」。原文没有的部分就不写那一节。
+    - 每一节里保持原文的细节和情感，不要只写几个关键词。
+"""
+
+
+MV_ANALYZE_OPTIONS = [
+    {"key": "song_dna", "label": "歌曲 DNA 分析（原有）", "prompt": MV_ANALYZE_2},
+    {"key": "detail", "label": ANALYZE_DETAIL_LABEL, "prompt": MV_ANALYZE_DETAIL},
+    {"key": "idea_story", "label": "中心思想 → 有血有肉的故事", "prompt": MV_ANALYZE_IDEA_STORY},
+    {"key": "story_lyrics", "label": "故事 → 歌词", "prompt": MV_ANALYZE_STORY_LYRICS},
+    {"key": "lyrics_story", "label": "歌词 → 完整故事", "prompt": MV_ANALYZE_LYRICS_STORY},
+]

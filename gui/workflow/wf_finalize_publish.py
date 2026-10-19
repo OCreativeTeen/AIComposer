@@ -21,11 +21,6 @@ from gui.publish_metadata_dialog import ask_publish_metadata_then_schedule, scen
 
 
 class FinalizePublishMixin:
-    def _reveal_published_video(self, path: str) -> None:
-        from gui.downloader import _open_feature_media_in_explorer
-
-        _open_feature_media_in_explorer(path)
-
     def log_to_output(self, output_widget, message):
         """向输出控件写入日志信息"""
         if output_widget and hasattr(output_widget, 'insert'):
@@ -173,6 +168,15 @@ class FinalizePublishMixin:
         self.refresh_gui_scenes()
 
     def publish_video(self):
+        if getattr(self, "_publish_upload_running", False):
+            win = getattr(self, "_publish_progress_win", None)
+            try:
+                if win is not None and win.winfo_exists():
+                    win.lift()
+            except tk.TclError:
+                pass
+            messagebox.showinfo("视频发布", "上一次上传还没结束，请等它完成或先取消。", parent=self.root)
+            return
         lang = getattr(self.workflow, "language", None) or "zh"
         pc = project_manager.PROJECT_CONFIG or {}
         scenes = getattr(self.workflow, "scenes", None) or []
@@ -233,16 +237,33 @@ class FinalizePublishMixin:
         title_slug = make_safe_file_name(conv.replace("\n", " "), title_length=180)
         mode = flow["mode"]
         publish_at = flow["publish_at"]
-        try:
-            tg_lines = self.workflow.upload_video(
+        workflow = self.workflow
+        pid = getattr(workflow, "pid", "")
+
+        def _work(progress_cb, cancel_event):
+            return workflow.upload_video_file(
                 title_slug,
                 publish_at=publish_at,
                 description=flow["description"],
-                telegram_title=conv,
+                progress_cb=progress_cb,
+                cancel_event=cancel_event,
             )
-        except Exception as e:
-            messagebox.showerror("上传失败", str(e), parent=self.root)
-            return
+
+        def _done(up):
+            if getattr(self, "workflow", None) is not workflow:
+                messagebox.showwarning(
+                    "视频发布",
+                    f"上传已完成（YouTube id: {up.get('video_id')}），但现在打开的已不是项目 {pid}，"
+                    "这个 id 没有写进项目配置，也没有发 Telegram。",
+                    parent=self.root,
+                )
+                return
+            tg_lines = workflow.finish_video_upload(up, publish_at=publish_at, telegram_title=conv)
+            self._show_publish_result(mode, tg_lines)
+
+        self._run_upload_with_progress(_work, _done, title=conv)
+
+    def _show_publish_result(self, mode, tg_lines) -> None:
         tg_block = ""
         if tg_lines:
             tg_block = "\n\n--- Telegram ---\n" + "\n".join(tg_lines)
@@ -261,8 +282,108 @@ class FinalizePublishMixin:
                 msg += f"\nhttps://www.youtube.com/watch?v={vid}"
             messagebox.showinfo("提示", msg + tg_block, parent=self.root)
 
+    def _run_upload_with_progress(self, work, on_done, *, title: str = "") -> None:
+        """后台线程跑 work(progress_cb, cancel_event)，小窗口显示进度（可取消）；
+        结果 / 错误由主线程的 after() 轮询取回：成功调 on_done(result)，失败和以前一样弹「上传失败」。"""
+        from gui.dl.youtube_dl import UploadCancelled
+
+        self._publish_upload_running = True
+        cancel_event = threading.Event()
+        state = {"sent": 0, "total": 0, "dirty": False, "finished": False}
+        lock = threading.Lock()
+
+        win = tk.Toplevel(self.root)
+        self._publish_progress_win = win
+        win.title("视频发布 — 上传中")
+        win.transient(self.root)
+        win.resizable(False, False)
+        frm = ttk.Frame(win, padding=14)
+        frm.pack(fill=tk.BOTH, expand=True)
+        if title:
+            ttk.Label(frm, text=title[:60], justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
+        bar = ttk.Progressbar(frm, orient=tk.HORIZONTAL, length=360, mode="determinate", maximum=100)
+        bar.pack(fill=tk.X)
+        info = ttk.Label(frm, text="准备上传……")
+        info.pack(anchor="w", pady=(6, 8))
+
+        def _cancel():
+            if not cancel_event.is_set():
+                cancel_event.set()
+                info.config(text="正在取消（等这一块传完）……")
+                cancel_btn.state(["disabled"])
+
+        cancel_btn = ttk.Button(frm, text="取消", command=_cancel)
+        cancel_btn.pack(anchor="e")
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        try:
+            win.geometry(f"+{self.root.winfo_rootx() + 120}+{self.root.winfo_rooty() + 120}")
+        except tk.TclError:
+            pass
+
+        def progress_cb(sent, total):  # 工作线程里调
+            with lock:
+                state["sent"], state["total"], state["dirty"] = sent, total, True
+
+        def _tick():
+            # 只在主线程里碰 Tk：工作线程只写 state，这里每 200ms 读一次进度和结果。
+            if state["finished"]:
+                return
+            with lock:
+                sent, total, dirty = state["sent"], state["total"], state["dirty"]
+                state["dirty"] = False
+                outcome = state.get("outcome")
+            if outcome is not None:
+                kind, value = outcome
+                if kind == "ok":
+                    _ok(value)
+                else:
+                    _fail(value)
+                return
+            if dirty and not cancel_event.is_set():
+                try:
+                    pct = (sent * 100.0 / total) if total else 0.0
+                    bar.config(value=pct)
+                    info.config(
+                        text=f"{pct:.0f}%   {sent / 1048576:.1f} / {total / 1048576:.1f} MB"
+                    )
+                except tk.TclError:
+                    pass
+            self.root.after(200, _tick)
+
+        def _close():
+            state["finished"] = True
+            self._publish_upload_running = False
+            self._publish_progress_win = None
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+
+        def _ok(result):
+            _close()
+            on_done(result)
+
+        def _fail(exc):
+            _close()
+            if isinstance(exc, UploadCancelled):
+                messagebox.showinfo("视频发布", "已取消", parent=self.root)
+            else:
+                messagebox.showerror("上传失败", str(exc), parent=self.root)
+
+        def _run():
+            try:
+                result = work(progress_cb, cancel_event)
+                outcome = ("ok", result)
+            except BaseException as e:  # noqa: BLE001
+                outcome = ("err", e)
+            with lock:
+                state["outcome"] = outcome
+
+        self.root.after(200, _tick)
+        threading.Thread(target=_run, daemon=True, name="youtube-upload").start()
+
     def _show_finalize_done_dialog(self, title, message, pid=None):
-        """任务完成通知：OK + 播放视频（复用 play_finalize_video）。"""
+        """任务完成通知：OK + 播放视频（复用 play_finalize_video）+ 视频发布（复用 publish_video）。"""
         dlg = tk.Toplevel(self.root)
         dlg.title(title)
         dlg.transient(self.root)
@@ -277,7 +398,25 @@ class FinalizePublishMixin:
             dlg.destroy()
             self.play_finalize_video(pid=pid)
 
+        def _publish():
+            dlg.destroy()
+            # 和顶部「成片 → 视频发布」同一个入口；它按当前打开的项目发布。
+            cur = ""
+            try:
+                cur = self.get_pid() or ""
+            except Exception:
+                cur = getattr(getattr(self, "workflow", None), "pid", "") or ""
+            if pid and cur and pid != cur:
+                messagebox.showwarning(
+                    "视频发布",
+                    f"现在打开的是项目 {cur}，不是刚生成视频的 {pid}。\n请先切回 {pid} 再用「视频发布」。",
+                    parent=self.root,
+                )
+                return
+            self.publish_video()
+
         ttk.Button(btns, text="播放视频", command=_play).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btns, text="视频发布", command=_publish).pack(side=tk.LEFT, padx=(0, 8))
         ok = ttk.Button(btns, text="OK", command=dlg.destroy)
         ok.pack(side=tk.LEFT)
         dlg.bind("<Return>", lambda e: dlg.destroy())
@@ -419,8 +558,6 @@ class FinalizePublishMixin:
                 )
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
-                final_path = config.publish_final_video_path(self.workflow.pid)
-                self.root.after(0, lambda p=final_path: self._reveal_published_video(p))
             except Exception as e:
                 self.log_to_output(self.video_output, f"❌ 最终视频生成失败: {str(e)}")
                 self.tasks[task_id]["status"] = "失败"

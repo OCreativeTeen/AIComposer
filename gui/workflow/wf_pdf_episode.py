@@ -12,19 +12,6 @@ from gui.choice_dialog import askchoice
 
 
 class PdfEpisodeMixin:
-    def split_current_group(self):
-        """从当前场景起，把连续的同一集划成新的一集。"""
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not scene:
-            messagebox.showwarning("拆集", "请先选中一个场景。", parent=self.root)
-            return
-        new_name = self.workflow.split_group_at(self.current_scene_index)
-        if not new_name:
-            return
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
-        show_auto_close_popup(self.root, "拆集", f"从当前场景起为第 {new_name} 集")
-
     def open_adjust_episode_dialog(self):
         """手动调整集的边界：前面的场景归上一集，或从本场起归下一集。"""
         if not self.workflow or not self.workflow.get_scene_by_index(self.current_scene_index):
@@ -49,24 +36,51 @@ class PdfEpisodeMixin:
         ttk.Label(
             main,
             text=(
-                f"现在是第 {cur_name} 集，当前是本集第 {before + 1} 场，"
+                f"现在是第 {cur_name} 集，当前是本集第 {before} 场，"
                 f"本集共 {end - start + 1} 场。"
             ),
             justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(0, 8))
 
-        def run(direction: str) -> None:
-            target, reason = self.workflow.move_to_adjacent_episode(index, direction)
+        focus_scene = scenes[index]
+
+        def run(kind: str, direction: str) -> None:
+            if kind == "merge":
+                target, reason = self.workflow.merge_adjacent_episode(index, direction)
+            else:
+                target, reason = self.workflow.move_to_adjacent_episode(index, direction)
             if not target:
                 messagebox.showwarning("调整集", reason, parent=dlg)
                 return
+            info = dict(getattr(self.workflow, "last_episode_op", {}) or {})
             self.workflow.save_scenes_to_json()
             dlg.destroy()
+            # 还停在同一个场景（它的新位置）。
+            for i, sc in enumerate(self.workflow.scenes or []):
+                if sc is focus_scene:
+                    self.current_scene_index = i
+                    break
             self.refresh_gui_scenes()
-            show_auto_close_popup(self.root, "调整集", f"已归到第 {target} 集")
+            self._offer_episode_leftover_cleanup(info)
+            if kind == "merge":
+                msg = f"第 {info.get('absorbed')} 集已并进第 {target} 集"
+            else:
+                msg = f"已归到第 {target} 集"
+            renamed = info.get("renamed") or []
+            if renamed:
+                msg += "；后面的集号往前补：" + "、".join(f"{n}→{m}" for n, m in renamed)
+            if info.get("renumber_skipped"):
+                messagebox.showwarning("调整集", info["renumber_skipped"], parent=self.root)
+            missing = info.get("pages_missing") or []
+            if missing:
+                msg += f"；有 {len(missing)} 页原图已经不在（页码 {', '.join(map(str, missing))}），这几场的页码清掉了"
+            show_auto_close_popup(self.root, "调整集", msg)
 
-        prev_ok = bool(prev_name)
-        next_ok = bool(next_name)
+        is_first = index == start
+        is_last = index == end
+        # 整集都挪走会把本集挪空：那种情况用合并。
+        prev_ok = bool(prev_name) and not is_last
+        next_ok = bool(next_name) and not is_first
         prev_text = (
             f"本集开头到当前场景的 {before} 场，归到上一集（第 {prev_name} 集）"
             if prev_ok
@@ -77,16 +91,78 @@ class PdfEpisodeMixin:
             if next_ok
             else "当前场景到本集结尾归到下一集"
         )
-        prev_btn = ttk.Button(main, text=prev_text, command=lambda: run("prev"))
+        prev_btn = ttk.Button(main, text=prev_text, command=lambda: run("move", "prev"))
         prev_btn.pack(fill=tk.X, pady=(0, 6))
-        next_btn = ttk.Button(main, text=next_text, command=lambda: run("next"))
+        next_btn = ttk.Button(main, text=next_text, command=lambda: run("move", "next"))
         next_btn.pack(fill=tk.X)
+        ttk.Separator(main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+        cur_num = self.workflow._episode_number(cur_name)
+        split_ok = index < end and cur_num is not None
+
+        def run_split() -> None:
+            if not messagebox.askyesno(
+                "调整集",
+                f"从第{before}场之后分成新的一集（第{cur_num + 1}集）？\n"
+                f"本集留下第 1–{before} 场，后面 {end - index} 场成为第{cur_num + 1}集，后面各集集号往后挪一个。",
+                parent=dlg,
+            ):
+                return
+            new_ep, reason = self.workflow.split_episode_after(index)
+            if not new_ep:
+                messagebox.showwarning("调整集", reason, parent=dlg)
+                return
+            info = dict(getattr(self.workflow, "last_episode_op", {}) or {})
+            self.workflow.save_scenes_to_json()
+            dlg.destroy()
+            for i, sc in enumerate(self.workflow.scenes or []):
+                if sc is focus_scene:
+                    self.current_scene_index = i
+                    break
+            self.refresh_gui_scenes()
+            msg = f"后面 {info.get('scenes')} 场成为第 {new_ep} 集"
+            renamed = info.get("renamed") or []
+            if renamed:
+                msg += "；后面的集号往后挪：" + "、".join(f"{a}→{b}" for a, b in sorted(renamed))
+            missing = info.get("pages_missing") or []
+            if missing:
+                msg += f"；有 {len(missing)} 页原图已经不在（页码 {', '.join(map(str, missing))}）"
+            show_auto_close_popup(self.root, "调整集", msg)
+
+        split_btn = ttk.Button(main, text="从本场之后分成新一集", command=run_split)
+        split_btn.pack(fill=tk.X, pady=(0, 6))
+        if not split_ok:
+            split_btn.state(["disabled"])
+        merge_prev_btn = ttk.Button(
+            main, text="与上一集合并（本集接在上一集后面）", command=lambda: run("merge", "prev")
+        )
+        merge_prev_btn.pack(fill=tk.X, pady=(0, 6))
+        merge_next_btn = ttk.Button(
+            main, text="与下一集合并（下一集接在本集后面）", command=lambda: run("merge", "next")
+        )
+        merge_next_btn.pack(fill=tk.X)
         if not prev_ok:
             prev_btn.state(["disabled"])
-            ttk.Label(main, text="没有上一集。", foreground="#888888").pack(anchor=tk.W, pady=(6, 0))
         if not next_ok:
             next_btn.state(["disabled"])
+        if not prev_name:
+            merge_prev_btn.state(["disabled"])
+            ttk.Label(main, text="没有上一集。", foreground="#888888").pack(anchor=tk.W, pady=(6, 0))
+        if not next_name:
+            merge_next_btn.state(["disabled"])
             ttk.Label(main, text="没有下一集。", foreground="#888888").pack(anchor=tk.W, pady=(6, 0))
+        if is_first and next_name:
+            ttk.Label(
+                main, text=f"当前是第1场：整集移走请用『与下一集合并』。", foreground="#888888"
+            ).pack(anchor=tk.W, pady=(6, 0))
+        if is_last and prev_name:
+            ttk.Label(
+                main, text="当前是最后一场：整集移走请用『与上一集合并』。", foreground="#888888"
+            ).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(
+            main,
+            text="动之前 scenes.json 和 PDF 导入记录会备份到项目的 _backup 文件夹。",
+            foreground="#888888",
+        ).pack(anchor=tk.W, pady=(6, 0))
         ttk.Button(main, text="取消", command=dlg.destroy).pack(anchor=tk.E, pady=(10, 0))
         try:
             dlg.geometry(f"+{self.root.winfo_rootx() + 80}+{self.root.winfo_rooty() + 120}")
@@ -94,9 +170,40 @@ class PdfEpisodeMixin:
             pass
         dlg.grab_set()
 
-    def _on_media_drop_pdf(self, pdf_path: str, origin: str = "drop") -> None:
+    def _offer_episode_leftover_cleanup(self, info: dict) -> None:
+        """并掉的那一集（或被挪空的那一集）文件夹里只剩没用到的文件：问一下要不要删。"""
+        folder = (info or {}).get("leftover_dir") or ""
+        if not folder or not os.path.isdir(folder):
+            return
+        episode = info.get("absorbed") or info.get("source") or "?"
+        files = self.workflow.folder_leftovers(folder)
+        if not files:
+            self.workflow.trash_leftovers(folder, str(episode))  # 空文件夹直接去掉
+            return
+        shown = "\n".join(os.path.basename(f) for f in files[:12])
+        if len(files) > 12:
+            shown += f"\n……（共 {len(files)} 个）"
+        ok = messagebox.askyesno(
+            "调整集",
+            f"第{episode}集文件夹还剩 {len(files)} 个没有用到的文件，删除吗？\n\n{folder}\n\n{shown}",
+            parent=self.root,
+        )
+        if not ok:
+            messagebox.showinfo("调整集", f"这些文件留在：\n{folder}", parent=self.root)
+            return
+        res = self.workflow.trash_leftovers(folder, str(episode))
+        where = "回收站" if res.get("method") == "recycle_bin" else res.get("trash_dir")
+        text = f"已删除 {res.get('count', 0)} 个文件（放进 {where}）。"
+        if res.get("failed"):
+            text += "\n有些没删掉：\n" + "\n".join(res["failed"][:8])
+        messagebox.showinfo("调整集", text, parent=self.root)
+
+    def _on_media_drop_pdf(self, pdf_path: str, origin: str = "drop", cross_episodes: bool = False) -> None:
         """拖进来的 PDF（origin="drop"）或全集生成下载的 PDF（origin="全集生成"）：先拆到临时目录预览；
-        分配给场景时才复制进本集 media 文件夹。每次拆页都记进本集的 PDF 导入记录。"""
+        分配给场景时才复制进本集 media 文件夹。每次拆页都记进本集（当前场景所在集）的 PDF 导入记录。
+
+        ``cross_episodes``：全集生成选了「本集到结束」且跨了几集。这时「写到结束」写完本集后接着写后面各集，
+        每页复制进那一集自己的 media 文件夹（接在那一集已有页之后编号）。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
@@ -129,6 +236,7 @@ class PdfEpisodeMixin:
             "dir": folder,
             "base": self.workflow.episode_next_page_base(group_name),
             "pdf": os.path.abspath(pdf_path),
+            "cross_episodes": bool(cross_episodes),
         }
         self._open_pdf_page_review(
             folder, list(pages), group_name, os.path.basename(pdf_path), initial_index=0, staging=staging
@@ -567,8 +675,37 @@ class PdfEpisodeMixin:
         path_lbl = ttk.Label(dlg, text=folder, anchor="w")
         path_lbl.pack(fill=tk.X, padx=8)
 
+        def _cross() -> bool:
+            st = state["staging"]
+            return bool(st and st.get("cross_episodes"))
+
+        def _forward_targets(page_i: int) -> list:
+            """跨集「写到结束」要写的 [(场景序号, 集名)]：本集从当前场景起，再接后面各集全部场景，页用完为止。"""
+            indices = self.workflow.group_scene_indices(group_name)
+            cur = self.current_scene_index
+            if cur not in indices:
+                return []
+            out = [(i, group_name) for i in indices[indices.index(cur):]]
+            later = self.workflow.episode_groups_from(self.workflow.scenes[cur])[1:]
+            for g in later:
+                out.extend((i, g) for i in self.workflow.group_scene_indices(g))
+            return out[: max(0, len(pages) - page_i)]
+
         def _forward_hint(page_i: int) -> str:
-            """“写到本集结束”按下去会写哪几场，不会超出本集。"""
+            """“写到本集结束”按下去会写哪几场，不会超出本集（跨集模式会接着写后面各集）。"""
+            if _cross():
+                targets = _forward_targets(page_i)
+                if not targets:
+                    return f"当前场景不在第 {group_name} 集，不能“写到结束”。"
+                groups_hit = []
+                for _i, g in targets:
+                    if g not in groups_hit:
+                        groups_hit.append(g)
+                return (
+                    f"写到结束（跨集）：从当前场景起写 {len(targets)} 场，"
+                    f"第 {groups_hit[0]}" + (f"–{groups_hit[-1]}" if len(groups_hit) > 1 else "") + " 集，"
+                    f"用 {len(targets)} 张图；每集的页复制进那一集自己的文件夹。"
+                )
             indices = self.workflow.group_scene_indices(group_name)
             cur = self.current_scene_index
             if cur not in indices:
@@ -726,6 +863,43 @@ class PdfEpisodeMixin:
             first_page = _episode_no(_page_number(page_i))
             last_page_no = first_page
             written_scenes: list = []
+            if _cross():
+                # 跨集：本集照旧（_assign_image），后面各集每页复制进那一集的 media 文件夹，接在已有页之后编号。
+                bases: dict = {}
+                counts: dict = {}
+                groups_hit: list = []
+                try:
+                    for gi, g in _forward_targets(page_i):
+                        scene = self.workflow.scenes[gi]
+                        if g == group_name:
+                            last_page_no = _assign_image(scene, page_i)
+                        else:
+                            if g not in bases:
+                                bases[g] = self.workflow.episode_next_page_base(g)
+                            counts[g] = counts.get(g, 0) + 1
+                            page_no = bases[g] + counts[g]
+                            src = self.workflow.stage_page_into_episode(pages[page_i], g, page_no)
+                            self._assign_scene_clip_image_from_file(scene, src)
+                            self._tag_scene_pdf_page(scene, g, page_no, state["pdf_name"])
+                        if g not in groups_hit:
+                            groups_hit.append(g)
+                        written += 1
+                        written_scenes.append(scene)
+                        page_i += 1
+                    self.workflow.save_scenes_to_json()
+                    self.display_image_on_canvas_for_track("clip_image")
+                except Exception as e:  # noqa: BLE001
+                    messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
+                    return
+                dlg.destroy()
+                span = (f"第 {groups_hit[0]}–{groups_hit[-1]} 集" if len(groups_hit) > 1
+                        else f"第 {groups_hit[0]} 集" if groups_hit else "")
+                summary = f"从 PDF 第 {_page_number(idx[0])} 页起，写入了{span}共 {written} 场。"
+                self.root.after(
+                    50,
+                    lambda sc=list(written_scenes), msg=summary: self._offer_still_videos_after_pdf(sc, msg),
+                )
+                return
             try:
                 while scene_i < len(self.workflow.scenes) and page_i < len(pages):
                     scene = self.workflow.scenes[scene_i]
@@ -770,7 +944,9 @@ class PdfEpisodeMixin:
         ext_btn.pack(side=tk.RIGHT)
         assign_btn = ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current)
         assign_btn.pack(side=tk.LEFT, padx=(0, 6))
-        forward_btn = ttk.Button(bar, text="写到本集结束", command=_assign_forward)
+        forward_btn = ttk.Button(
+            bar, text=("写到结束（跨集）" if _cross() else "写到本集结束"), command=_assign_forward
+        )
         forward_btn.pack(side=tk.LEFT)
 
         def _sync_buttons():
@@ -778,6 +954,7 @@ class PdfEpisodeMixin:
             can_open = bool(st and st.get("pdf") and os.path.isfile(st["pdf"]))
             ext_btn.state(["!disabled"] if can_open else ["disabled"])
             ok = not state["missing"]
+            forward_btn.config(text=("写到结束（跨集）" if _cross() else "写到本集结束"))
             for b in (assign_btn, forward_btn):
                 b.state(["!disabled"] if ok else ["disabled"])
 
@@ -895,6 +1072,8 @@ class PdfEpisodeMixin:
         dlg._pdf_review = {
             "select_source": _select_source,
             "assign_current": _assign_current,
+            "assign_forward": _assign_forward,
+            "forward_hint": _forward_hint,
             "state": state,
             "pages": pages,
             "labels": _labels,

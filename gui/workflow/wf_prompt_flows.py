@@ -102,6 +102,7 @@ class PromptFlowsMixin:
             host_narrator=project_manager.project_narrator(),
             saved_choice=(project_manager.PROJECT_CONFIG or {}).get("picture_prompt"),
             save_choice=save_choice,
+            actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
         )
 
     def _place_popup_near(self, dlg: tk.Toplevel, anchor, *, below: bool) -> None:
@@ -299,8 +300,23 @@ class PromptFlowsMixin:
             cfg["slide_prompt"] = choice
             save_project_config(parent=self.root)
 
+        def scene_range(range_key: str) -> tuple[list, list]:
+            """范围：本集，或本集到结束（本集和后面各集）。返回 (场景, 每场集名)。"""
+            self.update_current_scene()
+            if not self.workflow:
+                return [], []
+            cur = self.workflow.get_scene_by_index(self.current_scene_index)
+            if not isinstance(cur, dict):
+                return [], []
+            if range_key == "to_end":
+                return self.workflow.scenes_from_episode_to_end(cur)
+            g = self.workflow.scene_group(cur)
+            scenes = [s for s in self.workflow.scenes_in_story(cur) if isinstance(s, dict)]
+            return scenes, [g] * len(scenes)
+
         def open_slides_manual(
-            prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "", actor_pdf: str = ""
+            prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "", actor_pdf: str = "",
+            cross_episodes: bool = False,
         ) -> None:
             """提交：手工 LLM 窗口 CLI自动 → NotebookLM Studio（kind）→ 下载 → 系统程序打开。"""
             import os
@@ -323,7 +339,10 @@ class PromptFlowsMixin:
                 except OSError as exc:
                     print(f"⚠️ 移动到 working 失败，用原位置：{exc}")
                 if path.lower().endswith(".pdf"):
-                    self.root.after(50, lambda p=path: self._on_media_drop_pdf(p, origin="全集生成"))
+                    self.root.after(
+                        50,
+                        lambda p=path: self._on_media_drop_pdf(p, origin="全集生成", cross_episodes=cross_episodes),
+                    )
                     return
                 try:
                     os.startfile(path)
@@ -355,4 +374,5 @@ class PromptFlowsMixin:
             main_character="",
             open_manual=open_slides_manual,
             actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
+            get_scene_range=scene_range,
         )

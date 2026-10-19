@@ -777,7 +777,7 @@ class SceneEditorImpl:
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
                 if slide and os.path.isfile(slide):
                     pages = int(_remember_pdf_source(slide).get("pages") or 0)
-                    out.append({"kind": "pdf", "path": slide, "select": "pdf",
+                    out.append({"kind": "pdf", "path": slide, "select": "pdf", "analyze": True,
                                 "title": f"PDF：{os.path.basename(slide)}", "detail": f"共 {pages} 页"})
                 else:
                     out.append({"kind": "pdf", "path": "", "select": "", "placeholder": True,
@@ -807,7 +807,7 @@ class SceneEditorImpl:
                 if transcript_path:
                     _tp, ttext = _item_transcript_text(video_detail)
                     n_lines = len([x for x in (ttext or "").splitlines() if x.strip()])
-                    out.append({"kind": "transcript", "path": transcript_path, "select": "media",
+                    out.append({"kind": "transcript", "path": transcript_path, "select": "media", "analyze": True,
                                 "title": f"文字稿：{os.path.basename(transcript_path)}",
                                 "detail": f"{n_lines} 行。双击把文字稿文件拷到剪贴板"})
                 else:
@@ -945,6 +945,9 @@ class SceneEditorImpl:
                         )
                     menu.add_command(label="打开", command=lambda: _open_path(path))
                     menu.add_separator()
+                if real and entry.get("analyze"):
+                    menu.add_command(label="分析（只用这一项）…", command=lambda: _material_analyze(entry))
+                    menu.add_separator()
                 if kind in ("pdf", ""):
                     menu.add_command(label="选择 / 换一份 PDF …", command=lambda: _material_pick({"kind": "pdf"}))
                 if kind in ("image", ""):
@@ -966,6 +969,92 @@ class SceneEditorImpl:
                         ),
                     )
 
+            # ---- 分析报告：先选分析方式（频道 analyze_prompt 选项）和结果放法，再生成 ----
+            def _analyze_options() -> list:
+                try:
+                    return config.get_channel_analyze_options(self._channel_config_key())
+                except Exception:
+                    return config.get_channel_analyze_options("")
+
+            def _analyze_choice_saved():
+                cfg = project_manager.PROJECT_CONFIG
+                if isinstance(cfg, dict) and (cfg.get("pid") or "") and (
+                    cfg.get("pid") == project_manager.list_json_row_workflow_pid(video_detail)
+                ) and isinstance(cfg.get("analyze_choice"), dict):
+                    return cfg["analyze_choice"]
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict) and isinstance(pp.get("analyze_choice"), dict):
+                    return pp["analyze_choice"]
+                return video_detail.get("analyze_choice")
+
+            def _analyze_choice_remember(choice: dict) -> None:
+                """记在这一条的项目配置里（project_profile；同一项目开着时也写进 PROJECT_CONFIG）。"""
+                keep = {"key": choice.get("key") or "", "mode": choice.get("mode") or "replace"}
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict) and pp:
+                    pp["analyze_choice"] = keep
+                else:
+                    video_detail["analyze_choice"] = keep
+                cfg = project_manager.PROJECT_CONFIG
+                if isinstance(cfg, dict) and (cfg.get("pid") or "") and (
+                    cfg.get("pid") == project_manager.list_json_row_workflow_pid(video_detail)
+                ):
+                    cfg["analyze_choice"] = keep
+
+            def _run_analyze(source_text=None, source_label: str = "") -> None:
+                """``source_text`` 为 None：原来的「重新生成分析报告」（文字稿，没有就用现有分析报告）。"""
+                if not callable(on_resummarize):
+                    messagebox.showinfo("分析", "这里不能生成分析报告。", parent=dlg)
+                    return
+                from gui.dl.analyze_picker import ask_analyze_choice
+
+                choice = ask_analyze_choice(
+                    dlg,
+                    _analyze_options(),
+                    saved=_analyze_choice_saved(),
+                    title="重新生成分析报告" if source_text is None else "分析这一项",
+                    source_label=source_label,
+                )
+                if not choice:
+                    return
+                _analyze_choice_remember(choice)
+                kw = {"analyze_key": choice["key"], "append": choice["mode"] == "append"}
+                if source_text is not None:
+                    kw["source_text"] = source_text
+                try:
+                    on_resummarize(**kw)
+                except TypeError:
+                    if source_text is not None:
+                        messagebox.showwarning("分析", "这个窗口还不支持只用这一项生成。", parent=dlg)
+                        return
+                    on_resummarize()
+                _analyzed_edit["text"] = None
+                _analyzed_edit["reload"] = True
+                if material_var.get() != "analyzed":
+                    material_var.set("analyzed")
+                _fill_material_preview()
+
+            def _material_analyze(entry: dict) -> None:
+                kind = entry.get("kind") or ""
+                path = entry.get("path") or ""
+                text = ""
+                if kind == "pdf" and path and os.path.isfile(path):
+                    src = _remember_pdf_source(path)
+                    text = (src.get("text") or "").strip() if src.get("has_text") else ""
+                    if not text:
+                        messagebox.showwarning("分析", "这份 PDF 没有可以提取的文字（可能是扫描图片）。", parent=dlg)
+                        return
+                elif kind == "transcript":
+                    _tp, ttext = _item_transcript_text(video_detail)
+                    text = (ttext or "").strip()
+                    if not text:
+                        messagebox.showwarning("分析", "这一条的文字稿是空的。", parent=dlg)
+                        return
+                else:
+                    return
+                label = f"{'PDF' if kind == 'pdf' else '文字稿'}：{os.path.basename(path)}（{len(text)} 字）"
+                _run_analyze(text, label)
+
             def _walk_materials_drop(widget) -> None:
                 walker = scene_ui.get("walk_drop")
                 if callable(walker):
@@ -980,6 +1069,7 @@ class SceneEditorImpl:
                 on_copy=_material_copy,
                 build_menu=_material_menu,
                 on_rebuilt=_walk_materials_drop,
+                on_analyze=_material_analyze,
             )
             scene_ui["materials_panel"] = materials_panel
 
@@ -1025,15 +1115,8 @@ class SceneEditorImpl:
 
             def _on_analyzed_double(_event=None):
                 if _analyzed_press["was_on"] and callable(on_resummarize):
-                    if messagebox.askyesno(
-                        "重新生成分析报告",
-                        "要从原始材料重新生成分析报告吗？",
-                        parent=dlg,
-                    ):
-                        on_resummarize()
-                        _analyzed_edit["text"] = None
-                        _analyzed_edit["reload"] = True
-                        _fill_material_preview()
+                    # 原来的确认框换成选择窗：分析方式 + 替换 / 追加；材料照旧（文字稿，没有就用现有分析报告）。
+                    _run_analyze(None, "原始材料（文字稿；没有文字稿时用现有的分析报告）")
                 return "break"
 
             _pdf_press = {"was_on": False, "when": 0}

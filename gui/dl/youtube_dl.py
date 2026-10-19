@@ -23,6 +23,15 @@ from gui.dl.list_store import _GENERIC_PROJECT_VIDEO_TITLES, _channel_list_dir_f
 from gui.dl.row_keys import _video_youtube_id  # re-export
 
 
+UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024  # 分块上传：每块 8 MB，块之间汇报进度、检查取消
+_UPLOAD_RETRY_STATUS = (500, 502, 503, 504)
+_UPLOAD_MAX_RETRIES = 5
+
+
+class UploadCancelled(Exception):
+    """用户在分块之间取消了上传。"""
+
+
 def _normalize_youtube_watch_url(url: str) -> str:
     """单视频 watch URL；去掉 list / start_radio 等，避免 yt-dlp 按播放列表解析。"""
     url = (url or "").strip()
@@ -1605,10 +1614,15 @@ class MediaDownloader:
         tags,
         privacy="unlisted",
         publish_at=None,
+        progress_cb=None,
+        cancel_event=None,
+        chunksize=UPLOAD_CHUNK_SIZE,
     ):
         """
         publish_at: 若为 datetime，则定时公开（YouTube 要求 privacy 为 private，并设置 status.publishAt，UTC RFC3339）。
         若为 None，则按 privacy 立即上传（如 unlisted）。
+        progress_cb(sent_bytes, total_bytes)：每传完一块调一次（在调用者的线程里）。
+        cancel_event：threading.Event；块之间发现已设就抛 UploadCancelled。
         """
         scopes = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.force-ssl"]
 
@@ -1692,7 +1706,9 @@ class MediaDownloader:
             }
         }
 
-        media_file = googleapiclient.http.MediaFileUpload(file_path, mimetype="video/mp4", resumable=True)
+        media_file = googleapiclient.http.MediaFileUpload(
+            file_path, mimetype="video/mp4", resumable=True, chunksize=int(chunksize or UPLOAD_CHUNK_SIZE)
+        )
 
         request = youtube.videos().insert(
             part="snippet,status,localizations",  # ✅ UPDATED: Include localizations part
@@ -1700,7 +1716,7 @@ class MediaDownloader:
             media_body=media_file
         )
 
-        response = request.execute()
+        response = self._run_chunked_upload(request, file_path, progress_cb, cancel_event)
         video_id = response["id"]
         snippet = response.get("snippet") or {}
         published_at_iso = (
@@ -1735,6 +1751,53 @@ class MediaDownloader:
 
         return video_id, (published_at_iso or "").strip()
 
+
+    @staticmethod
+    def _run_chunked_upload(request, file_path, progress_cb=None, cancel_event=None):
+        """next_chunk() 循环：每块之后汇报进度、检查取消；5xx 按指数退避重试几次。返回 insert 的响应。"""
+        import random
+        import googleapiclient.errors
+
+        try:
+            total = os.path.getsize(file_path)
+        except OSError:
+            total = 0
+
+        def report(sent):
+            if progress_cb:
+                try:
+                    progress_cb(int(sent), int(total))
+                except Exception:
+                    pass
+
+        report(0)
+        response = None
+        retries = 0
+        last_pct = -10
+        while response is None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise UploadCancelled("已取消")
+            try:
+                status, response = request.next_chunk()
+            except googleapiclient.errors.HttpError as e:
+                code = getattr(getattr(e, "resp", None), "status", None)
+                if code in _UPLOAD_RETRY_STATUS and retries < _UPLOAD_MAX_RETRIES:
+                    retries += 1
+                    wait = min(30.0, (2 ** retries) + random.random())
+                    print(f"⚠️ 上传出错 HTTP {code}，{wait:.0f} 秒后重试（第 {retries} 次）")
+                    time.sleep(wait)
+                    continue
+                raise
+            if status is not None:
+                retries = 0
+                sent = int(getattr(status, "resumable_progress", 0) or 0)
+                report(sent)
+                pct = int(sent * 100 / total) if total else 0
+                if pct >= last_pct + 10:
+                    last_pct = pct
+                    print(f"⬆️ 上传中 {pct}%")
+        report(total)
+        return response
 
     def upload_thumbnail(self, youtube, video_id, thumbnail_path):
         """上传缩略图到YouTube视频"""

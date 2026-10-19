@@ -570,19 +570,97 @@ def _imagine_page(ctx, *, want_image: bool):
     return pages[0] if pages else None
 
 
-def prepare_imagine(image_path: str, status: Status = None) -> None:
-    """Open/reuse a Grok Imagine tab and attach ``image_path`` to its composer. Does NOT submit."""
+IMAGINE_MAX_INPUT_IMAGES = 5  # xAI docs: image edit takes up to 5 source images
+
+# Count the attachment thumbnails in the Imagine composer (one per attached input image).
+IMAGINE_COMPOSER_IMAGE_COUNT_JS = """() => {
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  let root = chat;
+  for (let up = 0; up < 8 && root && root.parentElement; up++) {
+    if (root.querySelector('button[aria-label="Remove image"], button[aria-label*="Remove"]')) break;
+    root = root.parentElement;
+  }
+  root = root || document;
+  const removes = root.querySelectorAll('button[aria-label="Remove image"]');
+  if (removes.length) return removes.length;
+  let n = 0;
+  for (const img of root.querySelectorAll('img')) {
+    const src = img.currentSrc || img.src || '';
+    if (!/^(blob:|data:image)/i.test(src)) continue;
+    const r = img.getBoundingClientRect();
+    if (r.width >= 20 && r.height >= 20) n++;
+  }
+  return n;
+}"""
+
+
+def _composer_image_count(page) -> int:
+    try:
+        return int(page.evaluate(IMAGINE_COMPOSER_IMAGE_COUNT_JS) or 0)
+    except Exception as exc:
+        print(f"[grok_cdp] composer image count probe failed: {exc}")
+        return -1
+
+
+def _attach_more_images(page, pngs: list, status: Status) -> None:
+    """Attach extra input images one at a time (keeps their order), waiting for each thumbnail to appear."""
+    bt = _bt()
+    for n, png in enumerate(pngs, start=2):
+        before = _composer_image_count(page)
+        _say(status, f"上传第 {n} 张图 …")
+        done = False
+        for sel in (bt.GROK_FILE_INPUT_SEL, 'input[type="file"]'):
+            loc = page.locator(sel)
+            if loc.count() < 1:
+                continue
+            loc.first.set_input_files(str(png), timeout=20_000)
+            done = True
+            break
+        if not done:
+            raise RuntimeError(f"第 {n} 张图没有地方上传（找不到文件输入框）")
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            now = _composer_image_count(page)
+            if before < 0 or now < 0 or now > before:
+                break
+            time.sleep(0.4)
+        else:
+            raise RuntimeError(f"第 {n} 张图没有出现在 Grok Imagine 输入框里（仍是 {before} 张），没有提交")
+    total = _composer_image_count(page)
+    if total >= 0 and total != len(pngs) + 1:
+        print(f"[grok_cdp] composer shows {total} images, expected {len(pngs) + 1}")
+        if total < len(pngs) + 1:
+            raise RuntimeError(f"Grok Imagine 输入框里只有 {total} 张图，应有 {len(pngs) + 1} 张，没有提交")
+
+
+def prepare_imagine(image_path, status: Status = None) -> None:
+    """Open/reuse a Grok Imagine tab and attach the input image(s) to its composer, in order. Does NOT submit.
+
+    ``image_path`` is one path or a list of paths (base picture first, then reference portraits; at most 5).
+    """
     from PIL import Image
 
     bt = _bt()
-    if not image_path or not os.path.isfile(image_path):
-        raise RuntimeError(f"找不到输入图片: {image_path}")
+    paths = [image_path] if isinstance(image_path, str) else [p for p in (image_path or []) if p]
+    if not paths:
+        raise RuntimeError("没有输入图片")
+    if len(paths) > IMAGINE_MAX_INPUT_IMAGES:
+        raise RuntimeError(f"Grok Imagine 最多 {IMAGINE_MAX_INPUT_IMAGES} 张输入图，这次有 {len(paths)} 张")
+    for one in paths:
+        if not os.path.isfile(one):
+            raise RuntimeError(f"找不到输入图片: {one}")
+    image_path = paths[0]
     port = ensure_chrome(status)
     from playwright.sync_api import sync_playwright
 
-    tmp_png = Path(os.environ.get("TEMP", ".")) / f"grok_cdp_in_{int(time.time())}.png"
-    with Image.open(image_path) as im:
-        im.convert("RGB").save(tmp_png, "PNG")
+    stamp = int(time.time())
+    tmp_pngs = []
+    for k, one in enumerate(paths, start=1):
+        tmp = Path(os.environ.get("TEMP", ".")) / f"grok_cdp_in_{stamp}_{k}.png"
+        with Image.open(one) as im:
+            im.convert("RGB").save(tmp, "PNG")
+        tmp_pngs.append(tmp)
+    tmp_png = tmp_pngs[0]
     try:
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
@@ -593,14 +671,17 @@ def prepare_imagine(image_path: str, status: Status = None) -> None:
             page.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=45_000)
             if _logged_out(page):
                 raise RuntimeError("Chrome 里的 grok.com 没有登录，请先在这个 Chrome (端口 9222) 里登录 Grok")
-            _say(status, "上传图片 …")
+            _say(status, "上传图片 …" if len(tmp_pngs) == 1 else f"上传第 1 / {len(tmp_pngs)} 张图 …")
             if not bt._grok_paste_cover_image_cdp(page, tmp_png):
                 raise RuntimeError("图片没有贴进 Grok Imagine 输入框")
+            if len(tmp_pngs) > 1:
+                _attach_more_images(page, tmp_pngs[1:], status)
     finally:
-        try:
-            tmp_png.unlink()
-        except OSError:
-            pass
+        for tmp in tmp_pngs:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _imagine_state(page) -> dict:
@@ -1043,8 +1124,9 @@ def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = Non
     return run_imagine_video(prompt, dest_dir, status, resolution=resolution, duration=duration)
 
 
-def make_image(prompt: str, image_path: str, status: Status = None):
-    """Grok Imagine: attach ``image_path`` + ``prompt``, generate, return a PIL Image."""
+def make_image(prompt: str, image_path, status: Status = None):
+    """Grok Imagine: attach ``image_path`` (one path, or a list: base picture + reference portraits, in order)
+    + ``prompt``, generate, return a PIL Image."""
     prepare_imagine(image_path, status)
     return run_imagine(prompt, status)
 

@@ -220,8 +220,10 @@ class MaterialsPanel(ttk.Frame):
         build_menu: Callable[[tk.Menu, dict], None],
         on_rebuilt: Callable[[tk.Widget], None] | None = None,
         height: int = 190,
+        on_analyze: Callable[[dict], None] | None = None,
     ) -> None:
         super().__init__(master)
+        self._on_analyze = on_analyze
         self._get_entries = get_entries
         self._on_select = on_select
         self._on_copy = on_copy
@@ -304,6 +306,11 @@ class MaterialsPanel(ttk.Frame):
                           font=("TkDefaultFont", 8), fg="gray30")
         detail.pack(fill=tk.X)
         widgets: list[tk.Widget] = [row, tile, thumb, text, title, detail]
+        if self._on_analyze and entry.get("analyze") and entry.get("path") and not entry.get("placeholder"):
+            # 「分析」：只用这一项的文字（PDF 文字 / 文字稿）作原始材料生成分析报告。
+            analyze_btn = ttk.Button(row, text="分析", width=5,
+                                     command=lambda en=entry: self._on_analyze(en))
+            analyze_btn.pack(side=tk.RIGHT, padx=(4, 2))
         if kind in ("audio", "video") and entry.get("path"):
             play_btn = ttk.Button(row, text="▶", width=3)
             play_btn.configure(command=lambda e=entry, b=play_btn: self._toggle_play(e, b))

@@ -777,12 +777,15 @@ class ChannelVideosDialogImpl:
             for ch in widget.winfo_children():
                 _bind_summary_nav_subtree(ch)
 
-        def _resummarize_one_video_detail(vd, parent=None):
+        def _resummarize_one_video_detail(vd, parent=None, *, analyze_key="", source_text=None, append=False):
+            """重新生成分析报告。``analyze_key`` 分析方式；``source_text`` 只用这段材料；``append`` 追加到末尾。"""
             host = parent or dialog
             if not isinstance(vd, dict):
                 return
             self.update_text_content(vd)
-            if not self.generate_analyzed_content_for_video(vd, force_rewrite=True):
+            if not self.generate_analyzed_content_for_video(
+                vd, force_rewrite=True, analyze_key=analyze_key, source_text=source_text, append=append
+            ):
                 messagebox.showwarning(
                     "重摘",
                     "无法重新摘要：缺少足够转录原文，或生成失败。",
@@ -1681,8 +1684,8 @@ class ChannelVideosDialogImpl:
             def _regen_project_from_summary():
                 _regenerate_project_for_video_detail(video_detail, summary_window)
 
-            def _resummarize_from_summary():
-                _resummarize_one_video_detail(video_detail, summary_window)
+            def _resummarize_from_summary(**kw):
+                _resummarize_one_video_detail(video_detail, summary_window, **kw)
 
             if isinstance(summary_window._summary_drop_ctx, dict):
                 summary_window._summary_drop_ctx["story_title_var"] = source_title_var

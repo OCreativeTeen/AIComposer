@@ -527,12 +527,6 @@ class LayoutMixin:
         # 「拷贝PDF」已移入「全集生成」（content.pdf 上传为 NotebookLM 来源）。
         ttk.Button(
             episode_btn_row,
-            text="拆成新集",
-            width=8,
-            command=self.split_current_group,
-        ).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(
-            episode_btn_row,
             text="贴回本集",
             width=8,
             command=self.paste_episode_scenes,

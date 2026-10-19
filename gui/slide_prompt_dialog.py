@@ -23,7 +23,14 @@ _DEFAULT_CHOICE = {
     "image": True,
     "actor_override": config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0],
     "output": "slides",
+    "range": "episode",
 }
+
+# 范围：本集 / 本集到结束（本集和后面各集，到项目最后一集）
+RANGE_CHOICES = (
+    ("episode", "本集"),
+    ("to_end", "本集到结束"),
+)
 
 # 全集生成的产物（NotebookLM Studio）：(cli_kind, 界面名)
 OUTPUT_CHOICES = (
@@ -54,6 +61,8 @@ def _clean_choice(saved) -> dict:
         choice["actor_override"] = saved["actor_override"]
     if saved.get("output") in {k for k, _ in OUTPUT_CHOICES}:
         choice["output"] = saved["output"]
+    if saved.get("range") in {k for k, _ in RANGE_CHOICES}:
+        choice["range"] = saved["range"]
     return choice
 
 
@@ -153,11 +162,15 @@ def open_slide_prompt_dialog(
     save_choice=None,
     open_manual=None,
     actor_avatar_dir: str = "",
+    get_scene_range=None,
 ) -> None:
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
     ``saved_choice`` 是项目里记下的上次选择；``save_choice(dict)`` 在关窗或拷贝时把当前选择记回项目。
     按「提交」：拷走提示词并关窗；给了 ``open_manual(prompt)`` 就再交给手工 LLM 窗口（NotebookLM 演示文稿）。
+
+    ``get_scene_range(range_key)`` → ``(scenes, episodes)``：range_key 是 "episode"（本集）或 "to_end"（本集到结束），
+    episodes 是和 scenes 等长的每场集名。不给就只有本集（``get_scenes``），也不显示「范围」。
     """
     dlg = tk.Toplevel(parent)
     dlg.title("全集生成")
@@ -186,6 +199,21 @@ def open_slide_prompt_dialog(
     image_var = tk.BooleanVar(value=last["image"])
     override_var = tk.StringVar(value=last["actor_override"])
     output_var = tk.StringVar(value=last["output"])
+    range_var = tk.StringVar(value=last["range"] if get_scene_range is not None else "episode")
+
+    def scene_range() -> tuple[list, list]:
+        """按「范围」取场景和每场集名。"""
+        if get_scene_range is not None:
+            try:
+                scenes_r, groups_r = get_scene_range(range_var.get())
+                scenes_r = list(scenes_r or [])
+                groups_r = list(groups_r or [])
+                pairs = [(s, g) for s, g in zip(scenes_r, groups_r) if isinstance(s, dict)]
+                return [s for s, _g in pairs], [g for _s, g in pairs]
+            except Exception as exc:  # noqa: BLE001
+                print(f"全集生成：取范围场景失败，改用本集：{exc}")
+        scenes_e = [s for s in (get_scenes() or []) if isinstance(s, dict)]
+        return scenes_e, []
 
     pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
 
@@ -207,6 +235,13 @@ def open_slide_prompt_dialog(
         groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N,
         title=f"写进 {CONTENT_PDF_NAME} 的内容", image_var=image_var,
     )
+
+    # 范围：放在「写进 content.pdf 的内容」右边。
+    if get_scene_range is not None:
+        range_box = ttk.LabelFrame(groups, text="范围", padding=(8, 4))
+        range_box.pack(side=tk.LEFT, anchor=tk.N, padx=(8, 0))
+        for value, label in RANGE_CHOICES:
+            ttk.Radiobutton(range_box, text=label, value=value, variable=range_var).pack(anchor=tk.W)
 
     # 背景：地域 · 时代 · 人物（全场内容），默认勾上。
     region, era = ("", "")
@@ -239,8 +274,16 @@ def open_slide_prompt_dialog(
             btn.configure(state=("disabled" if presentation else "normal"))
         out_label = dict(OUTPUT_CHOICES).get(output_var.get(), "幻灯片")
         single = "幻灯片是每场一页。" if output_var.get() == "slides" else ""
+        span = ""
+        try:
+            scenes_now, groups_now = scene_range()
+            span_zh, _en = config_prompt.episode_span_labels(groups_now)
+            where = span_zh or (f"第 {groups_now[0]} 集" if groups_now else "本集")
+            span = f"范围：{where}，共 {len(scenes_now)} 场。"
+        except Exception:  # noqa: BLE001 提示行算不出来不影响
+            span = ""
         hint.config(
-            text=f"{single}场景描述和讲话至少选一项。按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+            text=f"{span}{single}场景描述和讲话至少选一项。按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
         )
 
     def remember() -> None:
@@ -260,6 +303,7 @@ def open_slide_prompt_dialog(
                     "actor_override": override_var.get(),
                     "background": bool(bg_include_var.get()),
                     "output": output_var.get(),
+                    "range": range_var.get(),
                 }
             )
         except Exception as exc:  # noqa: BLE001 记不下来不影响拷贝
@@ -273,10 +317,12 @@ def open_slide_prompt_dialog(
         if not (visual_var.get() or speaking_var.get()):
             messagebox.showwarning("全集生成", "场景描述和讲话至少要选一项。", parent=dlg)
             return
-        scenes = [s for s in (get_scenes() or []) if isinstance(s, dict)]
+        scenes, scene_groups = scene_range()
         if not scenes:
             messagebox.showwarning("全集生成", "没有可用场景", parent=dlg)
             return
+        span_zh, _span_en = config_prompt.episode_span_labels(scene_groups)
+        print(f"全集生成：范围={range_var.get()} {span_zh or '单集'} 共 {len(scenes)} 场")
         cast = config_prompt.episode_actor_cast(scenes)
         if cast and not actor_var.get():
             # 场景里有人物，但「人物」没勾：不会有 Actors / actor.pdf / Actor_Reference。说清楚，让用户选。
@@ -314,6 +360,7 @@ def open_slide_prompt_dialog(
                 content_source=CONTENT_PDF_NAME,
                 actor_source=ACTOR_PDF_NAME,
                 content_images=bool(image_var.get()) and scenes_have_images(scenes),
+                episodes=scene_groups,
             )
         except ValueError as exc:
             messagebox.showerror("全集生成", str(exc), parent=dlg)
@@ -340,6 +387,7 @@ def open_slide_prompt_dialog(
                 keywords=text_var.get() == "keywords" and narrative not in ("tech", "exec"),
                 actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
                 dest=CONTENT_PDF_PATH,
+                episodes=scene_groups,
             )
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("全集生成", f"生成 {CONTENT_PDF_NAME} 失败：{exc}", parent=dlg)
@@ -353,7 +401,11 @@ def open_slide_prompt_dialog(
         # 和提示词里 Actor_Reference 同一条件：带 Actors，或讲述/汇报没有讲员时的 Silent actors；没有人物就不做。
         if config_prompt.prompt_has_cast(narrative, bool(actor_var.get()), scenes):
             try:
-                actor_pdf, _cast = build_actor_pdf(scenes, avatar_dir=actor_avatar_dir, dest=ACTOR_PDF_PATH)
+                _ov_label = override_var.get() if dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), "") else ""
+                actor_pdf, _cast = build_actor_pdf(
+                    scenes, avatar_dir=actor_avatar_dir, dest=ACTOR_PDF_PATH, override_label=_ov_label,
+                    style=style,  # 形象图按画面风格分目录查：avatar/<风格>/ → Realistic/ → 根目录
+                )
             except Exception as exc:  # noqa: BLE001
                 messagebox.showerror("全集生成", f"生成 {ACTOR_PDF_NAME} 失败：{exc}", parent=dlg)
                 return
@@ -377,7 +429,8 @@ def open_slide_prompt_dialog(
         nb_url = current_notebook_url()
         close()
         if callable(open_manual):
-            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, actor_pdf))
+            cross = bool(span_zh)  # 跨集：下载回来的 PDF「写到结束」可以接着写进后面各集
+            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, actor_pdf, cross))
 
     # 提交按钮放在右下角，字比默认大 30%，加粗。
     big_submit_button(dlg, bottom, copy_prompt).pack(
@@ -461,6 +514,7 @@ def open_slide_prompt_dialog(
     fill_notebooks([])
     refresh_notebooks()  # 打开窗口就在后台刷新（必要时启动 9222 Chrome）
     output_var.trace_add("write", refresh_choices)
+    range_var.trace_add("write", refresh_choices)
 
     dlg.protocol("WM_DELETE_WINDOW", close)
     narrative_var.trace_add("write", refresh_choices)

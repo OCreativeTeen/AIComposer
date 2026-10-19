@@ -130,16 +130,15 @@ def chinese_convert(text, language):
 # =============================================================================
 VISUAL_STYLE_OPTIONS = [
     "写实 (Realistic)",
-    "三维卡通 (Pixar-Art Cartoon)",
-    "中国画 (Chinese Painting)",
+    "三维卡通 (Pixar-Art-Cartoon)",
+    "中国画 (Chinese-Painting)",
     "水彩 (Watercolor)",
-    "油画 (Oil Painting)",
-    "铅笔素描 (Pencil Drawing)",
-    "黑白连环画 (Ink Comic)",
+    "油画 (Oil-Painting)",
+    "铅笔素描 (Pencil-Drawing)",
+    "黑白连环画 (Ink-Comic)",
     "黏土动画 (Claymation)",
-    "复古胶片 (Vintage Film)",
-    "魔幻现实主义 (Magical Realism)",
-    "奇幻氛围 (Wondrous Atmosphere)",
+    "复古胶片 (Vintage-Film)",
+    "魔幻现实主义 (Magical Realism)"
 ]
 
 # 旧下拉名并进上面的「中文 (English)」，已保存的项目仍能对上。
@@ -169,8 +168,6 @@ _VISUAL_STYLE_ALIASES = {
     "复古(胶片/旧照片)": "复古胶片 (Vintage Film)",
     "魔幻现实主义": "魔幻现实主义 (Magical Realism)",
     "Magical Realism": "魔幻现实主义 (Magical Realism)",
-    "奇幻氛围": "奇幻氛围 (Wondrous Atmosphere)",
-    "Wondrous Atmosphere": "奇幻氛围 (Wondrous Atmosphere)",
 }
 
 
@@ -180,6 +177,107 @@ def match_visual_style(value: str) -> str:
     if raw in VISUAL_STYLE_OPTIONS:
         return raw
     return _VISUAL_STYLE_ALIASES.get(raw, "")
+
+
+# 形象图按画面风格分目录：AVATAR_PATH/<风格词>/<stem>.png，例 avatar/Pixar-Art-Cartoon/woman_民国_chinese.png。
+# 找不到再找 AVATAR_PATH/Realistic/，最后 AVATAR_PATH 根目录。_blank.png、voices*.json、voice/ 仍在根目录。
+AVATAR_FALLBACK_STYLE = "Realistic"
+
+
+def visual_style_token(style: str) -> str:
+    """'三维卡通 (Pixar-Art Cartoon)' → 'Pixar-Art-Cartoon'；'魔幻现实主义 (Magical Realism)' → 'Magical-Realism'。
+
+    旧名字先按 match_visual_style 对上；取括号里的英文，空格换成 '-'。认不出返回 ""。
+    """
+    raw = (style or "").strip()
+    if not raw:
+        return ""
+    matched = match_visual_style(raw) or raw
+    english = ""
+    if "(" in matched and matched.rstrip().endswith(")"):
+        english = matched[matched.rfind("(") + 1 : matched.rstrip().rfind(")")].strip()
+    elif matched and all(ord(c) < 128 for c in matched):
+        english = matched
+    english = "-".join(english.replace("_", " ").split())
+    for ch in '<>:"/\\|?*':
+        english = english.replace(ch, "-")
+    return english.strip(" .-")
+
+
+def avatar_style_dirs(style: str = "") -> list:
+    """形象图查找顺序：avatar/<当前风格>/ → avatar/Realistic/ → avatar/。"""
+    out = []
+    token = visual_style_token(style)
+    for one in (token, AVATAR_FALLBACK_STYLE):
+        if one:
+            path = os.path.join(AVATAR_PATH, one)
+            if path not in out:
+                out.append(path)
+    out.append(AVATAR_PATH)
+    return out
+
+
+def avatar_style_dest_dir(style: str = "") -> str:
+    """讲员 / 通用形象图贴图保存的目录：avatar/<当前风格>/（认不出风格时用 Realistic）。"""
+    return os.path.join(AVATAR_PATH, visual_style_token(style) or AVATAR_FALLBACK_STYLE)
+
+
+# 形象图可用的格式，按优先顺序：同一层同一个 stem 有多种时用 .png。
+AVATAR_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+AVATAR_IMAGE_EXTS_LABEL = "(png|jpg|jpeg|webp)"
+
+
+def avatar_image_stem(name: str) -> str:
+    """去掉已带的图片扩展名（大小写不限），返回 stem。"""
+    raw = (name or "").strip()
+    low = raw.lower()
+    for ext in AVATAR_IMAGE_EXTS:
+        if low.endswith(ext):
+            return raw[: -len(ext)]
+    return raw
+
+
+def find_image_by_stem(folder: str, stem: str) -> str:
+    """``folder`` 里 ``stem`` 的形象图：按 AVATAR_IMAGE_EXTS 顺序（.png 优先），扩展名大小写不限。找不到返回 ""。"""
+    stem = avatar_image_stem(stem)
+    if not folder or not stem or not os.path.isdir(folder):
+        return ""
+    for ext in AVATAR_IMAGE_EXTS:
+        path = os.path.join(folder, stem + ext)
+        if os.path.isfile(path):
+            return path
+    # 大小写敏感的文件系统上再按名字比一次（Windows 上上面已经命中）。
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return ""
+    want = stem.lower()
+    found = {}
+    for fn in names:
+        base, ext = os.path.splitext(fn)
+        if base.lower() == want and ext.lower() in AVATAR_IMAGE_EXTS:
+            found.setdefault(ext.lower(), os.path.join(folder, fn))
+    for ext in AVATAR_IMAGE_EXTS:
+        if ext in found and os.path.isfile(found[ext]):
+            return found[ext]
+    return ""
+
+
+def find_avatar_image(stems, style: str = "") -> str:
+    """按 avatar_style_dirs 的顺序，每一层依次试 ``stems``（例：全名 stem、前三段 stem），
+    每个 stem 接受 .png / .jpg / .jpeg / .webp（.png 优先）。找不到返回 ""。"""
+    if isinstance(stems, str):
+        stems = [stems]
+    stems = [s for s in (stems or []) if s]
+    for folder in avatar_style_dirs(style):
+        for stem in stems:
+            path = find_image_by_stem(folder, stem)
+            if path:
+                return path
+    return ""
+
+
+find_avatar_png = find_avatar_image  # 旧名字，调用处不用改
 
 # SCENE 窗「对话方式」。顺序即下拉顺序。生成场景 JSON 时整段说明追加到所选 LM 提示词末尾。
 DIALOGUE_MODE_OPTIONS = [
@@ -2165,9 +2263,45 @@ def get_channel_id(channel_id_or_key):
     return cfg.get("channel_id", channel_id_or_key) if cfg else channel_id_or_key
 
 
-def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
+def normalize_analyze_options(raw) -> list:
+    """``analyze_prompt`` 可以是一段提示（旧写法），也可以是 [{key, label, prompt}, ...]。统一成列表。"""
+    out = []
+    if isinstance(raw, str):
+        if raw.strip():
+            out.append({"key": "detail", "label": config_channel.ANALYZE_DETAIL_LABEL, "prompt": raw})
+    elif isinstance(raw, (list, tuple)):
+        for i, item in enumerate(raw):
+            if isinstance(item, dict):
+                prompt = str(item.get("prompt") or "")
+                label = str(item.get("label") or "").strip()
+                key = str(item.get("key") or "").strip()
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                label, prompt, key = str(item[0] or "").strip(), str(item[1] or ""), ""
+            else:
+                continue
+            if not prompt.strip():
+                continue
+            key = key or f"option_{i + 1}"
+            if any(o["key"] == key for o in out):
+                key = f"{key}_{i + 1}"
+            out.append({"key": key, "label": label or key, "prompt": prompt})
+    return out
+
+
+def get_channel_analyze_options(channel_id_or_key) -> list:
+    """这个频道的分析方式列表 [{key, label, prompt}]；第一项是默认（原来的分析提示）。没有配置时用心理咨询的详细分析。"""
     cfg = get_channel_config(channel_id_or_key)
-    prompt = ((cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
+    opts = normalize_analyze_options((cfg.get("channel_prompt") or {}).get("analyze_prompt"))
+    if not opts:
+        opts = normalize_analyze_options(config_channel.COUNSELING_ANALYZE)
+    return opts
+
+
+def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "", key: str = "") -> str:
+    """分析提示文字。``key`` 为空或找不到时用第一项（旧调用处不传 key，行为不变）。"""
+    opts = get_channel_analyze_options(channel_id_or_key)
+    chosen = next((o for o in opts if key and o["key"] == key), opts[0])
+    prompt = (chosen.get("prompt") or "").strip()
     if not prompt:
         prompt = config_channel.COUNSELING_ANALYZE.strip()
     if language:
@@ -2317,7 +2451,7 @@ CHANNEL_CONFIG = {
         ],
 
         "channel_prompt": {
-            "analyze_prompt": config_channel.COUNSELING_ANALYZE,
+            "analyze_prompt": config_channel.COUNSELING_ANALYZE_OPTIONS,
             "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
@@ -2357,7 +2491,7 @@ CHANNEL_CONFIG = {
         ],
 
         "channel_prompt": {
-            "analyze_prompt": config_channel.FLYLINK_ANALYZE,
+            "analyze_prompt": config_channel.FLYLINK_ANALYZE_OPTIONS,
             "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
@@ -2394,7 +2528,7 @@ CHANNEL_CONFIG = {
         ],
 
         "channel_prompt": {
-            "analyze_prompt": config_channel.COMIC_ANALYZE,
+            "analyze_prompt": config_channel.COMIC_ANALYZE_OPTIONS,
             "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
@@ -2429,7 +2563,7 @@ CHANNEL_CONFIG = {
         ],
 
         "channel_prompt": {
-            "analyze_prompt": config_channel.MV_ANALYZE_2,
+            "analyze_prompt": config_channel.MV_ANALYZE_OPTIONS,
             "content_guide": config_channel.MV_CONTENT_GUIDE,
             "split_scene": config_channel.SCENE_SPLIT_MANY,
         },

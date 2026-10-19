@@ -276,8 +276,11 @@ def open_video_prompt_dialog(
         dlg.destroy()
 
     def on_go() -> None:
-        if not (visual_var.get() or speaking_var.get() or actor_var.get()):
-            messagebox.showwarning("视频提示", "场景描述、讲话、人物至少要选一项。", parent=dlg)
+        fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
+        # 什么都没勾、但写了注意 / FYI：只按 FYI 让图动起来（同图片提示「仅修改」）。
+        fyi_only = not (visual_var.get() or speaking_var.get() or actor_var.get())
+        if fyi_only and not fyi_now:
+            messagebox.showwarning("视频提示", "场景描述、讲话、人物或注意/FYI 至少要有一项。", parent=dlg)
             return
         scenes = [s for s in (get_scenes() or []) if isinstance(s, dict)]
         if not scenes:
@@ -296,7 +299,17 @@ def open_video_prompt_dialog(
             ),
         )
         try:
-            if is_transition:
+            if fyi_only:
+                prompt = config_prompt.build_video_fyi_only_prompt(
+                    frames=frames,
+                    evolve=evolve_var.get(),
+                    visual_style=style,
+                    camera=camera_var.get(),
+                    text=text_var.get(),
+                    duration=duration_var.get(),
+                    fyi=fyi_now,
+                )
+            elif is_transition:
                 prompt = config_prompt.build_transition_video_prompt(
                     visual_style=style,
                     scene_content=scenes,
@@ -325,12 +338,19 @@ def open_video_prompt_dialog(
         except ValueError as exc:
             messagebox.showerror("视频提示", str(exc), parent=dlg)
             return
-        prompt = config_prompt.prepend_background_condition(
-            prompt, bg_region, bg_era, host_narrator, include=bool(bg_include_var.get())
-        )
-        prompt = prepend_fyi(
-            prompt, get_fyi_text(), include=bool(fyi_include_var.get())
-        )
+        if fyi_only:
+            # FYI 已作为「主要动作」写在最前；背景条件放在后面。
+            bg = config_prompt.background_condition_block(bg_region, bg_era, host_narrator) if bg_include_var.get() else ""
+            if bg:
+                bg = bg.replace("(applies to everything below)", "(applies to the whole clip)")
+                prompt = prompt + "\n\n---\n\n" + bg
+        else:
+            prompt = config_prompt.prepend_background_condition(
+                prompt, bg_region, bg_era, host_narrator, include=bool(bg_include_var.get())
+            )
+            prompt = prepend_fyi(
+                prompt, get_fyi_text(), include=bool(fyi_include_var.get())
+            )
         images = []
         missing = []
         if get_image is not None:
