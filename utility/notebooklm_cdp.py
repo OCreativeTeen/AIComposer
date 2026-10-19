@@ -433,6 +433,21 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
             if source_pdf:
                 # 其他来源保持原勾选；提示词里写明以 content.pdf 为主。
                 upload_source(page, source_pdf, status)
+            # 额外来源（节目生成：原始材料 PDF，只作背景）。全集生成不传，行为不变。上传失败只提示，不中断。
+            for extra_src in extra.get("extra_sources") or ():
+                extra_src = str(extra_src or "").strip()
+                if not extra_src:
+                    continue
+                try:
+                    upload_source(page, extra_src, status)
+                except Exception as exc:  # noqa: BLE001
+                    msg = f"⚠️ 来源 {os.path.basename(extra_src)} 上传失败：{exc}。继续生成。"
+                    print(f"NotebookLM：{msg}")
+                    _say(status, msg)
+                    try:
+                        _close_dialog(page)
+                    except Exception:  # noqa: BLE001
+                        pass
             actor_pdf = str(extra.get("actor_pdf") or "").strip()
             actor_ready = False
             if actor_pdf:

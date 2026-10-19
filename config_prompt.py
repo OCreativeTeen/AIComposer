@@ -5112,3 +5112,146 @@ for _name in ("build_slide_flow_prompt", "build_picture_flow_prompt", "build_vid
               "build_transition_video_prompt"):
     globals()[_name] = _with_scene_style(globals()[_name])
 del _name
+
+
+# ---------------------------------------------------------------------------
+# 节目生成（STORY 窗口）：全集生成的 NotebookLM 提示词，但来源是分析内容，不是场景。
+# 叙事风格固定讲述；没有人物；分析内容全文放进「注意 / FYI」作为主要内容。
+# ---------------------------------------------------------------------------
+NOTEBOOKLM_ANALYSIS_OUTPUT_LEADS = {
+    "slides": "产物：演示文稿。Output: a slide deck.",
+    "infographic": "产物：一张信息图，把分析内容按它自己的先后顺序排在一张图里。Output: one infographic that lays out the analysis in its own order.",
+    "audio_overview": (
+        "产物：语音概览（只有声音，没有幻灯片和画面）。下面写的画面要求只用来帮助理解内容，"
+        "要把它们讲出来，不要描述「图片」或「幻灯片」。Output: an audio overview (sound only, no slides or pictures). "
+        "The picture notes below only help explain the content; turn them into spoken storytelling and never talk about images or slides."
+    ),
+    "video_overview": (
+        "产物：视频概览。按分析内容的先后顺序讲，画面配合讲的内容。Output: a video overview that follows the analysis in order, "
+        "with visuals that support what is being said."
+    ),
+}
+
+# 没有场景时代替「场景对应」：按分析内容自己的结构和顺序展开。
+NOTEBOOKLM_ANALYSIS_ORDER_RULES = {
+    "slides": (
+        "内容顺序（必须遵守）：\n"
+        "- 没有现成的场景。按「注意 / FYI」里分析内容自己的结构和先后顺序做幻灯片：一个主要部分或一个主要观点一页，从头到尾不跳过、不调换顺序。\n"
+        "- 不加额外的页：没有封面页、标题页、目录 / 议程页、过渡页、小结 / 总结页或结尾页。\n"
+        "Content order (must follow):\n"
+        "- There are no prepared scenes. Build the slides from the structure and order of the analysis in 注意 / FYI: "
+        "one slide per main part or main idea, from beginning to end, without skipping or reordering.\n"
+        "- Never add an extra slide: no cover, title, agenda / table-of-contents, transition, summary / recap, or closing slide."
+    ),
+    "video_overview": (
+        "内容顺序（必须遵守）：\n"
+        "- 没有现成的场景。按「注意 / FYI」里分析内容的先后顺序讲，一个主要部分一段，不跳过、不合并、不调换顺序，"
+        "也不另加开场概述段或结尾总结段；讲员开头或结尾的几句，放在第一段或最后一段里。\n"
+        "Content order (must follow):\n"
+        "- There are no prepared scenes. Follow the order of the analysis in 注意 / FYI, one segment per main part. "
+        "Do not skip, merge, or reorder parts, and do not add a separate overview intro or summary outro; "
+        "any opening or closing lines of the 讲员 belong inside the first or last segment."
+    ),
+    "infographic": (
+        "内容顺序（必须遵守）：\n"
+        "- 没有现成的场景。信息图按「注意 / FYI」里分析内容的先后顺序排列，一个主要部分一个区块，不合并、不调换顺序，也不另加总结或目录部分。\n"
+        "Content order (must follow):\n"
+        "- There are no prepared scenes. Lay the infographic out in the order of the analysis in 注意 / FYI, one section per main part. "
+        "Do not merge or reorder parts, and do not add an extra summary or table-of-contents section."
+    ),
+    "audio_overview": (
+        "内容顺序（必须遵守）：\n"
+        "- 按「注意 / FYI」里分析内容的先后顺序，一层一层讲下去，不跳过重要的部分，也不调换顺序。\n"
+        "Content order (must follow):\n"
+        "- Follow the order of the analysis in 注意 / FYI, building it up layer by layer; do not skip an important part or reorder them."
+    ),
+}
+
+
+def build_analysis_flow_prompt(
+    *,
+    output: str = "slides",
+    text: str = "erase",
+    visual_style: str = "",
+    analysis: str = "",
+    content_source: str = "",
+    material_source: str = "",
+) -> str:
+    """节目生成：叙事风格固定「讲述」，没有人物，没有场景。``analysis`` 全文由调用方放进「注意 / FYI」（见 prepend_fyi），
+    这里只写规则：口语、层层推进、不列点（同全集生成），按分析内容的结构和顺序代替「第 N 页 = 场景 N」。
+
+    ``content_source``（如 content.pdf）：同一份分析内容也作为笔记本来源上传；``material_source``：原始材料 PDF，只作背景。
+    """
+    if output not in NOTEBOOKLM_ANALYSIS_OUTPUT_LEADS:
+        output = "slides"
+    if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
+        text = "erase"
+    keywords = text == "keywords"
+    style = (visual_style or "").strip() or "realistic"
+    if not (analysis or "").strip():
+        raise ValueError("还没有分析内容。")
+
+    rule = notebooklm_speaker_rule(output)
+    if output in ("slides", "infographic"):
+        rule += "\n" + NOTEBOOKLM_VISUAL_RULE
+    rule += ("\n- 讲述：讲员用第一人称讲，画面中的人物不说话。"
+             "\n- Telling: the 讲员 speaks in the first person; people in the pictures do not speak.")
+    text_rule = _notebooklm_text_rule(text, output, False)
+    if text_rule:
+        rule += "\n" + text_rule
+    lead = NOTEBOOKLM_ANALYSIS_OUTPUT_LEADS[output] + "\n\n" + NOTEBOOKLM_ANALYSIS_ORDER_RULES[output]
+    parts = {"Output_rules": lead + "\n\n" + rule}
+
+    lines = [
+        "You generate pictures, not a written report and not a page of text.",
+        f"Visual style for every picture: {style}.",
+        "There are no prepared scenes, no scene descriptions, no dialogue, and no cast. "
+        "The content is the analysis given at the top under 注意 / FYI. It is the main content of this program.",
+        "Read the analysis as a whole, then follow its own structure in order: each main part or main idea becomes "
+        + {"slides": "one slide", "infographic": "one section of the infographic",
+           "video_overview": "one segment with its own pictures", "audio_overview": "one stretch of the talk"}[output]
+        + ". Keep its meaning; do not leave out an important point, and do not invent new claims.",
+        "Headings, numbering, and bullet points in the analysis show you its structure only. "
+        "Turn them into pictures and speech; never read them out or show them as a list.",
+        "",
+        SLIDE_FLOW_NARRATIVE_NOTES["narration"],
+        "",
+        "Telling style: only the third-party 讲员 speaks.",
+        "Nobody in the picture speaks: no dialogue, no talking mouths, no speech bubbles. People, if any, act silently.",
+        "Invent the places, objects, symbols, metaphors, and diagrams that carry each idea of the analysis.",
+        "The 讲员 is off screen: a voice-over only. Do not draw a narrator, host, or presenter. "
+        "The pictures and the background carry the content.",
+        "",
+        flow_caption_rule(text),
+        SLIDE_FLOW_META_NOTE.replace("the order of the scenes, any scene number, scene title, episode number",
+                                     "the headings and numbering of the analysis, any part number, episode number"),
+    ]
+    if keywords:
+        lines.append(
+            "The one exception: a single short keyword for that part of the analysis (Chinese ≤ 8 characters / English ≤ 3 words), "
+            "blended into the picture as described above. Never a full heading."
+        )
+    parts["Instruction_for_image" if output in ("slides", "infographic") else "Instruction_for_scenes"] = "\n".join(lines)
+
+    src = [
+        "内容来源：分析内容就在提示词最前面的「注意 / FYI」里。The content is the analysis at the top of this prompt under 注意 / FYI.",
+    ]
+    if content_source:
+        src.append(
+            f"同一份分析内容也在本笔记本的来源文件「{content_source}」里。The same analysis is also in the source file {content_source} "
+            f"in this notebook's sources. Generate from it (注意 / FYI and {content_source} are the same text)."
+        )
+    if material_source:
+        src.append(
+            f"「{material_source}」是原始材料，只作背景参考，用来补充细节；内容、结构和顺序以分析内容为准。"
+            f"{material_source} is the original material: use it only as background for details. "
+            "The content, structure, and order follow the analysis."
+        )
+    names = " and ".join(n for n in (content_source, material_source) if n)
+    if names:
+        src.append(f"If this notebook has other sources, ignore them except {names}.")
+    else:
+        src.append("If this notebook has sources, use them only as background.")
+    src.append("The headings and labels of the analysis are for you only; never show or read them out.")
+    parts["Content_Source"] = "\n".join(src)
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())

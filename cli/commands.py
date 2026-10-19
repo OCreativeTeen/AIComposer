@@ -43,7 +43,7 @@ STORY_SCENE_FIELDS: dict[str, str] = {
 
 STORY_SCENE_CLICKS: dict[str, str] = {
     "cancel": "取消",
-    "generate": "智能生成",
+    "generate": "场景生成",
 }
 
 # Public CLI name → GUI bridge field (None = handled locally, e.g. profile).
@@ -205,7 +205,8 @@ _ALIASES: dict[str, str] = {
     "插入片段": "snippet",
     "scene_content": "content",
     "json": "content",
-    "智能生成": "generate",
+    "场景生成": "generate",
+    "智能生成": "generate",  # 旧名
     "取消": "cancel",
     "nb": "notebooklm",
     "nbp": "notebooklm",

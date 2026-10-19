@@ -34,6 +34,126 @@ from gui.downloader import _apply_scene_lm_combo, _bind_text_editor_replace_from
 
 
 class SceneEditorImpl:
+    @staticmethod
+    def _story_analysis_text(video_detail: dict, scene_ui: dict) -> str:
+        """STORY 窗当前的分析内容：分析报告编辑区（含没保存的草稿），没有就用 video_detail['analyzed_content']。"""
+        text = None
+        reader = scene_ui.get("read_analyzed_draft") if isinstance(scene_ui, dict) else None
+        if callable(reader):
+            try:
+                text = reader()
+            except Exception:  # noqa: BLE001
+                text = None
+        if text is None:
+            raw = video_detail.get("analyzed_content") if isinstance(video_detail, dict) else ""
+            text = raw if isinstance(raw, str) else str(raw or "")
+        return (text or "").strip()
+
+    def _open_story_program_dialog(self, dlg, anchor, video_detail: dict, scene_ui: dict) -> None:
+        """节目生成：复用全集生成的窗口（分析模式）和 CLI自动 → NotebookLM Studio。
+
+        来源：分析内容 → D:\\AI_MEDIA\\working\\content.pdf（和全集生成同一个来源名，上传时替换旧的），
+        有原始材料 PDF 就另外上传（只作背景）。没有 actor.pdf（上传时会移除旧的 actor.pdf）。
+        产物下载到 D:\\AI_MEDIA\\working，用系统程序打开；不建项目、不改这一条的场景。
+        """
+        from gui.slide_prompt_dialog import open_slide_prompt_dialog
+
+        working = r"D:\AI_MEDIA\working"
+        material_pdf = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+        if material_pdf and not material_pdf.lower().endswith(".pdf"):
+            material_pdf = ""
+
+        def copy_text(text: str) -> None:
+            _copy_text_to_clipboard(dlg, text)
+
+        def get_style() -> str:
+            var = scene_ui.get("visual_style_var")
+            vs = ""
+            try:
+                vs = (var.get() if var is not None else "") or ""
+            except tk.TclError:
+                vs = ""
+            return (
+                config.match_visual_style(vs) or vs.strip()
+                or (video_detail.get("visual_style") or "").strip()
+                or (project_manager.LAST_VISUAL_STYLE or "").strip()
+                or config.VISUAL_STYLE_OPTIONS[0]
+            )
+
+        narrator = ""
+        nvar = scene_ui.get("narrator_var")
+        try:
+            narrator = ((nvar.get() if nvar is not None else "") or "").strip()
+        except tk.TclError:
+            narrator = ""
+        if not narrator:
+            narrator = (video_detail.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
+
+        def get_analysis() -> str:
+            return self._story_analysis_text(video_detail, scene_ui)
+
+        def save_choice(choice: dict) -> None:
+            try:
+                prefs = config.load_yt_tools_prefs() or {}
+                if prefs.get("program_prompt") != choice:
+                    config.save_yt_tools_prefs({"program_prompt": choice})
+            except Exception as exc:  # noqa: BLE001
+                print(f"节目生成：选择没有记下：{exc}")
+
+        try:
+            saved = (config.load_yt_tools_prefs() or {}).get("program_prompt")
+        except Exception:  # noqa: BLE001
+            saved = None
+
+        def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
+                        _actor_pdf: str = "", _cross: bool = False) -> None:
+            def _open_file(path: str) -> None:
+                import shutil
+
+                try:
+                    os.makedirs(working, exist_ok=True)
+                    dest = os.path.join(working, os.path.basename(path))
+                    if os.path.abspath(dest) != os.path.abspath(path):
+                        if os.path.exists(dest):
+                            os.remove(dest)
+                        shutil.move(path, dest)
+                    path = dest
+                except OSError as exc:
+                    print(f"⚠️ 节目生成：移动到 working 失败，用原位置：{exc}")
+                print(f"节目生成：已保存 {path}")
+                try:
+                    os.startfile(path)
+                except OSError as exc:
+                    messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=dlg)
+
+            extra = {"output": kind}
+            if notebook_url:
+                extra["notebook_url"] = notebook_url
+            if source_pdf:
+                extra["source_pdf"] = source_pdf
+            if material_pdf:
+                extra["extra_sources"] = [material_pdf]
+            self.llm_api.show_manual_window(
+                prompt, "", auto_cli=True, cli_kind=kind or "slides",
+                file_dest_dir=working, on_file_response=_open_file, extra=extra,
+            )
+
+        open_slide_prompt_dialog(
+            dlg,
+            anchor,
+            title="节目生成",
+            get_scenes=lambda: [],
+            get_style=get_style,
+            copy_text=copy_text,
+            host_narrator=narrator,
+            get_place=None,
+            saved_choice=saved,
+            save_choice=save_choice,
+            open_manual=open_manual,
+            get_analysis=get_analysis,
+            material_pdf=material_pdf,
+        )
+
     def _show_scene_content_editor(
         self,
         parent,
@@ -142,10 +262,15 @@ class SceneEditorImpl:
             nb_prompt_choices = _prompt_choice_entries(channel_key)
             prompt_row = ttk.Frame(frm)
             prompt_row.pack(fill=tk.X, pady=(0, 6))
+            scene_ui["prompt_row"] = prompt_row
+            # 场景生成按钮 + 模板下拉（+ 步数 / 集数）放在第 2 行「材料」行里：gen_host 是 frm 的子控件，
+            # 下面用 pack(in_=material_row) 放进材料行（Tk 不能换父控件，所以父控件取共同的 frm）。
+            gen_host = ttk.Frame(frm)
+            scene_ui["gen_host"] = gen_host
             default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
             prompt_combo = ttk.Combobox(
-                prompt_row,
+                gen_host,
                 textvariable=prompt_combo_var,
                 values=[opt[0] for opt in nb_prompt_choices],
                 state="readonly" if nb_prompt_choices else "disabled",
@@ -154,7 +279,7 @@ class SceneEditorImpl:
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
             # Step Story：步数；直接生成系列节目：共 N 集 / 第 k 集。只在选中对应模板时显示。
             step_count_var = tk.StringVar(value=str(config_channel.STEP_STORY_DEFAULT))
-            step_frm = ttk.Frame(prompt_row)
+            step_frm = ttk.Frame(gen_host)
             step_lbl = ttk.Label(step_frm, text="步数")
             step_lbl.pack(side=tk.LEFT, padx=(0, 2))
             step_count_combo = ttk.Combobox(
@@ -170,7 +295,7 @@ class SceneEditorImpl:
             step_count_combo.pack(side=tk.LEFT)
             series_total_var = tk.StringVar(value=str(config_channel.SERIES_DIRECT_DEFAULT_EPISODES))
             series_ep_var = tk.StringVar(value="1")
-            series_frm = ttk.Frame(prompt_row)
+            series_frm = ttk.Frame(gen_host)
             ttk.Label(series_frm, text="共").pack(side=tk.LEFT, padx=(0, 2))
             series_total_combo = ttk.Combobox(
                 series_frm,
@@ -266,6 +391,8 @@ class SceneEditorImpl:
             scene_count_lbl = ttk.Label(material_row, textvariable=scene_count_var)
             scene_count_lbl.pack(side=tk.LEFT, padx=(4, 4))
             ttk.Separator(material_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=28)
+            gen_host.pack(in_=material_row, side=tk.LEFT, padx=(4, 0))
+            gen_host.lift(material_row)  # 子控件叠在材料行上面才看得见
             smart_slot = ttk.Frame(material_row)
             smart_slot.pack(side=tk.LEFT, padx=(4, 0))
             scene_ui["smart_slot"] = smart_slot
@@ -705,7 +832,7 @@ class SceneEditorImpl:
                 return True
 
             def _require_media_transcript(media_path: str) -> bool:
-                """智能生成前：没有文字稿就提醒用户必须先转录；已有文字稿就确认是用它还是重新转录。
+                """场景生成前：没有文字稿就提醒用户必须先转录；已有文字稿就确认是用它还是重新转录。
 
                 返回 True 表示可以接着生成；取消、转录取消或失败返回 False。
                 """
@@ -1346,7 +1473,7 @@ class SceneEditorImpl:
                     and not _item_transcript_text(video_detail)[1]
                 ):
                     show_auto_close_popup(
-                        dlg, "生成场景", "这条媒体还没有文字稿。点「智能生成」时会先帮你转录。"
+                        dlg, "生成场景", "这条媒体还没有文字稿。点「场景生成」时会先帮你转录。"
                     )
                     return
                 if not text:
@@ -1718,6 +1845,7 @@ class SceneEditorImpl:
                     "scene_prompt_params": _scene_prompt_params,
                     "pdf_instruction_for": _pdf_instruction_for,
                     "pick_cover_image": _pick_cover_image,
+                    "read_analyzed_draft": _read_analyzed_draft,
                 }
             )
             dlg.after(50, _build_editor_ui_rest)
@@ -1872,7 +2000,7 @@ class SceneEditorImpl:
                             pass
 
                     def _on_smart_saved():
-                        """智能生成成功并保存之后：照旧 on_saved，再自动打开项目名称建议。"""
+                        """场景生成成功并保存之后：照旧 on_saved，再自动打开项目名称建议。"""
                         if callable(on_saved):
                             on_saved()
                         offer = scene_ui.get("offer_title_suggest")
@@ -2152,7 +2280,7 @@ class SceneEditorImpl:
                     )
                     smart_btn = ttk.Button(
                         scene_ui["prompt_combo"].master,
-                        text="智能生成",
+                        text="场景生成",
                         command=on_smart_generate,
                         style=smart_style,
                         width=11,
@@ -2160,6 +2288,29 @@ class SceneEditorImpl:
                     smart_btn.pack(
                         side=tk.LEFT, padx=(0, 6), before=scene_ui["prompt_combo"]
                     )
+
+                    def on_program_generate():
+                        """节目生成：魔法工作流「全集生成」（NotebookLM）搬到 STORY 窗，来源是分析内容，不是场景。"""
+                        analysis = self._story_analysis_text(video_detail, scene_ui)
+                        if not analysis:
+                            messagebox.showwarning("节目生成", "还没有分析内容。", parent=dlg)
+                            return
+                        self._open_story_program_dialog(dlg, program_btn, video_detail, scene_ui)
+
+                    program_btn = ttk.Button(
+                        scene_ui["prompt_row"],
+                        text="节目生成",
+                        command=on_program_generate,
+                        style=smart_style,
+                        width=11,
+                    )
+                    # 第 1 行最前面（原来场景生成的位置），在「风格」前面。
+                    _row1 = scene_ui["prompt_row"].pack_slaves()
+                    if _row1:
+                        program_btn.pack(side=tk.LEFT, padx=(0, 6), before=_row1[0])
+                    else:
+                        program_btn.pack(side=tk.LEFT, padx=(0, 6))
+                    scene_ui["program_btn"] = program_btn
                     if embedded:
                         def _summary_scenes() -> list:
                             parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
@@ -2186,7 +2337,7 @@ class SceneEditorImpl:
                         sum_btn.config(command=_on_summarize)
                         sum_btn.pack(side=tk.LEFT, padx=(0, 8))
                     if callable(on_save_story):
-                        title_host = scene_ui["prompt_combo"].master
+                        title_host = scene_ui["prompt_row"]
                         title_var = None
                         host_ctx = getattr(dlg, "_summary_drop_ctx", None)
                         if isinstance(host_ctx, dict):
@@ -2204,7 +2355,7 @@ class SceneEditorImpl:
                         scene_ui["name_field"] = (title_var, on_save_story)
 
                         def _offer_title_suggestions(_var=title_var) -> None:
-                            """智能生成之后：按场景内容出 3 个项目名建议，选了新名称就走「保存」按钮的路径改名。"""
+                            """场景生成之后：按场景内容出 3 个项目名建议，选了新名称就走「保存」按钮的路径改名。"""
                             from gui.project_title_suggest import ask_project_title
 
                             sc = video_detail.get("scene_content")
@@ -2344,7 +2495,7 @@ class SceneEditorImpl:
                         lambda _e: _commit_story_narrator(True),
                     )
                     if callable(on_open_project):
-                        open_host = scene_ui["prompt_combo"].master
+                        open_host = scene_ui["prompt_row"]
                         open_style = "StoryOpenProject.TButton"
                         ttk.Style().configure(
                             open_style,

@@ -450,3 +450,56 @@ def build_actor_pdf(
     except Exception:
         pass
     return dest, out
+
+
+# ---------------------------------------------------------------------------
+# 节目生成（STORY 窗口）：把分析内容写成 NotebookLM 来源 content.pdf（纯文字）。
+# ---------------------------------------------------------------------------
+def build_text_pdf(text: str, *, title: str = "", dest: str = CONTENT_PDF_PATH) -> str:
+    """分析内容 → PDF（覆盖），返回路径。Markdown 的 # 标题行变成小标题，其余按段落排，空行分段。"""
+    import re
+
+    import fitz
+
+    body = (text or "").strip()
+    if not body:
+        raise ValueError("还没有分析内容。")
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    font = _font_file()
+    css = (
+        (f"@font-face {{font-family: cjk; src: url({os.path.basename(font)});}}\n" if font else "")
+        + "* {font-family: cjk, sans-serif;}\n"
+        "body {font-size: 11pt; line-height: 1.5;}\n"
+        "h1 {font-size: 17pt; margin: 0 0 10pt 0;}\n"
+        "h2 {font-size: 14pt; margin: 12pt 0 4pt 0;}\n"
+        "p {margin: 0 0 6pt 0;}\n"
+    )
+    parts = ["<body>"]
+    if (title or "").strip():
+        parts.append(f"<h1>{html.escape(title.strip())}</h1>")
+    para: list[str] = []
+
+    def flush() -> None:
+        if para:
+            parts.append("<p>" + "<br/>".join(html.escape(x) for x in para) + "</p>")
+            para.clear()
+
+    for line in body.splitlines():
+        s = line.rstrip()
+        m = re.match(r"^\s{0,3}#{1,6}\s+(.*)$", s)
+        if m:
+            flush()
+            parts.append(f"<h2>{html.escape(m.group(1).strip())}</h2>")
+        elif not s.strip():
+            flush()
+        else:
+            para.append(s)
+    flush()
+    parts.append("</body>")
+    archive = fitz.Archive(os.path.dirname(font)) if font else fitz.Archive()
+    data = _write_pdf(["".join(parts)], css, archive)
+    part = dest + ".part"
+    with open(part, "wb") as f:
+        f.write(data)
+    os.replace(part, dest)
+    return dest

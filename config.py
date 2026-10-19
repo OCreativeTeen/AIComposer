@@ -134,11 +134,10 @@ VISUAL_STYLE_OPTIONS = [
     "中国画 (Chinese-Painting)",
     "水彩 (Watercolor)",
     "油画 (Oil-Painting)",
-    "铅笔素描 (Pencil-Drawing)",
     "黑白连环画 (Ink-Comic)",
     "黏土动画 (Claymation)",
     "复古胶片 (Vintage-Film)",
-    "魔幻现实主义 (Magical Realism)"
+    "魔幻现实主义 (Magical-Realism)"
 ]
 
 # 旧下拉名并进上面的「中文 (English)」，已保存的项目仍能对上。
@@ -159,15 +158,15 @@ _VISUAL_STYLE_ALIASES = {
     "油画": "油画 (Oil Painting)",
     "西洋画(油画/水彩)": "油画 (Oil Painting)",
     "Oil Painting Style": "油画 (Oil Painting)",
-    "铅笔素描": "铅笔素描 (Pencil Drawing)",
-    "Pencil Drawing Style": "铅笔素描 (Pencil Drawing)",
+    "铅笔素描": "黑白连环画 (Ink Comic)",
+    "Pencil Drawing Style": "黑白连环画 (Ink Comic)",
     "黑白连环画": "黑白连环画 (Ink Comic)",
     "黏土动画": "黏土动画 (Claymation)",
     "Claymation Style": "黏土动画 (Claymation)",
-    "复古胶片": "复古胶片 (Vintage Film)",
-    "复古(胶片/旧照片)": "复古胶片 (Vintage Film)",
-    "魔幻现实主义": "魔幻现实主义 (Magical Realism)",
-    "Magical Realism": "魔幻现实主义 (Magical Realism)",
+    "复古胶片": "复古胶片 (Vintage-Film)",
+    "复古(胶片/旧照片)": "复古胶片 (Vintage-Film)",
+    "魔幻现实主义": "魔幻现实主义 (Magical-Realism)",
+    "Magical Realism": "魔幻现实主义 (Magical-Realism)",
 }
 
 
