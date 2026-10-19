@@ -300,6 +300,8 @@ def open_slide_prompt_dialog(
         )
     if story_mode and not has_scenes:
         scene_hint.config(text="这一条还没有场景内容（scene_content），不能用。")
+    elif story_mode and has_scenes:
+        scene_hint.config(text=f"已有 {len(scene_range()[0])} 场。勾选这里就改用场景内容。")
     _prev_narr = [narrative_var.get()]
     _sync_busy = [False]
 
@@ -311,12 +313,13 @@ def open_slide_prompt_dialog(
         try:
             use_a = bool(analysis_var.get())
             any_scene = any(bool(v.get()) for v in scene_vars)
+            # 有场景就可以直接勾。勾上场景选项时取消分析内容，两边仍然只写一种进 content.pdf。
             if use_a and any_scene:
-                for v in scene_vars:
-                    v.set(False)
-                any_scene = False
-            analysis_btn.configure(state=("normal" if analysis_ok and not any_scene else "disabled"))
-            scene_state = "normal" if scenes_ok and not use_a else "disabled"
+                analysis_var.set(False)
+                use_a = False
+                narrative_var.set(_prev_narr[0] or "narration")
+            analysis_btn.configure(state=("normal" if analysis_ok else "disabled"))
+            scene_state = "normal" if scenes_ok else "disabled"
             for w in scene_widgets:
                 try:
                     w.configure(state=("readonly" if isinstance(w, ttk.Combobox) and scene_state == "normal" else scene_state))
