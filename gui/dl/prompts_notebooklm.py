@@ -82,9 +82,61 @@ def _notebooklm_row_tags_text(video_detail: dict) -> str:
     return ", ".join(parse_tags_list(str(tags_raw or "")))
 
 
-def _scene_prompt_narrator(video_detail: dict) -> str:
-    """本轮已选的主持人。没选则空字符串，提示词里主持人只出声、不进画面。"""
+def _story_cast_text(video_detail: dict):
+    """STORY 窗人物栏的名单（场景 actor 同一格式）。从来没设过返回 None（走旧的讲员逻辑）。"""
     vd = video_detail if isinstance(video_detail, dict) else {}
+    cast = vd.get("story_actors")
+    if not isinstance(cast, str):
+        prof = vd.get(project_manager.PROJECT_PROFILE_KEY)
+        cast = prof.get("story_actors") if isinstance(prof, dict) else None
+    return cast if isinstance(cast, str) else None
+
+
+def build_cast_block(actor_text) -> str:
+    """把人物栏名单写成提示词里的 CAST 段：讲员有没有、几个人物、各自的样子，按人物栏顺序。"""
+    if actor_text is None:
+        return "(No cast was chosen in the Story window. Use the host rules written above.)"
+    rows = []
+    for row in project_manager.actor_entries(actor_text or ""):
+        body = (row.get("body") or "").strip()
+        if not body or project_manager.actor_is_absent(body):
+            continue
+        rows.append(row)
+    host = next((r for r in rows if r.get("role") == "host"), None)
+    persons = [r for r in rows if r.get("role") != "host"]
+    lines = [
+        f"Narrator (讲员) present: {'YES' if host else 'NO'}",
+        f"Number of characters (人物): {len(persons)}",
+    ]
+    if not rows:
+        lines.append("Cast list: EMPTY. Nobody is chosen.")
+    else:
+        lines.append("Cast list, in the order the user arranged it (gender/age band/ethnicity/name):")
+        n = 0
+        for r in rows:
+            body = project_manager.split_actor_motion(r.get("body") or "")[0]
+            if r.get("role") == "host":
+                lines.append(f"  - 讲员：{body}")
+            else:
+                n += 1
+                lines.append(f"  - 人物{n}：{body}")
+    lines.append(
+        "Use exactly these people with exactly these looks in ``actor``. Do not invent another 讲员. "
+        "Do not change anyone's gender, age band, or ethnicity. Extra minor people from the story may appear "
+        "only when the material requires them, and they never replace a listed person."
+    )
+    return "\n    ".join(lines)
+
+
+def _scene_prompt_narrator(video_detail: dict) -> str:
+    """本轮已选的主持人。没选则空字符串，提示词里主持人只出声、不进画面。
+
+    STORY 窗人物栏设过名单时只看名单：名单里没有讲员 = 空（不再退回上次的讲员）。
+    """
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    cast = _story_cast_text(vd)
+    if cast is not None:
+        return (project_manager.actor_host_name(cast) or "").strip()
     named = (vd.get("narrator") or "").strip()
     if named:
         return named
@@ -112,6 +164,7 @@ def _notebooklm_prompt_context_from_video_detail(
         "category": cat,
         "subtype": sub,
         "narrator": _scene_prompt_narrator(vd),
+        "cast": build_cast_block(_story_cast_text(vd)),
     }
 
 
@@ -156,6 +209,7 @@ def _build_notebooklm_prompt_for_row(
         instruction=ctx.get("instruction", ""),
         sections=sections,
         narrator=ctx.get("narrator", ""),
+        cast=ctx.get("cast", ""),
     )
     talk = config.dialogue_mode_instruction(dialogue_mode) if dialogue_mode else ""
     if talk:

@@ -1279,17 +1279,26 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
     ** PATH B — the analysis holds two or more distinct situations (different people, or clearly separate cases). Do not collapse those into one couple.
     ** In both paths the audience must see the life in full before any remedy. The remedy is the most important part of the program and must be detailed. It is never one slogan scene.
 
+*** CAST CHOSEN BY THE USER (this decides who appears and who speaks; it overrides any other wording about the 讲员 or guests below)
+    {cast}
+    ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
+    ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
+    ** If the CAST says "No cast was chosen", follow the older host wording below as before.
+    ** WHO IS WHO, decided only by the CAST:
+        * CAST is EMPTY: nobody is on screen as a speaker. Every counselor beat is a default narrator voice-over (``<1>``, ``actor`` ""), exactly like a podcast voice-over. Story scenes still show the life, the people acting silently in the visual.
+        * The 讲员 is the counselor and the protagonist of the program. Every counselor beat (naming the problem, background, transitions, unpacking, remedy) is the 讲员. Only one 讲员. Do not invent another age, gender, or face.
+        * The 人物 are ACTORS in the story, not guests. They perform the spoken content: through dialogue with each other, actions, exclamations, and visible emotion, inside the place where the life happens. They speak as the people in the story, never as commentators about it.
+        * No 讲员 but 人物 listed: there is no on-screen counselor. Counselor beats become voice-over scenes: ``actor`` is "", the counselor narration is ``<1>``, and the visual shows the life silently. The 人物 still act the story in the story scenes.
+
 *** SHARED RULES
     ** visual is a film-still with no words on the image. Also the place, how the people act on each other, and a cut or another angle when the picture should move.
-    ** Host look for this run: {narrator}. Every time the 讲员 appears, it is THIS host, the same person. A third person who explains the story is this 讲员, not a separate 说书人 or 人物. Do not invent another age, gender, or face. Only one 讲员.
-    ** THIS IS A SWITCH, NOT A PODCAST. A podcast stays in one conversation: the 讲员 and a guest talk about someone else's life, and nobody performs it. Here the picture changes job.
-    ** Counselor beat: the 讲员 speaks as a third person. The line is the background of this story, this scene, or what the audience is about to see. On a beat that is only the 讲员, ``actor`` is exactly ``讲员：{narrator}``. No 人物. Nobody is performing.
-    ** Then switch into the life. The 人物 are in that place, performing. They speak as the people in the story and talk to each other. They are acting this life, not discussing it from outside.
+    ** THIS IS A SWITCH, NOT A PODCAST. A podcast stays in one conversation about someone else's life and nobody performs it. Here the picture changes job.
+    ** Counselor beat: the 讲员 speaks as a third person, giving the background of this story, this scene, or what the audience is about to see. On a beat that is only the 讲员, ``actor`` is exactly ``讲员：<look>``. No 人物.
+    ** Then switch into the life. The 人物 are in that place, performing. They talk to each other, act, exclaim, show emotion. They are acting this life, not discussing it from outside.
     ** The 讲员 may stand in that same scene and speak to them. The 人物 can answer the 讲员. While that is happening they are still performing the life, not sitting as guests.
-    ** Then it may switch back. The 讲员 narrates the background again. Later it may switch into the performance again. A performance scene is still the life being acted, even when the 讲员 is in it talking with them. Do not turn that scene into a studio discussion about those people.
-    ** A life with two people is mostly that performance: they talk inside the scene. List everyone visible, at most four people in all, the one 讲员 included, each ``woman/mature/chinese/封氏``. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Only the first three people listed may speak. The fourth only appears and has no line. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
-    ** When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
-    ** Exactly one story person, and the host is in that scene: the last part is ``讲员：{narrator}``. ``speaking`` is that person. The host's lines stay inside ``speaking`` with that person's ``<N>``.
+    ** Then it may switch back. The 讲员 narrates again. A performance scene is still the life being acted, even when the 讲员 is in it. Do not turn that scene into a studio discussion about those people.
+    ** List everyone visible, at most four people in all, the 讲员 included, using the CAST looks. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Only the first three people listed may speak. If the 讲员 is presenting, 讲员 is position 1.
+    ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
     ** No DSM labels. No "the lesson is". Do not say 根, 根儿, or 病根 in caption or speaking. Name the problem in ordinary professional language.
     ** Do not solve a life inside the story scenes. Do not skip from the first quarrel to the ending in one scene.
     ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it.
@@ -1358,19 +1367,25 @@ INPUT
 
 
 COUNSELING_SERIES_STORY_ONLY = """
-*** ROLE: Story program. No one speaks to camera. A short the host's lines in speaking only on the opening scene and the closing scene of each episode.
+*** ROLE: Story program, told like a film or a TV drama. The story is carried by the characters acting and talking to each other.
     ** Read the analysis and choose ONE path.
     ** PATH A — one life, one relationship, one timeline. One episode.
     ** PATH B — two or more distinct situations. Each situation is one episode that can be played alone. Do not merge them into one couple.
-    ** The story is told in full before any remedy. The remedy comes after the story (PATH A) or after every episode (PATH B), and it is detailed.
+    ** The story is told in full before any remedy. The remedy comes after the story (PATH A) or after every episode (PATH B), and it is detailed, and it is SHOWN by the characters as much as possible.
 
-*** HOST VOICEOVER
-    ** Host lines live only in speaking, and only on the start scene and the end scene of an episode, and on the remedy scenes. Short: 2 to 4 sentences.
-    ** Host look for this run: {narrator}. Opening, closing, and remedy scenes are host scenes. A third person who explains the story is this 讲员, not a separate 说书人 or 人物.
-    ** A host-only scene: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. The host's lines are in ``speaking``, marked ``<1>``.
-    ** List everyone visible, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last ``woman/mature/chinese/封氏``. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Lines are said aloud, not a private thought. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
-    ** When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
-    ** Exactly one story person and the host: the last part is ``讲员：{narrator}``. The host's lines stay inside ``speaking`` with that person's ``<N>``.
+*** CAST CHOSEN BY THE USER (this decides who appears and who speaks; it overrides any other wording about the 讲员 or guests below)
+    {cast}
+    ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
+    ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
+    ** If the CAST says "No cast was chosen", follow the older host wording below as before.
+    ** WHO DOES WHAT, decided only by the CAST:
+        * The 人物 carry the story. Each story scene is a dramatized moment: they act, move, react, and speak to each other in the place where it happens, like a scene in a film or TV drama. Their lines are dialogue, said aloud, not a summary.
+        * The 讲员, when listed, is the narrator only: a short introduction and background at the start, brief transitions between parts or episodes, and a brief closing. 2 to 4 sentences each. The 讲员 never takes over a story scene and never explains what the audience can already see. A narrator-only scene has ``actor`` exactly ``讲员：<look>`` and the lines marked ``<1>``.
+        * Wherever the PATH sections below say "the host's lines", that is this 讲员, kept brief. Remedy explanations are kept short and the steps are shown by the 人物 acting them out.
+        * No 讲员 in the CAST: the whole program is purely acted. No narrator, no voice-over. The opening, transitions, closing, and remedy are carried by the 人物 themselves (a line of dialogue, a gesture, a changed action), and by the caption.
+        * CAST is EMPTY: invent the story people from the material (still pure drama, no narrator), giving each a look ``gender/age band/ethnicity/name``.
+    ** List everyone visible, at most four people in all, the 讲员 included, using the CAST looks. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Only the first three listed may speak. Never write <4>.
+    ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
 
 *** PATH A — one story. When the whole program is 15 scenes or fewer it is one episode, every scene "episode": "1". A longer one follows the EPISODES block.
     ** Start — 1 scene. Caption is the program title. The host's lines in speaking names the problem and enters this life. No remedy.
@@ -1432,11 +1447,21 @@ INPUT
 
 
 COUNSELING_TALK_SCENES = """
-*** ROLE: A podcast. The 讲员 and the guests sit together and talk. They are a third party. The whole episode is them discussing someone else's story. There is no performance.
-    ** One 讲员 only, and the look is {narrator}. A guest is a 人物, never a second 讲员.
-    ** Write this into every scene: the 讲员 and the guest are talking ABOUT other people. Those other people are not in the room acting their own lives. The guest does not play them. Do not cut to a kitchen, a quarrel, or any scene where the story people perform. If a person from the story is named, the 讲员 and the guest discuss that person. They do not become that person.
-    ** This is not Series · Counselor. Counselor switches: the 讲员 narrates the background, then the story's 人物 perform the scene and talk as those people, then it can switch back to the 讲员. A podcast never makes that switch. From the first scene to the last, it stays a conversation about somebody else's affairs.
-    ** One guest, or two. At most three people speak. A fourth person may sit in the picture and does not speak. Never write <4>.
+*** ROLE: A podcast. The speakers talk about the story. The pictures illustrate what is being said.
+*** CAST CHOSEN BY THE USER (this decides who appears and who speaks; it overrides any other wording about the 讲员 or guests below)
+    {cast}
+    ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
+    ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
+    ** If the CAST says "No cast was chosen", follow the older host wording below as before.
+    ** WHO SPEAKS, decided only by the CAST:
+        * CAST is EMPTY (no 讲员, no 人物): nobody is on screen as a speaker. The whole episode is one default narrator voice-over. ``actor`` is empty (""). ``speaking`` is the narration, marked ``<1>``.
+        * Only the 讲员: the 讲员 alone speaks, telling and explaining the story. ``actor`` is ``讲员：<look>``. Every line is ``<1>``.
+        * 讲员 + exactly one 人物: a two-person podcast. The 讲员 is the host, the 人物 is the guest. They talk back and forth: question, reply, example, follow-up. ``actor`` is ``讲员：<look> | 人物1：<look>``, host first.
+        * 讲员 + two or more 人物: the 讲员 hosts and the 人物 are several guests. Each guest gets turns. At most three people speak in one scene, host included; pick which guests join each scene. A fourth listed person may sit in the picture without a line. Never write <4>.
+        * No 讲员 but one or more 人物: the FIRST listed 人物 is the host. The other 人物 are guests, following the same rules as above. Do not invent a 讲员.
+    ** The speakers are a third party. They talk ABOUT the people in the story. They never act out the story themselves, and the story's people never speak.
+    ** VISUALS SUPPORT THE WORDS. ``visual`` is always supporting information: it illustrates the story content being spoken in this scene (the place, the moment, the people of the story, what they do). Any people shown in the visual act silently: no lines, no lip-sync, only gesture, expression, and movement. The speakers may appear in the studio between illustrations, but the visual never carries the dialogue.
+    ** This is not Series · Counselor and not Story Only: nobody performs the story with spoken lines.
 
 *** HOW THE SERIES MOVES
     ** It is one podcast series about one subject. If the material has several parts, each part is one episode. If it is one subject, it is still episode 1 of a series, and the ending may leave a next question. The EPISODES block decides how the scenes group into episodes.
@@ -1448,19 +1473,17 @@ COUNSELING_TALK_SCENES = """
 
 *** SCENES (5 to 15 for each episode, one beat each)
     ** This describes the shape of ONE episode. It is not the scene count of the whole program. When the source is an audio file or a video, the SCENES FOLLOW THE SOURCE rules below decide the scene count and where each scene cuts (about 30 seconds each), so a long recording has many scenes and several episodes. Each episode then follows this shape in its own way.
-    ** 1. The program opens. The 讲员 and the guest name this episode's question. They are already talking about someone else's situation. Nobody performs it.
-    ** Next several. They discuss a real moment from that other life: how it repeats, what it costs. Each scene is one exchange between the 讲员 and the guest. The people they mention stay offstage.
-    ** Then the turn. A question from the 讲员 makes the guest name what is underneath. Still a discussion, still no performance.
-    ** Last 2–3. They land the episode. Come back to the opening moment and say what would be different. If another part remains in the material, the last line can point at it without telling that episode.
+    ** 1. The program opens. The host (or the voice-over) names this episode's question and steps into the story.
+    ** Next several. A real moment from that life is told: how it repeats, what it costs. With guests, each scene is one exchange between host and guest(s). The visual shows that moment silently.
+    ** Then the turn. A question (or, with only one voice, a turn in the telling) names what is underneath.
+    ** Last 2–3. Land the episode. Come back to the opening moment and say what would be different. If another part remains in the material, the last line can point at it without telling that episode.
 
 *** OUTPUT
     * JSON array in watch order. All text in {language}.
-    * Host look for this run: {narrator}. A third person who explains the story is this 讲员, not a separate 说书人 or 人物.
-    * List everyone visible, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last ``woman/mature/chinese/封氏``. There is no voiceover field. speaking holds every line, marked with <N> for that person's place in actor, said aloud. Only the first three people listed may speak. The fourth only appears and has no line. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
-    * When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
-    * actor is the 讲员 plus the guests who are in this conversation. A guest is ``人物1：woman/mature/chinese/名字``. Do not list the people whose story is being discussed, unless one of them is sitting there as a guest and still talking about the matter from outside it, not performing it.
-    * visual is the room where the 讲员 and the guests sit and talk. No words on the image. Do not show the story being acted.
-    * The scene is only the 讲员: actor is exactly ``讲员：{narrator}``. No 人物.
+    * ``actor`` lists only the speakers chosen by the CAST rules above (host first, then the guests who speak in this scene), at most four. Use the CAST looks exactly. Empty CAST → ``actor`` is "".
+    * ``speaking`` holds every line, marked with <N> for that speaker's place in actor. Only the first three people listed may speak. Empty CAST → one voice-over, ``<1>``.
+    * ``visual`` illustrates the content being spoken: the story's place, moment, and people, acting silently. No words on the image. It may cut back to the speakers in the studio when nothing in the story is being described.
+    * When a picture or a PDF page shows a person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number.
     * caption: scene 1 is the program title; later scenes are short beat titles.
     * Every scene includes "episode", set by the EPISODES block: 5 to 15 scenes per episode.
 
@@ -1468,9 +1491,9 @@ COUNSELING_TALK_SCENES = """
     {{
         "episode": "1",
         "caption": "Program title on scene 1. In {language}.",
-        "visual": "The room, how they face each other, and any cut. No on-image text. In {language}.",
-        "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-        "actor": "讲员：{narrator} | 人物1：woman/mature/chinese/嘉宾"
+        "visual": "The story moment being talked about, its place and people acting silently; or the speakers in the studio. Any cut. No on-image text. In {language}.",
+        "speaking": "Every line in this scene, marked with <N> for the speaker's place in actor, from 1. At most three speakers. Never write <4>. Example: <1> xxx。<2> xxx, xxx。<1> xxx。 In {language}.",
+        "actor": "The speakers from the CAST, host first. Example: 讲员：woman/mature/chinese/秦 | 人物1：man/mature/chinese/嘉宾. Empty when the CAST is empty."
     }}
 ]
 

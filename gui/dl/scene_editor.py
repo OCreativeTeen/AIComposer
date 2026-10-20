@@ -2514,12 +2514,11 @@ class SceneEditorImpl:
                             title_var = host_ctx.get("story_title_var")
                         if title_var is None:
                             title_var = tk.StringVar(value=_youtube_row_source_title(video_detail))
-                        ttk.Entry(title_host, textvariable=title_var).pack(
-                            side=tk.LEFT, fill=tk.X, expand=True, padx=(16, 6)
-                        )
-                        ttk.Button(
-                            title_host, text="保存", width=8, command=on_save_story
-                        ).pack(side=tk.LEFT, padx=(0, 8))
+                        # 人物栏放在名称栏前面（第 2 行开头），名称栏改短。
+                        scene_ui["actor_host"] = title_host
+                        title_entry = ttk.Entry(title_host, textvariable=title_var, width=28)
+                        title_entry.pack(side=tk.LEFT, padx=(8, 6))
+                        scene_ui["title_entry"] = title_entry
 
                         # 拖进文件改名时用这个名称栏和「保存」按钮的保存
                         scene_ui["name_field"] = (title_var, on_save_story)
@@ -2554,10 +2553,17 @@ class SceneEditorImpl:
                             )
 
                         scene_ui["offer_title_suggest"] = _offer_title_suggestions
+                    # 第 3 行：生成摘要 → 空一段 → 重新生成项目 → 保存（保存放最后）。
+                    if callable(on_regen_project) or callable(on_save_story):
+                        ttk.Frame(scene_ui["smart_slot"], width=28).pack(side=tk.LEFT)
                     if callable(on_regen_project):
                         ttk.Button(
                             scene_ui["smart_slot"], text="重新生成项目", command=on_regen_project
-                        ).pack(side=tk.LEFT, padx=(0, 4))
+                        ).pack(side=tk.LEFT, padx=(0, 6))
+                    if callable(on_save_story):
+                        ttk.Button(
+                            scene_ui["smart_slot"], text="保存", width=8, command=on_save_story
+                        ).pack(side=tk.LEFT, padx=(0, 8))
 
                     def _offer_pdf_scene_generate(pdf_path: str) -> None:
                         importer = scene_ui.get("import_slide_pdf")
@@ -2656,19 +2662,49 @@ class SceneEditorImpl:
                         self._persist_video_detail_story(video_detail, parent=dlg)
 
                     _commit_story_narrator(False)
-                    ttk.Label(btn_row, text="讲员").pack(side=tk.LEFT, padx=(0, 4))
-                    narrator_combo = ttk.Combobox(
-                        btn_row,
-                        textvariable=narrator_var,
-                        values=_narr_opts,
-                        state="readonly" if _narr_opts else "disabled",
-                        width=26,
+
+                    # 人物栏（替代原来的「讲员」下拉）：讲员 + 其他人物，和魔法工作流「本场内容」同一种卡片。
+                    # 名单存在这一条的 story_actors（场景 actor 同一格式），场景生成时写进提示词的 CAST。
+                    from gui.dl.story_actor_panel import StoryActorPanel
+
+                    _saved_cast = video_detail.get("story_actors")
+                    if not isinstance(_saved_cast, str):
+                        _saved_cast = f"讲员：{_narr_named}" if _narr_named else ""
+
+                    def _story_person_dir() -> str:
+                        d = _story_avatar_dir(video_detail)
+                        return d or os.path.join(config.AVATAR_PATH, "story")
+
+                    def _on_cast_change(text: str) -> None:
+                        video_detail["story_actors"] = text
+                        pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                        if isinstance(pp, dict):
+                            pp["story_actors"] = text
+                        host = actor_panel.host_name()
+                        narrator_var.set(host)
+                        if host:
+                            _commit_story_narrator(True)
+                        else:
+                            video_detail["narrator"] = ""
+                            if isinstance(pp, dict):
+                                pp["narrator"] = ""
+                            self._persist_video_detail_story(video_detail, parent=dlg)
+
+                    _actor_host_row = scene_ui.get("actor_host") or btn_row
+                    actor_panel = StoryActorPanel(
+                        _actor_host_row,
+                        text=_saved_cast,
+                        on_change=_on_cast_change,
+                        person_dir=_story_person_dir,
+                        style=lambda: (visual_style_var.get() or ""),
                     )
-                    narrator_combo.pack(side=tk.LEFT, padx=(0, 8))
-                    narrator_combo.bind(
-                        "<<ComboboxSelected>>",
-                        lambda _e: _commit_story_narrator(True),
-                    )
+                    _title_entry = scene_ui.get("title_entry")
+                    if _title_entry is not None:
+                        actor_panel.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(16, 0), before=_title_entry)
+                    else:
+                        actor_panel.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+                    video_detail["story_actors"] = actor_panel.get_text()
+                    scene_ui["actor_panel"] = actor_panel
                     if callable(on_open_project):
                         open_host = scene_ui["prompt_row"]
                         open_style = "StoryOpenProject.TButton"
