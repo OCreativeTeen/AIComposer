@@ -817,10 +817,12 @@ class ChannelVideosDialogImpl:
             video_size=None,
             setting_region=None,
             setting_era=None,
+            scene_style=None,
         ):
             """启动/打开工作流项目。forced_action: None=完整流程；open=仅打开；new=仅新建。
             video_size：STORY 窗口选的画面比例，新建时作为新建窗口的初始值。
-            setting_region / setting_era：STORY 窗口选的地域和时代，新建时写进项目。"""
+            setting_region / setting_era：STORY 窗口选的地域和时代，新建时写进项目。
+            scene_style：STORY 窗口选的场景风格，新建时写进项目。"""
             if not isinstance(vd, dict):
                 return
 
@@ -1071,6 +1073,7 @@ class ChannelVideosDialogImpl:
                 dialogue_mode=None,
                 setting_region=None,
                 setting_era=None,
+                scene_style=None,
             ):
                 if not _scene_content_nonempty(
                     {"scene_content": scene_content}
@@ -1100,6 +1103,7 @@ class ChannelVideosDialogImpl:
                     video_size=video_size,
                     setting_region=setting_region,
                     setting_era=setting_era,
+                    scene_style=scene_style,
                 )
                 if result == "new" and selected_config:
                     _after_new_project_created(
@@ -1214,9 +1218,10 @@ class ChannelVideosDialogImpl:
                 dialogue_mode=_look_talk,
                 setting_region=setting_region,
                 setting_era=setting_era,
+                scene_style=scene_style,
             )
 
-        def _regenerate_project_for_video_detail(vd, parent, video_size=None, setting_region=None, setting_era=None):
+        def _regenerate_project_for_video_detail(vd, parent, video_size=None, setting_region=None, setting_era=None, scene_style=None):
             """确认后删掉这条已有项目的工作流文件，再用当前内容新建一个新 pid。"""
             if not isinstance(vd, dict):
                 return
@@ -1270,6 +1275,7 @@ class ChannelVideosDialogImpl:
                 video_size=video_size,
                 setting_region=setting_region,
                 setting_era=setting_era,
+                scene_style=scene_style,
             )
 
         def _open_project_for_video_detail(
@@ -1282,6 +1288,7 @@ class ChannelVideosDialogImpl:
             video_size=None,
             setting_region=None,
             setting_era=None,
+            scene_style=None,
         ):
             """当前这条已有项目则直接打开；还没有则把新建项目的信息写回这一条。"""
             if not isinstance(vd, dict):
@@ -1316,6 +1323,7 @@ class ChannelVideosDialogImpl:
                 video_size=video_size,
                 setting_region=setting_region,
                 setting_era=setting_era,
+                scene_style=scene_style,
             )
 
         def on_enter_key(event):
@@ -1349,6 +1357,17 @@ class ChannelVideosDialogImpl:
             if not video_detail:
                 return
 
+            if prefer_project and (_video_detail_project_pid(video_detail) or "").strip():
+                # 双击：这一条已有项目时先问用户进项目还是进故事预览。
+                _ans = messagebox.askyesnocancel(
+                    "打开方式",
+                    "这个故事已经有项目了。\n\n是：打开项目\n否：进入故事预览",
+                    parent=dialog,
+                )
+                if _ans is None:
+                    return
+                if _ans is False:
+                    prefer_project = False
             if prefer_project and (_video_detail_project_pid(video_detail) or "").strip():
                 _open_project_for_video_detail(
                     video_detail,
@@ -1715,6 +1734,14 @@ class ChannelVideosDialogImpl:
                     return None, None
                 return pair[0] or None, pair[1] or None
 
+            def _story_scene_style():
+                ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                getter = ctx.get("story_scene_style") if isinstance(ctx, dict) else None
+                try:
+                    return getter() if callable(getter) else None
+                except tk.TclError:
+                    return None
+
             def _open_project_from_summary():
                 region, era = _story_setting()
                 _open_project_for_video_detail(
@@ -1726,6 +1753,7 @@ class ChannelVideosDialogImpl:
                     video_size=_story_video_size(),
                     setting_region=region,
                     setting_era=era,
+                    scene_style=_story_scene_style(),
                 )
 
             def _regen_project_from_summary():
@@ -1733,6 +1761,7 @@ class ChannelVideosDialogImpl:
                 _regenerate_project_for_video_detail(
                     video_detail, summary_window, video_size=_story_video_size(),
                     setting_region=region, setting_era=era,
+                    scene_style=_story_scene_style(),
                 )
 
             def _resummarize_from_summary(**kw):

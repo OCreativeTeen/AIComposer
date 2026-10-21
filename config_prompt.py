@@ -561,7 +561,7 @@ def _slide_flow_story_rules(visual: bool, speaking: bool, actor: bool) -> str:
     lines = [
         "Story style: the characters act and talk with each other inside the scene."
         + (" The dialogue comes from ``Dialogue``." if speaking else ""),
-        "``Actors`` is the cast. Each listed person uses their own character image: look, gender, age band, and ethnicity.",
+        "``Actors`` is the cast. Each listed person uses their own character image: look, gender, age band, and ethnicity. The portrait id is the text before the parentheses. The parentheses are that person's emotion and action in this scene; follow them, and do not treat them as part of the id.",
         "The 人物 entries are IN the scene, in the story's place, acting and talking.",
     ]
     if visual:
@@ -2539,9 +2539,8 @@ NOTEBOOKLM_VIDEO_ACT_SPEECH = """
 ** Show the story through action, facial expression, and how the scene changes. Use ``visual`` for that change.
 ** Read ``actor`` from left to right. Skip anyone named 不出现. Entry 1's text is ``speaking``. Entry 2's text, if any, is ``voiceover``.
 ** A 讲员 in entry 1 or entry 2 may speak that entry's line aloud as commentary.
-** A 讲员 with a plain white picture stays off screen. No mouth in the scene moves for that commentary.
-** A 讲员 with a real portrait enters, says only that commentary, then leaves. Face and clothes match the portrait.
-** If neither entry is 讲员, nobody speaks. Action, expression, and place sounds only.
+** A 讲员 listed in ``actor`` appears on screen, says only that commentary, then leaves. Face and clothes match the 讲员's reference portrait.
+** If no 讲员 is listed in ``actor``, nobody speaks on screen. Any commentary is an off-screen voice-over: no narrator is drawn and no mouth moves. Otherwise action, expression, and place sounds only.
 ** When the 讲员 speaks, every 人物 mouth stays closed. One voice at a time. No music.
 """
 

@@ -55,6 +55,7 @@ from gui.dl.gen_video_files import GEN_VIDEO_CLIP_SEGMENTS_KEY, STORY_MEDIA_KEY,
 from gui.dl.program_clipboard import ChannelClipboardManagerWindow, LEGACY_CHANNEL_CLIPBOARD_JSON_NAME, PROGRAM_CLIPBOARD_JSON_NAME, _dedupe_program_clipboard_items_by_preview, _load_program_clipboard_data, _merge_legacy_clipboard_file_into_items, _migrate_legacy_channel_clipboards, _program_clipboard_file, _program_clipboard_make_id, _program_clipboard_manager_window, _program_clipboard_preview_key, _program_clipboard_source_label, _save_program_clipboard_data, channel_clipboard_append_item, program_clipboard_append_item  # re-export
 from gui.dl.publish_schedule import _INPUT_PUBLISH_TXT_RE, _apply_publish_create_date, _find_category_subfolder, _folder_english_prefix, _gen_video_publish_mp4_if_ready, _is_already_in_category_folder, _move_published_input_media_files, _parse_input_media_category_short_code, _publish_cell_display, _resolve_review_publish_mp4_path, _scan_input_media_publish_map, ask_publish_schedule_dialog  # re-export
 from gui.dl.workflow_launch import _begin_workflow_launch, _focus_open_workflow, _launch_gui_wf_from_list_json, _launch_gui_wf_open_pid, _release_workflow_launch, _watch_workflow_launch, _workflow_launch_guard, _workflow_launch_guard_lock  # re-export
+import gui.dl.prompts_notebooklm as _pnb
 from gui.dl.prompts_notebooklm import _MEDIA_SCENE_LENGTH_NOTE, _MEDIA_SCENE_TIMING_NOTE, _build_notebooklm_prompt_for_row, _format_nb_prompt_template, _image_material_override, _media_length_line, _media_material_override, _media_source_blurb, _notebooklm_prompt_context_from_video_detail, _notebooklm_row_tags_text, _notebooklm_row_topic_fields, _pdf_scene_generation_instruction, _prompt_choice_entries, _prompt_text_for_material, _resolve_combined_prompt_template, _scene_entry_heading, _scene_prompt_narrator, _transcript_source_blurb  # re-export
 from gui.dl.slides_pdf import _SUMMARY_IMAGE_SUFFIXES, _download_slide_files, _pdf_pages_as_scene_source, _slide_thumb_image, ask_download_slide_pdf  # re-export
 from gui.dl.summary_window import _fit_story_summary_window, _refresh_summary_window_title, _run_summary_gen_video_clip_review, schedule_summary_gen_video_clip_review  # re-export
@@ -1148,6 +1149,10 @@ class MediaGUIManager:
             return lbl, config_prompt.build_step_image_clipbody(
                 params.get("steps") or 1,
                 visual_style=str(params.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""),
+                main_character="\n".join(x for x in (
+                    _pnb.story_cast_summary(video_detail),
+                    ("Setting: " + _pnb.story_setting_phrase(video_detail)) if _pnb.story_setting_phrase(video_detail) else "",
+                ) if x),
             )
         if config_channel.is_scene_summary_image_label(lbl):
             # 场景总图：全部 scene_content → 一张总图（幻灯提示「单图」同一构建函数）；没有场景时为空。
@@ -1161,6 +1166,8 @@ class MediaGUIManager:
                 scenes,
                 visual_style=str(params.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""),
                 host_narrator=_project_look_from_row(video_detail)[2],
+                region=_pnb.story_setting_region_era(video_detail)[0],
+                era=_pnb.story_setting_region_era(video_detail)[1],
             )
         template = config_channel.resolve_dynamic_scene_template(lbl, template, params)
         cat, sub, topic = _notebooklm_row_topic_fields(video_detail)

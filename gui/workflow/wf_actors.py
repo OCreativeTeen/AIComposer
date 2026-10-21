@@ -58,7 +58,10 @@ class ActorsMixin:
             "跳进画面，讲完跳出": "跳进跳出",
             "自然地 - 骑马走进画面，讲完骑马走出": "骑马进出",
         }
-        return short.get(motion, motion)
+        shown = short.get(motion, motion)
+        if len(shown) > 18:
+            return shown[:18] + "…"
+        return shown
 
     def _render_actor_buttons(self) -> None:
         row = getattr(self, "scene_actor_row", None)
@@ -119,9 +122,9 @@ class ActorsMixin:
 
     @staticmethod
     def _actor_chip_focus(chip, label, on: bool) -> None:
-        bg = "#dbe9ff" if on else "white"
+        bg = "#9fc5ff" if on else "white"
         try:
-            chip.configure(bg=bg)
+            chip.configure(bg=bg, highlightbackground="#1a73e8" if on else "white")
             label.configure(bg=bg)
         except tk.TclError:
             pass
@@ -145,7 +148,7 @@ class ActorsMixin:
         parent = self.root
         if ask is None:
             answer = messagebox.askyesnocancel(
-                "删除", f"要把本集所有场景中同名的「{name}」都删除吗？", parent=parent
+                "删除", f"删除「{name}」：\n是 = 本集所有场景里同名的都删\n否 = 只删这一场\n取消 = 不删", parent=parent
             )
         else:
             answer = ask(name)
@@ -302,8 +305,7 @@ class ActorsMixin:
             show_auto_close_popup(self.root, "剪贴板", f"{who} 的参考形象已拷贝", duration_ms=1000)
             return
         if entry.get("role") == "person" and body and not project_manager.actor_is_absent(body):
-            self.copy_image_to_clipboard(self._blank_portrait_path(), silent=True)
-            show_auto_close_popup(self.root, "剪贴板", f"{who} 没有参考图，已拷贝白板", duration_ms=1000)
+            show_auto_close_popup(self.root, "剪贴板", f"{who} 没有参考图，没有拷贝", duration_ms=1000)
             return
         self._open_actor_preview(entry)
 
@@ -418,15 +420,6 @@ class ActorsMixin:
         folder = config.avatar_style_dest_dir(self._portrait_style())
         os.makedirs(folder, exist_ok=True)
         return os.path.join(folder, stem + ".png")
-
-    def _blank_portrait_path(self) -> str:
-        """背景讲员用的白板图。确定时拷进剪贴板，表示这个人只在背景里说话。"""
-        folder = config.AVATAR_PATH
-        os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, "_blank.png")
-        if not os.path.isfile(path):
-            Image.new("RGB", (768, 1024), (255, 255, 255)).save(path, "PNG")
-        return path
 
     def _project_avatar_dir(self) -> str:
         pid = self.get_pid()
@@ -646,7 +639,7 @@ class ActorsMixin:
         parent=None,
         host_only: bool = False,
     ) -> None:
-        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。拷贝图案或拷贝背景。"""
+        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。拷贝图案。"""
         if not names:
             return
         win = parent or self.root
@@ -664,6 +657,11 @@ class ActorsMixin:
 
         name_var = tk.StringVar()
         ttk.Label(dlg, textvariable=name_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(12, 4))
+        opened_motion = ""
+        if actor_entry:
+            _opened_body, opened_motion = project_manager.split_actor_motion((actor_entry.get("body") or "").strip())
+        if opened_motion:
+            ttk.Label(dlg, text=f"这一场：（{opened_motion}）", wraplength=640).pack(pady=(0, 4))
         image_label = ttk.Label(dlg)
         image_label.pack(padx=16, pady=4)
         voice_row = ttk.Frame(dlg)
@@ -686,8 +684,8 @@ class ActorsMixin:
             "override_name": "",
             "voice_ready": False,
         }
-        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。全改讲员把选定范围内每一场的讲员换成当前这一位，讲稿收成只在开头标〈1〉。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
-        person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时拷贝用白板。Ctrl+V 可以贴上形象。"
+        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。场景里写了讲员就出镜，没写就是画外旁白。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。全改讲员把选定范围内每一场的讲员换成当前这一位，讲稿收成只在开头标〈1〉。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
+        person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时不拷贝。Ctrl+V 可以贴上形象。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。"
 
         def remember_voice(name: str, voice: str) -> None:
             pc = project_manager.PROJECT_CONFIG
@@ -796,15 +794,8 @@ class ActorsMixin:
             if not name:
                 name_var.set("不出现")
                 show_voice("")
-                path = self._blank_portrait_path()
-                try:
-                    img = Image.open(path)
-                    img.thumbnail((420, 560), Image.Resampling.LANCZOS)
-                    holder["photo"] = ImageTk.PhotoImage(img)
-                    image_label.config(image=holder["photo"], text="")
-                except OSError:
-                    holder["photo"] = None
-                    image_label.config(image="", text="不出现")
+                holder["photo"] = None
+                image_label.config(image="", text="不出现")
                 return
             name_var.set(name)
             show_voice(name)
@@ -867,8 +858,6 @@ class ActorsMixin:
                 elif on_confirm is not None and role == "host":
                     on_confirm("")
                 return
-            if role != "host":
-                motion = ""
             body = project_manager.actor_body_with_default_age(bare)
             if motion:
                 base, _old = project_manager.split_actor_motion(body)
@@ -881,7 +870,7 @@ class ActorsMixin:
             if on_confirm is not None and role == "host":
                 on_confirm(bare)
 
-        def finish(copy_blank: bool) -> None:
+        def finish() -> None:
             if holder.get("override_name"):
                 name = holder["override_name"]
             else:
@@ -894,26 +883,42 @@ class ActorsMixin:
                 messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
                 return
             motion = ""
-            if holder.get("mode") == "host" and not copy_blank and name and not project_manager.actor_is_absent(name):
-                motion = ask_motion_choice()
+            _kept_body, kept_motion = ("", "")
+            if actor_entry:
+                _kept_body, kept_motion = project_manager.split_actor_motion((actor_entry.get("body") or "").strip())
+            if holder.get("mode") == "host" and name and not project_manager.actor_is_absent(name):
+                motion = kept_motion or ask_motion_choice()
                 if not motion:
                     return
-            if copy_blank or not name or project_manager.actor_is_absent(name):
-                portrait = self._blank_portrait_path()
+            elif holder.get("mode") == "person":
+                motion = kept_motion
+            if not name or project_manager.actor_is_absent(name):
+                portrait = ""
             elif holder.get("override_name"):
-                portrait = self._narrator_portrait_path(name) or self._blank_portrait_path()
+                portrait = self._narrator_portrait_path(name) or ""
             else:
                 portrait = holder["path_for"](name) or ""
-                if not portrait and holder.get("mode") == "person":
-                    portrait = self._blank_portrait_path()
             if portrait:
                 self.copy_image_to_clipboard(portrait, silent=True)
+            elif name and not project_manager.actor_is_absent(name):
+                show_auto_close_popup(self.root, "剪贴板", f"{name} 没有参考图，没有拷贝", duration_ms=1000)
             apply_choice(name, motion)
             dlg.destroy()
 
-        def delete_entry() -> None:
-            if not self._delete_scene_actor(actor_entry, dlg):
+        def confirm() -> None:
+            """确认：照现在选的这一位写进这一场（声音换了就已经存过），不拷贝图，然后关掉。"""
+            if holder.get("override_name"):
+                name = holder["override_name"]
+            else:
+                names_now = holder["names"]
+                name = (names_now[holder["index"]] if names_now else "") or ""
+            if holder.get("mode") == "person" and not name:
+                messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
                 return
+            kept_motion = ""
+            if actor_entry:
+                _b, kept_motion = project_manager.split_actor_motion((actor_entry.get("body") or "").strip())
+            apply_choice(name, kept_motion)
             dlg.destroy()
 
         def add_person() -> None:
@@ -966,14 +971,14 @@ class ActorsMixin:
                 hint_var.set(host_hint)
                 switch_btn.config(text="切换成人物")
                 if not force_btn.winfo_ismapped():
-                    force_btn.pack(side=tk.LEFT, padx=6, before=delete_btn if delete_btn else cancel_btn)
+                    force_btn.pack(side=tk.LEFT, padx=6, before=confirm_btn)
             else:
                 dlg.title("人物")
                 hint_var.set(person_hint)
                 switch_btn.config(text="切换成讲员")
                 force_btn.pack_forget()
             if not add_btn.winfo_ismapped():
-                add_btn.pack(side=tk.LEFT, padx=6, before=delete_btn if delete_btn else cancel_btn)
+                add_btn.pack(side=tk.LEFT, padx=6, before=confirm_btn)
 
         def toggle_domain() -> None:
             if holder["mode"] == "host":
@@ -1000,17 +1005,14 @@ class ActorsMixin:
 
         btns = ttk.Frame(dlg)
         btns.pack(pady=(0, 12))
-        ttk.Button(btns, text="拷贝图案", command=lambda: finish(False)).pack(side=tk.LEFT, padx=6)
-        ttk.Button(btns, text="拷贝背景", command=lambda: finish(True)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="拷贝图案", command=finish).pack(side=tk.LEFT, padx=6)
         switch_btn = ttk.Button(btns, text="切换成人物", command=toggle_domain)
         if not host_only:
             switch_btn.pack(side=tk.LEFT, padx=6)
         force_btn = ttk.Button(btns, text="全改讲员", command=ask_force_host_speaking)
         add_btn = ttk.Button(btns, text="增加人物", command=add_person)
-        delete_btn = None
-        if actor_entry:
-            delete_btn = ttk.Button(btns, text="删除", command=delete_entry)
-            delete_btn.pack(side=tk.LEFT, padx=6)
+        confirm_btn = ttk.Button(btns, text="确认", command=confirm)
+        confirm_btn.pack(side=tk.LEFT, padx=6)
         cancel_btn = ttk.Button(btns, text="取消", command=dlg.destroy)
         cancel_btn.pack(side=tk.LEFT, padx=6)
         apply_domain_chrome()
@@ -1196,7 +1198,7 @@ class ActorsMixin:
         ttk.Label(frm, text="可以不填。有名字就写在最后。").grid(row=3, column=2, sticky="w", padx=8)
         ttk.Label(
             frm,
-            text="加上之后可以拖到第几位。没有图片时，参考图用白板。双击这位，Ctrl+V 可以贴上形象。",
+            text="加上之后可以拖到第几位。没有图片时不带参考图。双击这位，Ctrl+V 可以贴上形象。",
             wraplength=360,
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
@@ -1374,7 +1376,7 @@ class ActorsMixin:
             current=(current or "").strip(),
             dest_for=self._narrator_portrait_dest,
             path_for=self._narrator_portrait_path,
-            hint="← 最左是不出现：不进画面，也不说话。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人选不变。",
+            hint="← 最左是不出现：不进画面，也不说话。拷贝图案拷当前图，并问怎么进出画面。",
             allow_empty=True,
             on_confirm=chosen,
             ask_motion=True,

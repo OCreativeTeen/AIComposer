@@ -444,8 +444,7 @@ class TimelineMixin:
 
         def run_split_scene() -> None:
             close()
-            if messagebox.askyesno("分成两场", "从这个播放位置把这一场分成前后两场？", parent=self.root):
-                self.split_scene()
+            self.split_scene()
 
         scene_split_btn = ttk.Button(dlg, text="从这里分成前后两场", command=run_split_scene)
         scene_split_btn.pack(fill=tk.X, padx=14, pady=3)

@@ -115,7 +115,14 @@ def _story_video_size(video_detail: dict) -> tuple[str, str]:
             if w > 0 and h > 0:
                 project_size = "1920x1080" if w >= h else "1080x1920"
                 break
-    last = project_manager.LAST_VIDEO_SIZE
+    last = ""
+    if isinstance(video_detail, dict):
+        for src in (video_detail, pp):
+            if isinstance(src, dict) and src.get("story_video_size") in ("1920x1080", "1080x1920"):
+                last = src.get("story_video_size")
+                break
+    if not last:
+        last = project_manager.LAST_VIDEO_SIZE
     if last not in ("1920x1080", "1080x1920"):
         last = project_manager.video_size_key()
     return last, project_size
@@ -129,6 +136,24 @@ def _story_video_size_choice(scene_ui: dict, video_detail: dict) -> str:
     except tk.TclError:
         v = ""
     return v if v in ("1920x1080", "1080x1920") else _story_video_size(video_detail)[0]
+
+
+def _pnb_story_setting(video_detail):
+    from gui.dl.prompts_notebooklm import story_setting_region_era
+    return story_setting_region_era(video_detail)
+
+
+def _pnb_program_cast(video_detail, scene_ui, output, cast_source="panel"):
+    from gui.dl.prompts_notebooklm import build_program_cast_block
+    label = ""
+    var = scene_ui.get("prompt_combo_var") if isinstance(scene_ui, dict) else None
+    try:
+        label = (var.get() if var is not None else "") or ""
+    except tk.TclError:
+        label = ""
+    if not label and isinstance(video_detail, dict):
+        label = (video_detail.get("scene_prompt_label") or "").strip()
+    return build_program_cast_block(video_detail, label, output, cast_source=cast_source)
 
 
 def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: dict) -> None:
@@ -187,6 +212,16 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
     except Exception:  # noqa: BLE001
         saved = None
 
+    def save_source(source: str) -> None:
+        """记住「写进 content.pdf 的内容」选哪一种（analysis / scenes / material），存进这一条的 JSON。"""
+        if not source or video_detail.get("program_content_source") == source:
+            return
+        video_detail["program_content_source"] = source
+        try:
+            gui._persist_video_detail_story(video_detail, parent=dlg)
+        except Exception as exc:  # noqa: BLE001
+            print(f"节目生成：内容来源没有记下：{exc}")
+
     def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
                     actor_pdf: str = "", _cross: bool = False, extra_sources=None) -> None:
         def _open_file(path: str) -> None:
@@ -232,7 +267,10 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         get_style=get_style,
         copy_text=copy_text,
         host_narrator=narrator,
-        get_place=None,
+        get_place=lambda: _pnb_story_setting(video_detail),
+        get_cast_block=lambda output, source="panel": _pnb_program_cast(video_detail, scene_ui, output, source),
+        initial_source=(video_detail.get("program_content_source") or "").strip(),
+        on_source_change=save_source,
         saved_choice=saved,
         save_choice=save_choice,
         open_manual=open_manual,
@@ -357,6 +395,13 @@ class SceneEditorImpl:
             gen_host = ttk.Frame(frm)
             scene_ui["gen_host"] = gen_host
             default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
+            _saved_prompt_label = ""
+            for _src in (video_detail, video_detail.get(project_manager.PROJECT_PROFILE_KEY)):
+                if isinstance(_src, dict) and (_src.get("scene_prompt_label") or "").strip():
+                    _saved_prompt_label = (_src.get("scene_prompt_label") or "").strip()
+                    break
+            if _saved_prompt_label in [opt[0] for opt in nb_prompt_choices]:
+                default_prompt_label = _saved_prompt_label
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
             prompt_combo = ttk.Combobox(
                 gen_host,
@@ -446,6 +491,21 @@ class SceneEditorImpl:
 
             prompt_combo_var.trace_add("write", _sync_dynamic_prompt_widgets)
             _sync_dynamic_prompt_widgets()
+
+            def _commit_prompt_label(_e=None):
+                lbl = (prompt_combo_var.get() or "").strip()
+                if not lbl or video_detail.get("scene_prompt_label") == lbl:
+                    return
+                video_detail["scene_prompt_label"] = lbl
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict):
+                    pp["scene_prompt_label"] = lbl
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:
+                    pass
+
+            prompt_combo.bind("<<ComboboxSelected>>", _commit_prompt_label, add="+")
             action_bar = ttk.Frame(prompt_row)
             action_bar.pack(side=tk.LEFT, fill=tk.X, expand=not embedded, padx=(12, 0))
             scene_ui["action_bar"] = action_bar
@@ -455,7 +515,6 @@ class SceneEditorImpl:
             pdf_source_cache = {"path": "", "text": "", "pages": 0, "has_text": False}
             material_row = ttk.Frame(frm)
             material_row.pack(fill=tk.X, pady=(0, 6))
-            ttk.Label(material_row, text="材料").pack(side=tk.LEFT, padx=(0, 8))
             btn_analyzed = tk.Button(
                 material_row,
                 text="分析报告",
@@ -479,7 +538,7 @@ class SceneEditorImpl:
             scene_count_var = slide_info_var if slide_info_var is not None else tk.StringVar(value="")
             scene_count_lbl = ttk.Label(material_row, textvariable=scene_count_var)
             scene_count_lbl.pack(side=tk.LEFT, padx=(4, 4))
-            ttk.Separator(material_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=28)
+            ttk.Separator(material_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=14)
             gen_host.pack(in_=material_row, side=tk.LEFT, padx=(4, 0))
             gen_host.lift(material_row)  # 子控件叠在材料行上面才看得见
             smart_slot = ttk.Frame(material_row)
@@ -1240,6 +1299,7 @@ class SceneEditorImpl:
                             _story_analysis_text(video_detail, scene_ui) or _story_scene_list(video_detail, scene_ui)
                         ),
                     }
+                program_kw = {}  # 生成节目已移到场景生成左边的按钮
                 choice = ask_analyze_choice(
                     dlg,
                     _analyze_options(),
@@ -1338,7 +1398,7 @@ class SceneEditorImpl:
                 parts.append("音频" if kind == "audio" else "视频" if media_path else "无媒体")
                 if _find_item_transcript_file(video_detail):
                     parts.append("文字稿")
-                return "材料：" + " · ".join(parts)
+                return " · ".join(parts)
 
             def _on_materials_press(_event=None):
                 material_var.set(_last_material[0] or _default_material_mode())
@@ -1474,19 +1534,6 @@ class SceneEditorImpl:
             dialogue_mode_var = tk.StringVar(value=_talk_cur)
             dialogue_mode_opts = list(config.DIALOGUE_MODE_OPTIONS)
 
-            # 画面风格：与新建项目 / 欢迎屏同一份 config.VISUAL_STYLE_OPTIONS；默认取项目配置。
-            style_frm = ttk.Frame(prompt_row)
-            ttk.Label(style_frm, text="风格").pack(side=tk.LEFT, padx=(0, 2))
-            visual_style_combo = ttk.Combobox(
-                style_frm,
-                textvariable=visual_style_var,
-                values=visual_style_combo_opts,
-                state="readonly" if visual_style_combo_opts else "disabled",
-                width=20,
-            )
-            visual_style_combo.pack(side=tk.LEFT)
-            style_frm.pack(side=tk.LEFT, padx=(0, 8), before=action_bar)
-
             # 画面比例：和新建项目窗口同一组选项、同一个默认（上次选择）。
             # 单独放在最上面。STORY 窗只有 1100 宽，挤在标题那一行里会被裁掉，所以之前看不见。
             # 在这里改会记住，并用于节目生成（视频概览 / 信息图）和从这里新建 / 重新生成项目；不改已经建好的项目。
@@ -1495,7 +1542,9 @@ class SceneEditorImpl:
             scene_ui["video_size_var"] = video_size_var
             size_frm = ttk.Frame(frm)
             ttk.Label(size_frm, text="画面:").pack(side=tk.LEFT, padx=(0, 4))
-            size_note = ttk.Label(size_frm, text="", foreground="#a05000")
+            # 提示放在画面那一行下面单独一行：那一行还有地域 / 时代 / 风格 / 讲员，长提示挤进去会把它们推出窗口。
+            size_note_row = ttk.Frame(frm)
+            size_note = ttk.Label(size_note_row, text="", foreground="#a05000")
 
             def _sync_video_size_note():
                 cur = video_size_var.get()
@@ -1503,18 +1552,38 @@ class SceneEditorImpl:
                     size_note.config(
                         text="（这一条已有项目是" + ("横屏" if _vsize_project == "1920x1080" else "竖屏") + "，换成这个比例要用「重新生成项目」）"
                     )
-                    size_note.pack(side=tk.LEFT, padx=(8, 0))
+                    size_note.pack(side=tk.LEFT, padx=(4, 0))
                 else:
                     size_note.pack_forget()
 
             def _commit_video_size():
                 project_manager.remember_video_size(video_size_var.get())
                 _sync_video_size_note()
+                video_detail["story_video_size"] = video_size_var.get()
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict):
+                    pp["story_video_size"] = video_size_var.get()
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:
+                    pass
 
-            for _vs_val, _vs_txt in (("1920x1080", "1920x1080 (横向)"), ("1080x1920", "1080x1920 (纵向)")):
-                ttk.Radiobutton(
-                    size_frm, text=_vs_txt, value=_vs_val, variable=video_size_var, command=_commit_video_size
-                ).pack(side=tk.LEFT, padx=(0, 8))
+            # 下拉框只显示短写：1920x = 横屏，1080x = 竖屏。
+            _vsize_short = {"1920x1080": "1920x", "1080x1920": "1080x"}
+            video_size_short_var = tk.StringVar(value=_vsize_short.get(video_size_var.get(), "1080x"))
+            video_size_combo = ttk.Combobox(
+                size_frm, textvariable=video_size_short_var, values=list(_vsize_short.values()),
+                state="readonly", width=6,
+            )
+            video_size_combo.pack(side=tk.LEFT, padx=(0, 4))
+
+            def _on_video_size_pick(_e=None):
+                full = {v: k for k, v in _vsize_short.items()}.get(video_size_short_var.get())
+                if full:
+                    video_size_var.set(full)
+                    _commit_video_size()
+
+            video_size_combo.bind("<<ComboboxSelected>>", _on_video_size_pick)
             _sync_video_size_note()
 
             # 地域 / 时代：和魔法工作流「全场内容」同一组。跟在画面比例后面。
@@ -1546,16 +1615,82 @@ class SceneEditorImpl:
             def _commit_setting_place(_e=None):
                 _sync_setting_eras()
                 project_manager.remember_setting_place(setting_region_var.get(), setting_era_var.get())
+                video_detail["setting_region"] = (setting_region_var.get() or "").strip()
+                video_detail["setting_era"] = (setting_era_var.get() or "").strip()
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict):
+                    pp["setting_region"] = video_detail["setting_region"]
+                    pp["setting_era"] = video_detail["setting_era"]
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:
+                    pass
 
             _sync_setting_eras()
             setting_region_combo.bind("<<ComboboxSelected>>", _commit_setting_place)
             setting_era_combo.bind("<<ComboboxSelected>>", _commit_setting_place)
 
+            ttk.Label(size_frm, text="风格").pack(side=tk.LEFT, padx=(12, 2))
+            visual_style_combo = ttk.Combobox(
+                size_frm,
+                textvariable=visual_style_var,
+                values=visual_style_combo_opts,
+                state="readonly" if visual_style_combo_opts else "disabled",
+                width=16,
+            )
+            visual_style_combo.pack(side=tk.LEFT, padx=(0, 6))
+
+            def _scene_style_label(value) -> str:
+                key = config_prompt.normalize_scene_style(value)
+                for k, label, _d in config_prompt.SCENE_STYLE_CHOICES:
+                    if k == key:
+                        return label
+                return config_prompt.SCENE_STYLE_LABELS[0]
+
+            _ss_raw = None
+            _ss_pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+            for _ss_src in (_ss_pp, video_detail):
+                if isinstance(_ss_src, dict) and "scene_style" in _ss_src:
+                    _ss_raw = _ss_src.get("scene_style")
+                    break
+            if _ss_raw is None:
+                _ss_raw = project_manager.LAST_SCENE_STYLE
+            scene_style_var = tk.StringVar(value=_scene_style_label(_ss_raw))
+            scene_style_combo = ttk.Combobox(
+                size_frm,
+                textvariable=scene_style_var,
+                values=list(config_prompt.SCENE_STYLE_LABELS),
+                state="readonly",
+                width=10,
+            )
+            scene_style_combo.pack(side=tk.LEFT, padx=(0, 4))
+
+            def _commit_scene_style(_e=None):
+                key = project_manager.remember_scene_style(scene_style_var.get())
+                video_detail["scene_style"] = key
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict):
+                    pp["scene_style"] = key
+                cfg = project_manager.PROJECT_CONFIG
+                if isinstance(cfg, dict) and (cfg.get("pid") or "") and (
+                    cfg.get("pid") == project_manager.list_json_row_workflow_pid(video_detail)
+                ):
+                    cfg["scene_style"] = key
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:
+                    pass
+
+            scene_style_combo.bind("<<ComboboxSelected>>", _commit_scene_style)
+
+            scene_ui["size_frm"] = size_frm
             size_frm.pack(fill=tk.X, pady=(0, 6), before=prompt_row)
+            size_note_row.pack(fill=tk.X, after=size_frm)
             _size_ctx = getattr(dlg, "_summary_drop_ctx", None)
             if isinstance(_size_ctx, dict):
                 _size_ctx["story_video_size"] = video_size_var.get  # 打开项目 / 重新生成项目：新建窗口的初始比例
                 _size_ctx["story_setting"] = lambda: (setting_region_var.get(), setting_era_var.get())
+                _size_ctx["story_scene_style"] = scene_style_var.get
 
             def _commit_visual_style(_e=None):
                 vs = config.match_visual_style(visual_style_var.get() or "")
@@ -2468,18 +2603,38 @@ class SceneEditorImpl:
                     ttk.Style().configure(
                         smart_style,
                         font=("Microsoft YaHei UI", 9, "bold"),
-                        padding=(11, 6),
+                        padding=(6, 6),
+                    )
+                    ttk.Style().configure(
+                        "StoryMidAction.TButton",
+                        font=("Microsoft YaHei UI", 9, "bold"),
+                        padding=(4, 3),
                     )
                     smart_btn = ttk.Button(
                         scene_ui["prompt_combo"].master,
                         text="场景生成",
                         command=on_smart_generate,
                         style=smart_style,
-                        width=11,
+                        width=8,
                     )
-                    smart_btn.pack(
-                        side=tk.LEFT, padx=(0, 6), before=scene_ui["prompt_combo"]
+                    # 方案下拉在前,中间一道和前面同宽的分隔,场景生成按钮在后
+                    _smart_sep = ttk.Separator(scene_ui["prompt_combo"].master, orient="vertical")
+                    _smart_sep.pack(side=tk.LEFT, fill=tk.Y, padx=14, after=scene_ui["prompt_combo"])
+                    def _on_program_btn() -> None:
+                        if not (_story_analysis_text(video_detail, scene_ui) or _story_scene_list(video_detail, scene_ui)):
+                            messagebox.showwarning("生成节目", "还没有分析报告。", parent=dlg)
+                            return
+                        _open_story_program_dialog(self, dlg, program_btn, video_detail, scene_ui)
+
+                    program_btn = ttk.Button(
+                        scene_ui["prompt_combo"].master,
+                        text="生成节目",
+                        command=_on_program_btn,
+                        style=smart_style,
+                        width=8,
                     )
+                    program_btn.pack(side=tk.LEFT, padx=(0, 6), after=_smart_sep)
+                    smart_btn.pack(side=tk.LEFT, padx=(0, 6), after=program_btn)
 
                     if embedded:
                         def _summary_scenes() -> list:
@@ -2489,7 +2644,7 @@ class SceneEditorImpl:
                             sc = video_detail.get("scene_content")
                             return [item for item in sc if isinstance(item, dict)] if isinstance(sc, list) else []
 
-                        sum_btn = ttk.Button(scene_ui["smart_slot"], text="生成摘要", width=8)
+                        sum_btn = ttk.Button(scene_ui["smart_slot"], text="生成摘要", width=8, style="StoryMidAction.TButton")
 
                         def _on_summarize() -> None:
                             sum_btn.config(state=tk.DISABLED)
@@ -2516,8 +2671,8 @@ class SceneEditorImpl:
                             title_var = tk.StringVar(value=_youtube_row_source_title(video_detail))
                         # 人物栏放在名称栏前面（第 2 行开头），名称栏改短。
                         scene_ui["actor_host"] = title_host
-                        title_entry = ttk.Entry(title_host, textvariable=title_var, width=28)
-                        title_entry.pack(side=tk.LEFT, padx=(8, 6))
+                        title_entry = ttk.Entry(scene_ui.get("size_frm") or title_host, textvariable=title_var, width=28)
+                        title_entry.pack(side=tk.RIGHT, padx=(8, 6))
                         scene_ui["title_entry"] = title_entry
 
                         # 拖进文件改名时用这个名称栏和「保存」按钮的保存
@@ -2557,13 +2712,18 @@ class SceneEditorImpl:
                     if callable(on_regen_project) or callable(on_save_story):
                         ttk.Frame(scene_ui["smart_slot"], width=28).pack(side=tk.LEFT)
                     if callable(on_regen_project):
+                        regen_host = scene_ui["prompt_row"] if callable(on_save_story) else scene_ui["smart_slot"]
                         ttk.Button(
-                            scene_ui["smart_slot"], text="重新生成项目", command=on_regen_project
+                            scene_ui["smart_slot"], text="重生项目", command=on_regen_project
                         ).pack(side=tk.LEFT, padx=(0, 6))
                     if callable(on_save_story):
                         ttk.Button(
-                            scene_ui["smart_slot"], text="保存", width=8, command=on_save_story
-                        ).pack(side=tk.LEFT, padx=(0, 8))
+                            scene_ui.get("size_frm") or scene_ui["smart_slot"], text="保存", width=8, command=on_save_story
+                        ).pack(side=tk.RIGHT, padx=(8, 4))
+                        _te = scene_ui.get("title_entry")
+                        if _te is not None and _te.master is scene_ui.get("size_frm"):
+                            _te.pack_forget()
+                            _te.pack(side=tk.RIGHT, padx=(8, 0))
 
                     def _offer_pdf_scene_generate(pdf_path: str) -> None:
                         importer = scene_ui.get("import_slide_pdf")
@@ -2699,7 +2859,7 @@ class SceneEditorImpl:
                         style=lambda: (visual_style_var.get() or ""),
                     )
                     _title_entry = scene_ui.get("title_entry")
-                    if _title_entry is not None:
+                    if _title_entry is not None and _title_entry.master is actor_panel.master:
                         actor_panel.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(16, 0), before=_title_entry)
                     else:
                         actor_panel.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))

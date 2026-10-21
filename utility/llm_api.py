@@ -1439,10 +1439,11 @@ class LLMApi:
         # ---- CLI自动：通过 CDP 驱动 Chrome 里的 Grok，自动完成这次手动来回（utility/grok_cdp.py）----
         # ``extra``：不进提示词的参数（如 {"duration": "10s", "resolution": "720p"}），交给 CLI自动；只读显示。
         extra_params = dict(extra) if isinstance(extra, dict) else {}
-        if extra_params:
+        shown_params = {k: v for k, v in extra_params.items() if k != "image_backend" and v not in (None, "")}
+        if shown_params:
             ttk.Label(
                 model_frame,
-                text="参数: " + " · ".join(str(v) for v in extra_params.values() if v not in (None, "")),
+                text="参数: " + " · ".join(str(v) for v in shown_params.values()),
                 font=("TkDefaultFont", 9),
                 foreground="gray35",
             ).pack(anchor=tk.W, pady=(2, 0))
@@ -1540,8 +1541,15 @@ class LLMApi:
 
                         _cli_ui(_apply_file)
                     elif image_path:
-                        # 全部输入图按顺序贴进 Grok Imagine（基础图 + 人物形象图，最多 5 张）
-                        img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                        # 全部输入图按顺序贴（第一张基础图，后面是人物参考图）。
+                        use_gemini = str(extra_params.get("image_backend") or "").strip().lower() == "gemini"
+                        who = "Gemini" if use_gemini else "Grok Imagine"
+                        _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…")
+                        if use_gemini:
+                            from . import gemini_cdp
+                            img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                        else:
+                            img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
 
                         def _apply_image():
                             _cli_done_ui()

@@ -168,6 +168,181 @@ def _notebooklm_prompt_context_from_video_detail(
     }
 
 
+def story_setting_region_era(video_detail) -> tuple:
+    """Story 窗里选的 (地域, 时代);没有时退回上次的选择。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    for src in (vd, vd.get(project_manager.PROJECT_PROFILE_KEY)):
+        if isinstance(src, dict) and (src.get("setting_region") or "").strip():
+            return (src.get("setting_region") or "").strip(), (src.get("setting_era") or "").strip()
+    return (
+        (getattr(project_manager, "LAST_SETTING_REGION", "") or "").strip(),
+        (getattr(project_manager, "LAST_SETTING_ERA", "") or "").strip(),
+    )
+
+
+def story_setting_phrase(video_detail) -> str:
+    region, era = story_setting_region_era(video_detail)
+    try:
+        import config_prompt
+        return config_prompt.setting_place_phrase(region, era) or ""
+    except Exception:
+        return ""
+
+
+def story_cast_summary(video_detail) -> str:
+    """人物名单的一行摘要(给图片类提示词用);没设名单时返回空串。"""
+    cast = _story_cast_text(video_detail)
+    if not (cast or "").strip():
+        return ""
+    return " | ".join(p.strip() for p in cast.replace("\n", "|").split("|") if p.strip())
+
+
+def _story_cast_rules_block(video_detail) -> str:
+    """模板里没有 {cast} 时追加的统一人物段:名单、关系、谁说话、怎么出镜。"""
+    cast = _story_cast_text(video_detail)
+    if cast is None:
+        return ""
+    return (
+        "*** CAST CHOSEN BY THE USER (overrides any other wording about the host or the people below)\n"
+        f"    {build_cast_block(cast)}\n"
+        "    ** Use exactly these people with exactly these looks in ``actor``: ``讲员:<look>`` or "
+        "``人物N:gender/age band/ethnicity/name``. Do not invent another host or change a look. "
+        "Story people that the material needs and the list lacks may be added with a full look id.\n"
+        "    ** RELATIONSHIPS. From gender, age band, ethnicity and name decide who they are to each other before "
+        "writing (girl + adult man: daughter and father; boy + adult woman: son and mother; two adults of similar "
+        "age and opposite gender: usually a couple; senior + child: grandparent and grandchild; a shared family name "
+        "strengthens a family tie). Build every scene, line and action on that relationship and keep it the same.\n"
+        "    ** If the list has no 讲员, do not invent one: the first listed 人物 carries any narration, or the "
+        "story is purely acted. If the list is empty, nobody is on screen as a speaker and the narration is a "
+        "voice-over behind the pictures (``actor`` is \"\").\n"
+        "    ** ``speaking`` marks every line with <N>, N being that person's place in ``actor`` from 1. At most "
+        "four people in ``actor``, at most three of them speak. Never write <4>. A voice-over that nobody on "
+        "screen speaks is not given to a listed person.\n"
+        "    ** After each id in ``actor`` add parentheses for THIS scene: emotion and action, e.g. "
+        "``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. They are not part of the id and must match ``visual``.\n"
+        "    ** ``visual`` shows where everyone in ``actor`` is and what they do, consistent with their looks."
+    )
+
+
+_PROGRAM_OUTPUT_NAMES = {
+    "slides": "slide deck",
+    "infographic": "infographic",
+    "audio_overview": "audio overview",
+    "video_overview": "video overview",
+}
+
+
+def program_mode_key(mode_label: str) -> str:
+    low = (mode_label or "").lower()
+    if "podcast" in low:
+        return "podcast"
+    if "counselor" in low:
+        return "counselor"
+    if "story only" in low or "story_only" in low:
+        return "story_only"
+    return ""
+
+
+def build_program_cast_block(video_detail, mode_label: str = "", output: str = "slides",
+                             cast_source: str = "panel") -> str:
+    """NotebookLM 生成节目(幻灯片/信息图/音频概述/视频概述)用:人物名单 + 场景生成方案对应的人物规则。
+    跟场景生成里 Series · Podcast / Counselor / Story Only 的规则保持一致。
+
+    ``cast_source``:"scenes" = content.pdf 是场景内容且场景里写了 actor,以场景里的人物为准(预览窗名单只补空);
+    "panel"(默认) = 分析内容 / 材料 PDF / 场景里没有人物,以预览窗人物面板为准。"""
+    cast = _story_cast_text(video_detail)
+    mode = program_mode_key(mode_label)
+    from_scenes = cast_source == "scenes"
+    if cast is None and not mode and not from_scenes:
+        return ""
+    out = _PROGRAM_OUTPUT_NAMES.get(output, "program")
+    audio = output == "audio_overview"
+    lines = [f"*** PEOPLE AND PRESENTATION (chosen by the user; follow it in this {out})"]
+    if from_scenes:
+        lines.append(
+            "    ** WHO APPEARS: the scenes in content.pdf name their people in each scene's actor field "
+            "(looks in actor.pdf when it is provided). Those scene people are authoritative: use exactly them, "
+            "with their looks, roles and lines, scene by scene."
+        )
+        if cast is not None:
+            lines.append(
+                "    ** The list below is the user's default cast. Use it only for a scene that names nobody, "
+                "and never let it replace or change a person a scene already names."
+            )
+    else:
+        lines.append(
+            "    ** WHO APPEARS: the source document does not define the on-screen people. Use the people listed "
+            "here. This overrides any wording elsewhere saying there are no actors or no person on screen."
+            if cast is not None else
+            "    ** WHO APPEARS: no people were chosen; follow the style rules below for a program without listed people."
+        )
+    if cast is not None:
+        lines.append("    " + build_cast_block(cast).replace("\n", "\n    "))
+        lines.append(
+            "    ** Show exactly these people with exactly these looks (gender, age band, ethnicity, name). "
+            "Keep each person's look the same everywhere. Do not invent another host."
+        )
+        lines.append(
+            "    ** RELATIONSHIPS. From gender, age band, ethnicity and name decide who they are to each other "
+            "(woman/kids or man/kids with an adult man: daughter or son and father; with an adult woman: daughter "
+            "or son and mother; two adults of similar age and opposite gender: usually a couple; a senior with a "
+            "child: grandparent and grandchild; a shared family name strengthens a family tie). Every picture, "
+            "action and line is built on that relationship."
+        )
+    if mode == "podcast":
+        lines += [
+            "    ** STYLE: Podcast. The 讲员 talks about the story; the pictures illustrate what is being said.",
+            "    ** No people listed: nobody appears as a speaker; one narrator voice tells it from behind the pictures.",
+            "    ** Only the 讲员: the 讲员 alone speaks. 讲员 + one 人物: host and guest talk with each other. "
+            "讲员 + several 人物: one host with several guests. No 讲员 but 人物: the first 人物 is the host.",
+            "    ** People who appear inside the story illustrations act silently: expression, gesture, movement, no lines.",
+        ]
+    elif mode == "counselor":
+        lines += [
+            "    ** STYLE: Counselor. No people listed: the counsel is a voice from behind the pictures.",
+            "    ** The 讲员 is the counselor and the main voice of the program.",
+            "    ** The other 人物 are the people of the story. They are performers, not guests: they act the story "
+            "in its own place, through action, emotion, exclamation and short exchanges, while the counselor explains.",
+        ]
+    elif mode == "story_only":
+        lines += [
+            "    ** STYLE: Story only, like a film or TV drama. The 人物 carry the story by acting and talking to each other.",
+            "    ** The 讲员, if listed, only opens with background, bridges between parts, and gives a brief closing. "
+            "The 讲员 never tells the story for them.",
+            "    ** No 讲员: the story is purely acted, with no narrator.",
+        ]
+    if audio:
+        lines.append(
+            "    ** This is audio only: make the voices match these people and roles. Speakers name or address "
+            "each other so the listener can tell who is who and how they are related."
+        )
+    else:
+        lines.append(
+            "    ** In every visual, show where each person is and what they are doing, with emotion and action "
+            "that fit the words at that moment and the setting."
+        )
+    return "\n".join(lines)
+
+
+def _story_setting_block(video_detail) -> str:
+    """地域 + 时代  场景生成用的 SETTING 段;没选或无法识别时返回空串。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    phrase = story_setting_phrase(vd)
+    if not phrase:
+        return ""
+    return (
+        "*** SETTING (chosen by the user; it applies to every scene)\n"
+        f"    ** The whole story takes place in {phrase}.\n"
+        "    ** Everything shown and said fits that place and that time: clothing, hairstyles, buildings, interiors, "
+        "furniture, objects, tools, transport, food, customs, social roles, forms of address, and the way people speak.\n"
+        "    ** No anachronisms. Nothing from a later period appears (no phones, screens, modern cars, modern offices, "
+        "modern slang) unless the setting is present-day.\n"
+        "    ** ``visual`` names concrete period details for each place, and the parentheses in ``actor`` describe "
+        "actions and manners true to that time. The speakers may talk in today's language when they explain, "
+        "but the story people live and act inside that period.\n"
+        "    ** If the source material is set elsewhere or in another time, retell it inside this setting."
+    )
+
 def _build_notebooklm_prompt_for_row(
     mgr,
     video_detail: dict,
@@ -214,6 +389,13 @@ def _build_notebooklm_prompt_for_row(
     talk = config.dialogue_mode_instruction(dialogue_mode) if dialogue_mode else ""
     if talk:
         prompt = (prompt or "").rstrip() + "\n\n" + talk + "\n"
+    if "{cast}" not in (template or ""):
+        cast_block = _story_cast_rules_block(video_detail)
+        if cast_block:
+            prompt = (prompt or "").rstrip() + "\n\n" + cast_block + "\n"
+    setting_block = _story_setting_block(video_detail)
+    if setting_block:
+        prompt = (prompt or "").rstrip() + "\n\n" + setting_block + "\n"
     style_block = config_channel.visual_style_prompt_block(visual_style)
     if style_block and (visual_style or "").strip().lower() not in (prompt or "").lower():
         prompt = (prompt or "").rstrip() + "\n\n" + style_block + "\n"

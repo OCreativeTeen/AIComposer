@@ -1050,6 +1050,7 @@ _VIDEO_SIZE_CHOICES = ("1920x1080", "1080x1920")
 # 创建项目时的地域 / 时代，和魔法工作流「全场内容」同一组。没有上次选择时留空。
 LAST_SETTING_REGION = ""
 LAST_SETTING_ERA = ""
+LAST_SCENE_STYLE = ""  # 场景风格，和魔法工作流「Real / Gentle / …」同一组。空 = 不写。
 
 
 def video_size_pair(width=None, height=None) -> tuple[int, int]:
@@ -1108,10 +1109,23 @@ def remember_setting_place(region: str, era: str) -> None:
         print(f"⚠️ 地域和时代没有记下：{exc}")
 
 
+def remember_scene_style(value: str) -> str:
+    """记下场景风格（STORY 窗口和新建项目共用）。返回存盘用的值。"""
+    global LAST_SCENE_STYLE
+    key = config_prompt.normalize_scene_style(value)
+    LAST_SCENE_STYLE = key
+    try:
+        if (config.load_yt_tools_prefs() or {}).get("scene_style") != key:
+            config.save_yt_tools_prefs({"scene_style": key})
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 场景风格没有记下：{exc}")
+    return key
+
+
 def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     """用 ``YT_tools_prefs.json`` 覆盖内存中的 LAST_*（若值合法）。"""
     global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE, LAST_VIDEO_SIZE
-    global LAST_SETTING_REGION, LAST_SETTING_ERA
+    global LAST_SETTING_REGION, LAST_SETTING_ERA, LAST_SCENE_STYLE
     prefs = prefs if prefs is not None else config.load_yt_tools_prefs()
     if not prefs:
         return {}
@@ -1140,6 +1154,8 @@ def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
         LAST_SETTING_REGION = region
         LAST_SETTING_ERA = era if era in eras else (eras[0] if eras else "")
 
+    LAST_SCENE_STYLE = config_prompt.normalize_scene_style(prefs.get("scene_style"))
+
     return prefs
 
 
@@ -1160,6 +1176,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "title_font",
     "setting_region",
     "setting_era",
+    "scene_style",
     "pid",
     "video_width",
     "video_height",
@@ -1941,7 +1958,8 @@ class ProjectSelectionDialog:
                  initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None,
                  initial_dialogue_mode=None,
                  initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None,
-                 initial_video_size=None, initial_setting_region=None, initial_setting_era=None):
+                 initial_video_size=None, initial_setting_region=None, initial_setting_era=None,
+                 initial_scene_style=None):
 
         self.parent = parent
         self.config_manager = config_manager
@@ -1971,6 +1989,10 @@ class ProjectSelectionDialog:
             _era = LAST_SETTING_ERA if LAST_SETTING_ERA in _eras else (_eras[0] if _eras else "")
         self.initial_setting_region = _region
         self.initial_setting_era = _era
+        _ss = config_prompt.normalize_scene_style(initial_scene_style)
+        if initial_scene_style is None:
+            _ss = LAST_SCENE_STYLE
+        self.initial_scene_style = _ss
         
         self.default_project_config = {
             'languages': ['tw', 'zh', 'en'],
@@ -2024,6 +2046,7 @@ class ProjectSelectionDialog:
             'dialogue_mode': _dm,
             'setting_region': self.initial_setting_region,
             'setting_era': self.initial_setting_era,
+            'scene_style': self.initial_scene_style,
             'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
@@ -3145,10 +3168,11 @@ def create_project_dialog(parent, youtube_gui=None):
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags,
                                     dialogue_mode=None, video_size=None,
-                                    setting_region=None, setting_era=None):
+                                    setting_region=None, setting_era=None, scene_style=None):
     """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。
     ``video_size``："1920x1080" / "1080x1920"，新建窗口里画面比例的初始值（STORY 窗口的选择）。
-    ``setting_region`` / ``setting_era``：STORY 窗口选的地域和时代，写进新项目。"""
+    ``setting_region`` / ``setting_era``：STORY 窗口选的地域和时代，写进新项目。
+    ``scene_style``：STORY 窗口选的场景风格（Real / Gentle / …），写进新项目。"""
     global PROJECT_CONFIG
     sc_ok = False
     if isinstance(scene_content, list) and scene_content:
@@ -3183,6 +3207,7 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         initial_video_size=video_size,
         initial_setting_region=setting_region,
         initial_setting_era=setting_era,
+        initial_scene_style=scene_style,
     )
 
     result = dialog.story_result.get('action', 'cancel')

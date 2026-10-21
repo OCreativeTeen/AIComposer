@@ -186,17 +186,17 @@ def open_picture_prompt_dialog(
         if edit_only:
             hint.config(text="未选内容：只按「注意 / FYI」修改现有图片")
         elif extract:
-            hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点提交。")
+            hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点 Grok提交 或 Gemini提交。")
         else:
             hint.config(
-                text="画风改变决定这张图怎么画；叙事风格下面的蓝字说明这次怎么讲。勾选要写进提示词的内容，选好后点提交。"
+                text="画风改变决定这张图怎么画；叙事风格下面的蓝字说明这次怎么讲。勾选要写进提示词的内容，选好后点 Grok提交 或 Gemini提交。"
             )
 
     def close() -> None:
         remember()
         dlg.destroy()
 
-    def on_go() -> None:
+    def on_go(backend: str = "grok") -> None:
         extract = task_var.get() == "extract"
         edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
@@ -283,11 +283,15 @@ def open_picture_prompt_dialog(
         remember()
         dlg.destroy()
         if callable(open_manual):
-            open_manual(prompt, images)
+            try:
+                open_manual(prompt, images, backend)
+            except TypeError:
+                open_manual(prompt, images)
 
     from gui.slide_prompt_dialog import big_submit_button
 
-    big_submit_button(dlg, bottom, on_go).pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    big_submit_button(dlg, bottom, lambda: on_go("grok"), text="Grok提交").pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    big_submit_button(dlg, bottom, lambda: on_go("gemini"), text="Gemini提交").pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
     narrative_var.trace_add("write", refresh)

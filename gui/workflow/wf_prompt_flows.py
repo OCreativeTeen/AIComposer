@@ -84,12 +84,14 @@ class PromptFlowsMixin:
             cfg["picture_prompt"] = choice
             save_project_config(parent=self.root)
 
-        def open_manual(prompt: str, images: list[str]) -> None:
+        def open_manual(prompt: str, images: list[str], backend: str = "grok") -> None:
             def _on_image_response(pil_img):
                 self._replace_current_clip_image_from_pil(pil_img)
 
+            extra = {"image_backend": "gemini"} if str(backend or "").strip().lower() == "gemini" else {}
             self.llm_api.show_manual_window(
-                prompt, "", images=images, on_image_response=_on_image_response
+                prompt, "", images=images, on_image_response=_on_image_response,
+                auto_cli=True, extra=extra,
             )
 
         open_picture_prompt_dialog(

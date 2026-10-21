@@ -1283,6 +1283,7 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
     {cast}
     ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
     ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
+    ** PER-SCENE BEHAVIOR. In ``actor``, after every person's id, add one pair of parentheses saying what THIS person does in THIS scene: emotion, action, how they speak, enter, or leave. Example: ``讲员:<look>(平静,面向镜头)`` or ``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. The parentheses are not part of the id; the picture is chosen from the id before them. Every visible person has them, and they must match ``visual``.
     ** If the CAST says "No cast was chosen", follow the older host wording below as before.
     ** WHO IS WHO, decided only by the CAST:
         * CAST is EMPTY: nobody is on screen as a speaker. Every counselor beat is a default narrator voice-over (``<1>``, ``actor`` ""), exactly like a podcast voice-over. Story scenes still show the life, the people acting silently in the visual.
@@ -1308,7 +1309,7 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
     ** 1. Counselor, 1 scene, to camera. Name the problem: what it is, where it shows up, why it matters. Do not open in someone's kitchen. Do not preview the ending.
     ** 2. Story, 5 to 8 consecutive scenes. SAME people, ONE timeline.
         * How this life was, then how the problem is lived in detail (what is said, avoided, repeated, what it costs), until they are stuck.
-        * If two people share this life, most of these scenes are the two of them talking. The second person's lines are inside ``speaking`` with ``<2>``, said aloud, not as a thought.
+        * If two people share this life, most of these scenes show the two of them. They do not speak. The 讲员's speaking tells what they are doing. Their actions are in visual and in the parentheses.
     ** 3. Remedy, after the story is finished. Several scenes, not one.
         * First 2 to 3 counselor scenes: take the problem apart in order (how it starts, what keeps it going, what it costs), then the response, step by step.
         * Then 2 to 3 scenes with the SAME people, later: one concrete step per scene, shown in the room, not announced as a list.
@@ -1321,7 +1322,7 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
         * Open — 1 counselor scene. Caption "第N集 · ".
             * Episode 1: name the shared problem, then the first way it usually shows up, and enter this life. No remedy.
             * Later episodes: pick up the question left by the previous closing scene. Say that the same problem often shows up in another way (a second face, a third face), and enter THIS life. No remedy. No recap of the previous plot.
-        * Story — 4 to 7 consecutive scenes. This case only, from how the life was, through the problem in detail, to where they are stuck. If it is a couple, most of these scenes are the two of them talking. Do not leave the other person only inside a thought.
+        * Story — 4 to 7 consecutive scenes. This case only, from how the life was, through the problem in detail, to where they are stuck. If it is a couple, most of these scenes show the two of them performing. They do not speak. The 讲员 tells it.
         * Close — 1 counselor scene. Still this episode. Caption "第N集 · 承接".
             * Not a summary of the plot and not an answer. Hold what the audience just saw, turn it into a question, and point toward the problem underneath. Leave them thinking. Do not name a method. Do not say "next episode".
             * If another case follows, the last sentence should be able to lead into that case's opening scene without a break in thought.
@@ -1343,9 +1344,9 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
     {{
         "episode": "1",
         "caption": "Title. In {language}.",
-        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
-        "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-        "actor": "People in this picture, at most four altogether, counting the one narrator if this scene has one. There is no voiceover field. speaking holds every line. <N> is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "visual": "This scene's story: the place, and what each person is doing. No on-image text. In {language}.",
+        "speaking": "Only the 讲员. If the 讲员 is in actor, mark the lines with that 讲员's <N>. If the 讲员 is not in actor, the lines are the 讲员 from behind the picture, and they are not a 人物's lines. 人物 have no lines. In {language}.",
+        "actor": "On-camera people, at most four, joined with |. Portrait id, then this scene's behavior: 人物1：woman/mature/chinese/封氏（低头，双手交握） | 人物2：man/youth/chinese/贾雨村（站起来，看向窗外）. 人物 do not speak. Add 讲员：{narrator}（面对镜头，语气放轻） only when the 讲员 is on camera, as position 1. Leave the 讲员 out when the 讲员 speaks from behind the picture."
     }}
 ]
 
@@ -1377,6 +1378,7 @@ COUNSELING_SERIES_STORY_ONLY = """
     {cast}
     ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
     ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
+    ** PER-SCENE BEHAVIOR. In ``actor``, after every person's id, add one pair of parentheses saying what THIS person does in THIS scene: emotion, action, how they speak, enter, or leave. Example: ``讲员:<look>(平静,面向镜头)`` or ``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. The parentheses are not part of the id; the picture is chosen from the id before them. Every visible person has them, and they must match ``visual``.
     ** If the CAST says "No cast was chosen", follow the older host wording below as before.
     ** WHO DOES WHAT, decided only by the CAST:
         * The 人物 carry the story. Each story scene is a dramatized moment: they act, move, react, and speak to each other in the place where it happens, like a scene in a film or TV drama. Their lines are dialogue, said aloud, not a summary.
@@ -1411,7 +1413,7 @@ COUNSELING_SERIES_STORY_ONLY = """
         * Last scene: the host's lines in speaking, the conclusion. Do not retell the plots.
 
 *** RULES
-    ** visual: film-still, no on-image words. Also the place, how the people act on each other, and a cut or another angle when the picture should move. No DSM labels. Do not say 根, 根儿, or 病根.
+    ** visual: this scene's own story. The place, how these people relate, and what each person is doing. No on-image words. A cut or another angle when the picture should move. The actor parentheses say the same performance again, one person at a time. No DSM labels. Do not say 根, 根儿, or 病根.
     ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it. Do not fix it there.
     ** When the remedy returns to those people, echo that opening moment: a similar situation, a different response. One small step, not a cured life.
 
@@ -1423,9 +1425,9 @@ COUNSELING_SERIES_STORY_ONLY = """
     {{
         "episode": "1",
         "caption": "第1集 · title, or the program title on PATH A. In {language}.",
-        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
+        "visual": "This scene's story: the place, how the people relate, and what each person is doing. No on-image text. In {language}.",
         "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-        "actor": "People in this picture, at most four altogether, counting the one narrator if this scene has one. There is no voiceover field. speaking holds every line. <N> is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four altogether, counting the one narrator if this scene has one. Join with | only. The portrait id is woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. Example id: woman/mature/chinese/封氏. After every id, parentheses for this scene only: 人物1：woman/mature/chinese/封氏（情绪低，正在祷告） | 人物2：man/youth/chinese/贾雨村（走向门口，神情严肃）. The parentheses are not part of the portrait. If the narrator is on camera, 讲员：{narrator}（怎么出镜、情绪、怎么讲） is position 1 and is not also a 人物."
     }}
 ]
 
@@ -1452,6 +1454,7 @@ COUNSELING_TALK_SCENES = """
     {cast}
     ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
     ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
+    ** PER-SCENE BEHAVIOR. In ``actor``, after every person's id, add one pair of parentheses saying what THIS person does in THIS scene: emotion, action, how they speak, enter, or leave. Example: ``讲员:<look>(平静,面向镜头)`` or ``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. The parentheses are not part of the id; the picture is chosen from the id before them. Every visible person has them, and they must match ``visual``.
     ** If the CAST says "No cast was chosen", follow the older host wording below as before.
     ** WHO SPEAKS, decided only by the CAST:
         * CAST is EMPTY (no 讲员, no 人物): nobody is on screen as a speaker. The whole episode is one default narrator voice-over. ``actor`` is empty (""). ``speaking`` is the narration, marked ``<1>``.

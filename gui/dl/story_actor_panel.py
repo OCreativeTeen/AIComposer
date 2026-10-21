@@ -3,7 +3,7 @@
 - 每个讲员 / 人物是一枚小卡片（chip），按住左右拖可以换顺序。
 - 双击卡片：预览 / 修改（讲员从音色表里选；人物填 性别/年龄段/民族/名字），可贴图作为形象。
 - 双击空白处：加一个讲员或人物。
-- 卡片获得焦点后按 Ctrl+V：把剪贴板里的图存成这一位的形象图。Delete：删掉这一位。
+- 卡片获得焦点后按 Ctrl+V：把剪贴板里的图存成这一位的形象图。Delete：删掉这一位（点一下卡片选中，再按 Delete；编辑窗里没有删除按钮）。
 
 名单用和场景 ``actor`` 字段相同的文字格式（``讲员：xxx | 人物1：woman/mature/chinese/封氏``），
 解析 / 拼写都走 project_manager 里现成的函数，所以和工作流里的名单完全一样。
@@ -137,9 +137,9 @@ class StoryActorPanel(ttk.Frame):
 
     @staticmethod
     def _focus(chip, label, on: bool) -> None:
-        bg = "#dbe9ff" if on else "white"
+        bg = "#9fc5ff" if on else "white"
         try:
-            chip.configure(bg=bg)
+            chip.configure(bg=bg, highlightbackground="#1a73e8" if on else "white")
             label.configure(bg=bg)
         except tk.TclError:
             pass
@@ -383,9 +383,7 @@ class ActorEditDialog(tk.Toplevel):
         btns = ttk.Frame(left)
         btns.pack(side=tk.BOTTOM, anchor=tk.W, pady=(10, 0))
         ttk.Button(btns, text="贴图 (Ctrl+V)", command=self._paste).pack(side=tk.LEFT, padx=(0, 4))
-        if not self.is_new:
-            ttk.Button(btns, text="删除", command=self._delete).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(btns, text="确定", command=self._ok).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(btns, text="确认", command=self._ok).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(btns, text="取消", command=self.destroy).pack(side=tk.LEFT)
 
         self.img_lbl = tk.Label(frm, text="（没有形象图）\nCtrl+V 贴图", width=24, height=12, bg="#eee", relief="sunken")
@@ -435,10 +433,6 @@ class ActorEditDialog(tk.Toplevel):
         if self.panel.paste_portrait(self._row(), parent=self):
             self._show_portrait()
         return "break"
-
-    def _delete(self) -> None:
-        self.destroy()
-        self.on_done(None)
 
     def _ok(self) -> None:
         row = self._row()

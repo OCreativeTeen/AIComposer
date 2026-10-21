@@ -166,6 +166,9 @@ def open_slide_prompt_dialog(
     get_scene_range=None,
     get_analysis=None,
     material_pdf: str = "",
+    get_cast_block=None,
+    initial_source: str = "",
+    on_source_change=None,
     title: str = "全集生成",
 ) -> None:
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
@@ -214,6 +217,7 @@ def open_slide_prompt_dialog(
     output_var = tk.StringVar(value=last["output"])
     range_var = tk.StringVar(value=last["range"] if get_scene_range is not None else "episode")
     analysis_var = tk.BooleanVar(value=False)
+    material_var = tk.BooleanVar(value=False)
 
     def scene_range() -> tuple[list, list]:
         """按「范围」取场景和每场集名。"""
@@ -258,6 +262,17 @@ def open_slide_prompt_dialog(
     analysis_btn.pack(anchor=tk.W)
     analysis_hint = ttk.Label(top_box, foreground="gray40", wraplength=320, justify=tk.LEFT)
     analysis_hint.pack(anchor=tk.W)
+    # 第三种：材料 PDF（这一条关联的 PDF）直接拷成 content.pdf 上传。
+    mat_box = ttk.LabelFrame(content_box, text="材料 PDF", padding=(8, 4))
+    mat_box.pack(fill=tk.X, anchor=tk.W, pady=(6, 0))
+    material_ok = bool(story_mode and material_pdf and os.path.isfile(material_pdf))
+    material_btn = ttk.Checkbutton(mat_box, text="材料 PDF（直接上传）", variable=material_var)
+    material_btn.pack(anchor=tk.W)
+    ttk.Label(
+        mat_box, foreground="gray40", wraplength=320, justify=tk.LEFT,
+        text=(f"{os.path.basename(material_pdf)} → 拷成 {CONTENT_PDF_NAME} 上传。" if material_ok
+              else ("这一条没有关联的 PDF 材料。" if story_mode else "只在 STORY 窗口可用。")),
+    ).pack(anchor=tk.W)
     scene_opts, scene_buttons = pack_scene_field_choices(
         content_box, visual_var, speaking_var, actor_var, override_var, anchor=tk.N,
         title="场景内容", image_var=image_var,
@@ -318,7 +333,10 @@ def open_slide_prompt_dialog(
                 analysis_var.set(False)
                 use_a = False
                 narrative_var.set(_prev_narr[0] or "narration")
+            if any_scene and material_var.get():
+                material_var.set(False)
             analysis_btn.configure(state=("normal" if analysis_ok else "disabled"))
+            material_btn.configure(state=("normal" if material_ok else "disabled"))
             scene_state = "normal" if scenes_ok else "disabled"
             for w in scene_widgets:
                 try:
@@ -340,6 +358,7 @@ def open_slide_prompt_dialog(
             try:
                 for v in scene_vars:
                     v.set(False)
+                material_var.set(False)
                 narrative_var.set("narration")
             finally:
                 _sync_busy[0] = False
@@ -351,14 +370,37 @@ def open_slide_prompt_dialog(
                 _sync_busy[0] = False
         sync_sources()
 
-    # 初始：STORY 有分析内容默认勾上面；STORY 没场景就把场景选项清空；魔法工作流照旧。
-    if analysis_ok:
+    def on_material_toggle(*_a) -> None:
+        """材料 PDF 和另外两种互斥：勾上就清掉分析内容和场景选项。"""
+        if _sync_busy[0] or not material_var.get():
+            sync_sources()
+            return
+        was_analysis = bool(analysis_var.get())
+        _sync_busy[0] = True
+        try:
+            analysis_var.set(False)
+            for v in scene_vars:
+                v.set(False)
+            if was_analysis:
+                narrative_var.set(_prev_narr[0] or "narration")
+        finally:
+            _sync_busy[0] = False
+        sync_sources()
+
+    # 初始：先按这一条记下的内容来源；否则 STORY 有分析内容默认勾上面；STORY 没场景就把场景选项清空；魔法工作流照旧。
+    if initial_source == "material" and material_ok:
+        material_var.set(True)
+        on_material_toggle()
+    elif initial_source == "scenes" and has_scenes:
+        pass
+    elif analysis_ok:
         analysis_var.set(True)
         on_analysis_toggle()
     elif story_mode and not has_scenes:
         for v in scene_vars:
             v.set(False)
     analysis_var.trace_add("write", on_analysis_toggle)
+    material_var.trace_add("write", on_material_toggle)
     for v in scene_vars:
         v.trace_add("write", sync_sources)
     sync_sources()
@@ -418,6 +460,12 @@ def open_slide_prompt_dialog(
             span = f"范围：{where}，共 {len(scenes_now)} 场。"
         except Exception:  # noqa: BLE001 提示行算不出来不影响
             span = ""
+        if material_var.get():
+            hint.config(
+                text=f"材料 PDF：{os.path.basename(material_pdf)} 拷成 {CONTENT_PDF_NAME} 上传。"
+                f"按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+            )
+            return
         if analysis_var.get():
             single = "幻灯片按分析报告的结构一部分一页。" if output_var.get() == "slides" else ""
             hint.config(
@@ -447,15 +495,23 @@ def open_slide_prompt_dialog(
                     "background": bool(bg_include_var.get()),
                     "output": output_var.get(),
                     "range": range_var.get(),
-                    "source": "analysis" if analysis_var.get() else "scenes",
+                    "source": current_source(),
                     "fyi_history": get_fyi_history(),
                 }
             )
         except Exception as exc:  # noqa: BLE001 记不下来不影响拷贝
             print(f"全集生成：选择没有记下：{exc}")
 
+    def current_source() -> str:
+        return "material" if material_var.get() else ("analysis" if analysis_var.get() else "scenes")
+
     def close() -> None:
         remember()
+        if callable(on_source_change):
+            try:
+                on_source_change(current_source())
+            except Exception as exc:  # noqa: BLE001
+                print(f"{title}：内容来源没有记下：{exc}")
         dlg.destroy()
 
     def copy_analysis_prompt() -> None:
@@ -481,6 +537,7 @@ def open_slide_prompt_dialog(
             material_pdf=material_pdf,
             fyi_text=get_fyi_text(),
             fyi_include=bool(fyi_include_var.get()),
+            cast_block=_safe_cast_block(get_cast_block, output_var.get()),
         )
         try:
             copy_text(prompt)
@@ -510,7 +567,48 @@ def open_slide_prompt_dialog(
             extra_sources = [material_pdf] if material_pdf else []
             parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, "", False, extra_sources=extra_sources))
 
+    def copy_material_prompt() -> None:
+        """材料 PDF：删掉 working 里旧的 content.pdf，把这一条的 PDF 拷过去改名 content.pdf，照 content.pdf 流程上传。"""
+        import shutil
+
+        if not material_ok:
+            messagebox.showwarning(title, "这一条没有关联的 PDF 材料。", parent=dlg)
+            return
+        style = (get_style() or "").strip()
+        if not style:
+            style = (project_manager.LAST_VISUAL_STYLE or "").strip() or config.VISUAL_STYLE_OPTIONS[0]
+        prompt = build_analysis_prompt_text(
+            output=output_var.get(), text=text_var.get(), style=style, region=region, era=era,
+            host_narrator=host_narrator or "", background=bool(bg_include_var.get()), material_pdf="",
+            fyi_text=get_fyi_text(), fyi_include=bool(fyi_include_var.get()),
+            cast_block=_safe_cast_block(get_cast_block, output_var.get(), "panel"),
+            source_kind="material",
+        )
+        try:
+            copy_text(prompt)
+        except (tk.TclError, OSError):
+            messagebox.showwarning(title, "提示词没有放进剪贴板。", parent=dlg)
+            return
+        pdf_path = CONTENT_PDF_PATH
+        try:
+            os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+            shutil.copy2(material_pdf, pdf_path)
+        except OSError as exc:
+            messagebox.showerror(title, f"拷贝材料 PDF 成 {CONTENT_PDF_NAME} 失败：{exc}", parent=dlg)
+            return
+        print(f"{title}：提交（材料 PDF）output={output_var.get()} {material_pdf} → {pdf_path}；提示词 {len(prompt)} 字")
+        kind = output_var.get()
+        nb_url = current_notebook_url()
+        close()
+        if callable(open_manual):
+            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, "", False))
+
     def copy_prompt() -> None:
+        if material_var.get():
+            copy_material_prompt()
+            return
         if analysis_var.get():
             copy_analysis_prompt()
             return
@@ -565,6 +663,11 @@ def open_slide_prompt_dialog(
         except ValueError as exc:
             messagebox.showerror("全集生成", str(exc), parent=dlg)
             return
+        # 人物：勾了人物且场景里有 actor → 以场景为准；否则以预览窗人物面板为准。都带场景生成方案的出镜规则。
+        cast_src = "scenes" if (actor_var.get() and config_prompt.episode_actor_cast(scenes)) else "panel"
+        cast_block = _safe_cast_block(get_cast_block, output_var.get(), cast_src)
+        if cast_block.strip():
+            prompt = cast_block.strip() + "\n\n---\n\n" + (prompt or "").strip()
         prompt = config_prompt.prepend_background_condition(
             prompt, region, era, host_narrator, include=bool(bg_include_var.get())
         )
@@ -737,6 +840,8 @@ def build_analysis_prompt_text(
     material_pdf: str = "",
     fyi_text: str = "",
     fyi_include: bool = True,
+    cast_block: str = "",
+    source_kind: str = "analysis",
 ) -> str:
     """分析内容的完整提示词：FYI（用户补充，勾上才有）→ 背景条件 → 规则。分析报告本身在 content.pdf，不在这里。"""
     from gui.prompt_fyi import prepend_fyi
@@ -749,5 +854,41 @@ def build_analysis_prompt_text(
         content_source=CONTENT_PDF_NAME,
         material_source=os.path.basename(material_pdf) if material_pdf else "",
     )
+    if source_kind == "material":
+        prompt = _analysis_to_material_wording(prompt)
+    if (cast_block or "").strip():
+        prompt = cast_block.strip() + "\n\n---\n\n" + (prompt or "").strip()
     prompt = config_prompt.prepend_background_condition(prompt, region, era, host_narrator, include=background)
     return prepend_fyi(prompt, fyi_text, include=fyi_include)
+
+
+_MATERIAL_WORDING = (
+    ("分析报告", "材料"),
+    ("the analysis report", "the source material"),
+    ("The analysis report", "The source material"),
+    ("analysis report", "source material"),
+    ("the report's", "the material's"),
+    ("the report", "the material"),
+    ("The report", "The material"),
+    ("in the report", "in the material"),
+)
+
+
+def _analysis_to_material_wording(prompt: str) -> str:
+    """材料 PDF 直接上传时沿用分析内容的规则，只把「分析报告」改称「材料」。"""
+    for a, b in _MATERIAL_WORDING:
+        prompt = prompt.replace(a, b)
+    return prompt
+
+
+def _safe_cast_block(get_cast_block, output: str, source: str = "panel") -> str:
+    if not callable(get_cast_block):
+        return ""
+    try:
+        try:
+            return get_cast_block(output, source) or ""
+        except TypeError:
+            return get_cast_block(output) or ""
+    except Exception as exc:  # noqa: BLE001
+        print(f"生成节目:人物段失败:{exc}")
+        return ""
