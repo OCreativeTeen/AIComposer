@@ -1,4 +1,4 @@
-"""图片提示：画风改变、说明文字，以及叙事风格。叙事风格和幻灯提示、生场视频共用同一组选项。"""
+"""图片修改（原「图片提示」）：画风改变、说明文字，以及叙事风格。叙事风格和幻灯提示、生场视频共用同一组选项。"""
 
 from __future__ import annotations
 
@@ -61,6 +61,8 @@ def open_picture_prompt_dialog(
     saved_choice=None,
     save_choice=None,
     actor_avatar_dir: str = "",
+    batch_scenes=None,
+    run_batch=None,
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
 
@@ -69,7 +71,7 @@ def open_picture_prompt_dialog(
     ``saved_choice`` 是项目里记下的上次选择；关窗或提交时 ``save_choice(dict)`` 记回去。
     """
     dlg = tk.Toplevel(parent)
-    dlg.title("图片提示")
+    dlg.title("图片修改")
     dlg.transient(parent)
     dlg.resizable(False, False)
     dlg.withdraw()
@@ -175,7 +177,7 @@ def open_picture_prompt_dialog(
         try:
             save_choice(current_choice())
         except Exception as exc:  # noqa: BLE001
-            print(f"图片提示：选择没有记下：{exc}")
+            print(f"图片修改：选择没有记下：{exc}")
 
     def refresh(*_args) -> None:
         extract = task_var.get() == "extract"
@@ -202,84 +204,137 @@ def open_picture_prompt_dialog(
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
         if edit_only and not fyi_now:
             if not messagebox.askokcancel(
-                "图片提示",
+                "图片修改",
                 "没有勾选任何内容，「注意 / FYI」也是空的（或没勾选），没有要修改的地方。\n仍然继续吗？",
                 parent=dlg,
             ):
                 return
         if False:
-            messagebox.showwarning("图片提示", "场景描述、讲话、人物至少要选一项。", parent=dlg)
+            messagebox.showwarning("图片修改", "场景描述、讲话、人物至少要选一项。", parent=dlg)
             return
         style = (get_style() or "").strip()
         if not extract and not style:
             style = (project_manager.LAST_VISUAL_STYLE or "").strip()
         if not extract and not style:
-            messagebox.showwarning("图片提示", "请先在上面选定画面风格。", parent=dlg)
+            messagebox.showwarning("图片修改", "请先在上面选定画面风格。", parent=dlg)
             return
         scene = get_scene() if get_scene is not None else None
         if not isinstance(scene, dict):
-            messagebox.showwarning("图片提示", "没有当前场景", parent=dlg)
+            messagebox.showwarning("图片修改", "没有当前场景", parent=dlg)
             return
-        path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
-        images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
-        if not images:
-            messagebox.showinfo("图片提示", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
-        # 人物形象图：勾了人物、不是仅修改 / 人物提取时才加。
-        actor_images = []
-        override_en = dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), "")
-        if actor_var.get() and not edit_only and not extract:
-            from utility.content_pdf import scene_actor_reference_images
+        def build_request(scene: dict, quiet: bool = False):
+            """按现在的选择给这一场组提示词和图。返回 (prompt, images)；出错返回 None（quiet 时抛 ValueError）。"""
+            path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
+            images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
+            if not images and not quiet:
+                messagebox.showinfo("图片修改", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
+            # 人物形象图：勾了人物、不是仅修改 / 人物提取时才加。
+            actor_images = []
+            override_en = dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), "")
+            if actor_var.get() and not edit_only and not extract:
+                from utility.content_pdf import scene_actor_reference_images
 
-            # 「换成」覆盖时形象图从头像库按 性别_时代_族裔 查（找不到就只用文字描述）。
-            actor_images = scene_actor_reference_images(
-                scene, avatar_dir=actor_avatar_dir, base_image=images[0] if images else "",
-                override_label=override_var.get() if override_en else "",
-                style=style,  # 形象图按画面风格分目录查：avatar/<风格>/ → Realistic/ → 根目录
+                # 「换成」覆盖时形象图从头像库按 性别_时代_族裔 查（找不到就只用文字描述）。
+                actor_images = scene_actor_reference_images(
+                    scene, avatar_dir=actor_avatar_dir, base_image=images[0] if images else "",
+                    override_label=override_var.get() if override_en else "",
+                    style=style,  # 形象图按画面风格分目录查：avatar/<风格>/ → Realistic/ → 根目录
+                )
+                for row in actor_images:
+                    if row.get("image") and row["image"] not in images:
+                        images.append(row["image"])
+                sent = [f"1 基础图 {os.path.basename(images[0])}"] if path in images else []
+                for r in actor_images:
+                    sent.append(f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no")
+                                else f"（{r['label']} {r['name']} 没有形象图）")
+                print(f"图片修改：发出的图 = " + " | ".join(sent))
+            try:
+                prompt = config_prompt.build_picture_flow_prompt(
+                    task=task_var.get(),
+                    text=text_var.get(),
+                    visual_style=style,
+                    region="",  # 地域/时代改由下面的背景条件统一写入
+                    era="",
+                    narrative=narrative_var.get(),
+                    use_visual=bool(visual_var.get()),
+                    use_speaking=bool(speaking_var.get()),
+                    use_actor=bool(actor_var.get()),
+                    scene_content=[scene],
+                    host_narrator=host_narrator or "",
+                    main_character=main_character or "",
+                    actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
+                    edit_request=fyi_now if edit_only else "",
+                    actor_images=actor_images,
+                    base_image=bool(path and isinstance(path, str) and os.path.isfile(path)),
+                )
+            except ValueError as exc:
+                if quiet:
+                    raise
+                messagebox.showwarning("图片修改", str(exc), parent=dlg)
+                return None
+            if edit_only:
+                # 仅修改：FYI 已作为「主要修改要求」写在最前；背景条件放在后面。
+                bg = config_prompt.background_condition_block(region, era, host_narrator) if bg_include_var.get() else ""
+                if bg:
+                    bg = bg.replace("(applies to everything below)", "(applies to the whole edit)")
+                    prompt = prompt + "\n\n---\n\n" + bg
+            else:
+                prompt = config_prompt.prepend_background_condition(
+                    prompt, region, era, host_narrator,
+                    include=bool(bg_include_var.get()) and not extract,
+                )
+                prompt = prepend_fyi(
+                    prompt, get_fyi_text(), include=bool(fyi_include_var.get())
+                )
+            return prompt, images
+
+        scope = "scene"
+        batch_list, k_no, m_no = [], 0, 0
+        if callable(batch_scenes) and callable(run_batch):
+            got = batch_scenes()
+            if isinstance(got, tuple):
+                batch_list, k_no, m_no = got
+            else:
+                batch_list = list(got or [])
+            n_batch = len(batch_list)
+            here = f"（第{k_no}场）" if k_no else ""
+            span = f"（第{k_no}–{m_no}场，共{n_batch}场；前面的场不动）" if k_no else f"（共{n_batch}场）"
+            answer = messagebox.askyesnocancel(
+                "图片修改",
+                f"是 = 只处理当前这一场{here}\n"
+                f"否 = 从当前第{k_no}场到本集结束{span}，每一场用自己的图和内容分别发出\n"
+                "取消 = 不处理",
+                parent=dlg,
             )
-            for row in actor_images:
-                if row.get("image") and row["image"] not in images:
-                    images.append(row["image"])
-            sent = [f"1 基础图 {os.path.basename(images[0])}"] if path in images else []
-            for r in actor_images:
-                sent.append(f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no")
-                            else f"（{r['label']} {r['name']} 没有形象图）")
-            print("图片提示：发出的图 = " + " | ".join(sent))
-        try:
-            prompt = config_prompt.build_picture_flow_prompt(
-                task=task_var.get(),
-                text=text_var.get(),
-                visual_style=style,
-                region="",  # 地域/时代改由下面的背景条件统一写入
-                era="",
-                narrative=narrative_var.get(),
-                use_visual=bool(visual_var.get()),
-                use_speaking=bool(speaking_var.get()),
-                use_actor=bool(actor_var.get()),
-                scene_content=[scene],
-                host_narrator=host_narrator or "",
-                main_character=main_character or "",
-                actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
-                edit_request=fyi_now if edit_only else "",
-                actor_images=actor_images,
-                base_image=bool(path and isinstance(path, str) and os.path.isfile(path)),
-            )
-        except ValueError as exc:
-            messagebox.showwarning("图片提示", str(exc), parent=dlg)
+            if answer is None:
+                return
+            scope = "scene" if answer else "episode"
+        if scope == "episode":
+            jobs, skipped = [], []
+            for sc in batch_list:
+                if not isinstance(sc, dict):
+                    continue
+                no = k_no + len(jobs) + len(skipped)
+                label = f"第{no}场" if k_no else str(sc.get("id") or no)
+                img = sc.get(chosen_image())
+                if not (isinstance(img, str) and img and os.path.isfile(img)):
+                    skipped.append(f"{label}：没有图")
+                    continue
+                try:
+                    req = build_request(sc, quiet=True)
+                except ValueError as exc:
+                    skipped.append(f"{label}：{exc}")
+                    continue
+                if req:
+                    jobs.append((sc, req[0], req[1]))
+            remember()
+            dlg.destroy()
+            run_batch(jobs, backend, skipped)
             return
-        if edit_only:
-            # 仅修改：FYI 已作为「主要修改要求」写在最前；背景条件放在后面。
-            bg = config_prompt.background_condition_block(region, era, host_narrator) if bg_include_var.get() else ""
-            if bg:
-                bg = bg.replace("(applies to everything below)", "(applies to the whole edit)")
-                prompt = prompt + "\n\n---\n\n" + bg
-        else:
-            prompt = config_prompt.prepend_background_condition(
-                prompt, region, era, host_narrator,
-                include=bool(bg_include_var.get()) and not extract,
-            )
-            prompt = prepend_fyi(
-                prompt, get_fyi_text(), include=bool(fyi_include_var.get())
-            )
+        req = build_request(scene)
+        if req is None:
+            return
+        prompt, images = req
         remember()
         dlg.destroy()
         if callable(open_manual):

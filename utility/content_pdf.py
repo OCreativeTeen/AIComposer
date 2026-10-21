@@ -222,12 +222,17 @@ def actor_portrait_path(role: str, name: str, avatar_dir: str = "", style: str |
         if len(bits) >= 3:
             names.append("/".join(bits[:3]))
         return config.find_avatar_png([portrait_stem(n) for n in names], style)
-    # 项目人物：<项目>/avatar/<风格>/ → <项目>/avatar/；不退到通用头像库。
+    # 项目人物：<项目>/avatar/<风格>/ → <项目>/avatar/ → 故事预览存图的 avatar/story/<风格>/ → avatar/story/。
+    # （故事预览里项目还没有 avatar 目录时，人物图贴进 AVATAR_PATH/story；不退到通用头像库。）
     stem = portrait_stem(name)
-    if not stem or not avatar_dir:
+    if not stem:
         return ""
     token = config.visual_style_token(style)
-    for folder in ([os.path.join(avatar_dir, token)] if token else []) + [avatar_dir]:
+    story_dir = os.path.join(config.AVATAR_PATH, "story")
+    folders = []
+    for base in ([avatar_dir] if avatar_dir else []) + [story_dir]:
+        folders += ([os.path.join(base, token)] if token else []) + [base]
+    for folder in folders:
         path = config.find_image_by_stem(folder, stem)  # .png / .jpg / .jpeg / .webp，.png 优先
         if path:
             return path

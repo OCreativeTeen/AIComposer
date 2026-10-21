@@ -512,8 +512,15 @@ class LayoutMixin:
         ttk.Label(episode_title, text="本集内容").pack(side=tk.LEFT)
         self.episode_label = ttk.Label(episode_title, text="第 1 集")
         self.episode_label.pack(side=tk.LEFT, padx=(8, 4))
-        ttk.Button(episode_title, text="⏪", width=3, command=self.prev_episode).pack(side=tk.LEFT, padx=2)
-        ttk.Button(episode_title, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
+        # 单击 = 本集第一场 / 最后一场；双击 = 上一集 / 下一集的第一场（没有 command，免得点一下触发两次）。
+        ep_prev_btn = ttk.Button(episode_title, text="⏪", width=3)
+        ep_prev_btn.pack(side=tk.LEFT, padx=2)
+        ep_next_btn = ttk.Button(episode_title, text="⏩", width=3)
+        ep_next_btn.pack(side=tk.LEFT, padx=2)
+        self._bind_single_double(ep_prev_btn, lambda: self._jump_episode_edge("first"), self.prev_episode)
+        self._bind_single_double(ep_next_btn, lambda: self._jump_episode_edge("last"), self.next_episode)
+        self._attach_hover_hint(ep_prev_btn, "单击：本集第一场\n双击：上一集第一场（Ctrl+Shift+←）")
+        self._attach_hover_hint(ep_next_btn, "单击：本集最后一场\n双击：下一集第一场（Ctrl+Shift+→）")
         episode_tools_frame = ttk.LabelFrame(right_panel, labelwidget=episode_title, padding=(8, 2))
         episode_tools_frame.pack(side=tk.TOP, fill=tk.X)
         episode_btn_row = ttk.Frame(episode_tools_frame)
@@ -587,7 +594,7 @@ class LayoutMixin:
         scene_prompt_row.pack(side=tk.LEFT)
         self._nb_picture_btn = ttk.Button(
             scene_prompt_row,
-            text="图片提示",
+            text="图片修改",
             width=8,
             command=self._open_picture_prompt_flow,
         )

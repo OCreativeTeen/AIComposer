@@ -36,7 +36,7 @@ class PdfEpisodeMixin:
         ttk.Label(
             main,
             text=(
-                f"现在是第 {cur_name} 集，当前是本集第 {before} 场，"
+                f"现在是{self.workflow.episode_label(cur_name)}，当前是本集第 {before} 场，"
                 f"本集共 {end - start + 1} 场。"
             ),
             justify=tk.LEFT,
@@ -63,12 +63,9 @@ class PdfEpisodeMixin:
             self.refresh_gui_scenes()
             self._offer_episode_leftover_cleanup(info)
             if kind == "merge":
-                msg = f"第 {info.get('absorbed')} 集已并进第 {target} 集"
+                msg = f"#{info.get('absorbed')} 已并进{self.workflow.episode_label(target)}（#{info.get('absorbed')} 这个集号空着不再用）"
             else:
-                msg = f"已归到第 {target} 集"
-            renamed = info.get("renamed") or []
-            if renamed:
-                msg += "；后面的集号往前补：" + "、".join(f"{n}→{m}" for n, m in renamed)
+                msg = f"已归到{self.workflow.episode_label(target)}"
             if info.get("renumber_skipped"):
                 messagebox.showwarning("调整集", info["renumber_skipped"], parent=self.root)
             missing = info.get("pages_missing") or []
@@ -82,12 +79,12 @@ class PdfEpisodeMixin:
         prev_ok = bool(prev_name) and not is_last
         next_ok = bool(next_name) and not is_first
         prev_text = (
-            f"本集开头到当前场景的 {before} 场，归到上一集（第 {prev_name} 集）"
+            f"本集开头到当前场景的 {before} 场，归到上一集（{self.workflow.episode_label(prev_name)}）"
             if prev_ok
             else "本集开头到当前场景归到上一集"
         )
         next_text = (
-            f"当前场景到本集结尾的 {after} 场，归到下一集（第 {next_name} 集）"
+            f"当前场景到本集结尾的 {after} 场，归到下一集（{self.workflow.episode_label(next_name)}）"
             if next_ok
             else "当前场景到本集结尾归到下一集"
         )
@@ -96,14 +93,14 @@ class PdfEpisodeMixin:
         next_btn = ttk.Button(main, text=next_text, command=lambda: run("move", "next"))
         next_btn.pack(fill=tk.X)
         ttk.Separator(main, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
-        cur_num = self.workflow._episode_number(cur_name)
-        split_ok = index < end and cur_num is not None
+        split_ok = index < end
 
         def run_split() -> None:
+            new_no = self.workflow.next_group_name()
             if not messagebox.askyesno(
                 "调整集",
-                f"从第{before}场之后分成新的一集（第{cur_num + 1}集）？\n"
-                f"本集留下第 1–{before} 场，后面 {end - index} 场成为第{cur_num + 1}集，后面各集集号往后挪一个。",
+                f"从第{before}场之后分成新的一集（#{new_no}），紧接在本集后面；其他各集集号不变。图片搬到新集文件夹。\n"
+                f"本集留下第 1–{before} 场，后面 {end - index} 场成为新的一集。",
                 parent=dlg,
             ):
                 return
@@ -119,16 +116,19 @@ class PdfEpisodeMixin:
                     self.current_scene_index = i
                     break
             self.refresh_gui_scenes()
-            msg = f"后面 {info.get('scenes')} 场成为第 {new_ep} 集"
-            renamed = info.get("renamed") or []
-            if renamed:
-                msg += "；后面的集号往后挪：" + "、".join(f"{a}→{b}" for a, b in sorted(renamed))
+            msg = f"后面 {info.get('scenes')} 场成为{self.workflow.episode_label(new_ep)}"
             missing = info.get("pages_missing") or []
             if missing:
                 msg += f"；有 {len(missing)} 页原图已经不在（页码 {', '.join(map(str, missing))}）"
             show_auto_close_popup(self.root, "调整集", msg)
 
-        split_btn = ttk.Button(main, text="从本场之后分成新一集", command=run_split)
+        try:
+            _split_no = self.workflow.next_group_name()
+        except Exception:
+            _split_no = ""
+        split_btn = ttk.Button(
+            main, text=f"从本场之后分成新一集（#{_split_no}）" if _split_no else "从本场之后分成新一集", command=run_split
+        )
         split_btn.pack(fill=tk.X, pady=(0, 6))
         if not split_ok:
             split_btn.state(["disabled"])
@@ -185,7 +185,7 @@ class PdfEpisodeMixin:
             shown += f"\n……（共 {len(files)} 个）"
         ok = messagebox.askyesno(
             "调整集",
-            f"第{episode}集文件夹还剩 {len(files)} 个没有用到的文件，删除吗？\n\n{folder}\n\n{shown}",
+            f"#{episode} 集文件夹还剩 {len(files)} 个没有用到的文件，删除吗？\n\n{folder}\n\n{shown}",
             parent=self.root,
         )
         if not ok:
@@ -608,7 +608,7 @@ class PdfEpisodeMixin:
         ``staging`` 给了就是刚导入的那个 PDF，打开时选中它。
         """
         dlg = tk.Toplevel(self.root)
-        dlg.title(f"PDF 页面 · 第 {group_name} 集")
+        dlg.title(f"PDF 页面 · {self.workflow.episode_label(group_name)}")
         dlg.geometry("980x820")
         dlg.minsize(720, 580)
         dlg.transient(self.root)
@@ -696,7 +696,7 @@ class PdfEpisodeMixin:
             if _cross():
                 targets = _forward_targets(page_i)
                 if not targets:
-                    return f"当前场景不在第 {group_name} 集，不能“写到结束”。"
+                    return f"当前场景不在{self.workflow.episode_label(group_name)}，不能“写到结束”。"
                 groups_hit = []
                 for _i, g in targets:
                     if g not in groups_hit:
@@ -709,7 +709,7 @@ class PdfEpisodeMixin:
             indices = self.workflow.group_scene_indices(group_name)
             cur = self.current_scene_index
             if cur not in indices:
-                return f"当前场景不在第 {group_name} 集，不能“写到本集结束”。"
+                return f"当前场景不在{self.workflow.episode_label(group_name)}，不能“写到本集结束”。"
             pos = indices.index(cur)
             left_scenes = len(indices) - pos
             left_pages = len(pages) - page_i
@@ -722,7 +722,7 @@ class PdfEpisodeMixin:
 
         def _scene_label() -> str:
             n = len(self.workflow.group_scene_indices(group_name))
-            return f"第 {group_name} 集 · 本集 {n} 个场景"
+            return f"{self.workflow.episode_label(group_name)} · 本集 {n} 个场景"
 
         def _page_users(page_no: int) -> list[str]:
             """这一页被本集哪些场景用着，返回类似 '本集第 3 场（全部第 12 场）' 的说明。"""
@@ -842,7 +842,7 @@ class PdfEpisodeMixin:
             dlg.destroy()
             self.root.after(
                 50,
-                lambda sc=[scene], msg=f"第 {page_no} 页已写入当前场景（第 {group_name} 集）。": (
+                lambda sc=[scene], msg=f"第 {page_no} 页已写入当前场景（{self.workflow.episode_label(group_name)}）。": (
                     self._offer_still_videos_after_pdf(sc, msg)
                 ),
             )
@@ -893,7 +893,7 @@ class PdfEpisodeMixin:
                     return
                 dlg.destroy()
                 span = (f"第 {groups_hit[0]}–{groups_hit[-1]} 集" if len(groups_hit) > 1
-                        else f"第 {groups_hit[0]} 集" if groups_hit else "")
+                        else self.workflow.episode_label(groups_hit[0]) if groups_hit else "")
                 summary = f"从 PDF 第 {_page_number(idx[0])} 页起，写入了{span}共 {written} 场。"
                 self.root.after(
                     50,
@@ -972,7 +972,7 @@ class PdfEpisodeMixin:
             if pos <= 0 or pos > len(history):
                 state.update(staging=None, pdf_name=media_pdf_name, folder=media_folder)
                 source_var.set(MEDIA_LABEL)
-                dlg.title(f"PDF 页面 · 第 {group_name} 集 · {MEDIA_LABEL}")
+                dlg.title(f"PDF 页面 · {self.workflow.episode_label(group_name)} · {MEDIA_LABEL}")
                 path_lbl.config(text=media_folder)
             else:
                 entry = history[pos - 1]
@@ -1004,7 +1004,7 @@ class PdfEpisodeMixin:
                     source_note.config(text="（拆页文件夹不在，已从原 PDF 重新拆）", fg="#1a4fa0")
                     _reload_history()
                 source_box.current(pos)
-                dlg.title(f"PDF 页面 · 第 {group_name} 集 · {entry.get('pdf_name') or 'PDF'}")
+                dlg.title(f"PDF 页面 · {self.workflow.episode_label(group_name)} · {entry.get('pdf_name') or 'PDF'}")
                 path_lbl.config(text=state["folder"], foreground=("#888888" if state["missing"] else ""))
             idx[0] = 0
             _sync_buttons()
@@ -1032,11 +1032,11 @@ class PdfEpisodeMixin:
             source_box.current(first_pos)
             state["folder"] = history[first_pos - 1].get("split_dir") or folder
             path_lbl.config(text=state["folder"])
-            dlg.title(f"PDF 页面 · 第 {group_name} 集 · {pdf_name}")
+            dlg.title(f"PDF 页面 · {self.workflow.episode_label(group_name)} · {pdf_name}")
             _sync_buttons()
         else:
             source_box.current(0)
-            dlg.title(f"PDF 页面 · 第 {group_name} 集 · {MEDIA_LABEL}")
+            dlg.title(f"PDF 页面 · {self.workflow.episode_label(group_name)} · {MEDIA_LABEL}")
             _sync_buttons()
             if not pages and history:
                 # 本集文件夹里还没有页图：直接看最新导入的 PDF

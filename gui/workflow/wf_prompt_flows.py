@@ -49,11 +49,11 @@ class PromptFlowsMixin:
         return mgr, vd, story_raw, ch_path
 
     def _open_picture_prompt_flow(self) -> None:
-        """图片提示：画风改变 + 叙事风格，再在手动窗口里拷当前图和提示词。"""
+        """图片修改：画风改变 + 叙事风格，再在手动窗口里拷当前图和提示词；也可以本集逐场自动处理。"""
         from gui.picture_prompt_dialog import open_picture_prompt_dialog
 
         if not self.workflow or not self.workflow.get_scene_by_index(self.current_scene_index):
-            messagebox.showwarning("图片提示", "没有当前场景", parent=self.root)
+            messagebox.showwarning("图片修改", "没有当前场景", parent=self.root)
             return
 
         def current_scene():
@@ -94,9 +94,21 @@ class PromptFlowsMixin:
                 auto_cli=True, extra=extra,
             )
 
+        def batch_scenes() -> tuple:
+            """从当前场景到本集结束（scenes.json 顺序）。返回 (场景列表, 当前是本集第 k 场, 本集共 m 场)；前面的场不动。"""
+            self.update_current_scene()
+            cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+            if not isinstance(cur, dict):
+                return [], 0, 0
+            story = [s for s in self.workflow.scenes_in_story(cur) if isinstance(s, dict)]
+            k = next((i for i, s in enumerate(story) if s is cur), 0)
+            return story[k:], k + 1, len(story)
+
         open_picture_prompt_dialog(
             self.root,
             self._nb_picture_btn,
+            batch_scenes=batch_scenes,
+            run_batch=self._run_picture_batch,
             get_scene=current_scene,
             get_style=get_style,
             get_place=get_place,
@@ -106,6 +118,136 @@ class PromptFlowsMixin:
             save_choice=save_choice,
             actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
         )
+
+    def _run_picture_batch(self, jobs: list, backend: str, skipped: list) -> None:
+        """图片修改 · 本集所有场景：每一场单独走 CLI自动（Grok / Gemini 网页图生图），结果写回那一场。
+
+        手动窗口只能一场一场贴，所以批量直接调 CLI自动 用的同一个 make_image。
+        """
+        import threading
+        from tkinter import ttk
+
+        if not jobs:
+            messagebox.showinfo("图片修改", "本集没有可处理的场景。\n" + "\n".join(skipped[:20]), parent=self.root)
+            return
+        use_gemini = str(backend or "").strip().lower() == "gemini"
+        who = "Gemini" if use_gemini else "Grok"
+        win = tk.Toplevel(self.root)
+        win.title(f"图片修改 · 本集 {len(jobs)} 场（{who}）")
+        win.transient(self.root)
+        var = tk.StringVar(value="准备 …")
+        ttk.Label(win, textvariable=var, wraplength=480, justify=tk.LEFT, padding=12).pack(fill=tk.BOTH)
+        stop = {"flag": False}
+        ttk.Button(win, text="停止（做完这一场后）", command=lambda: stop.update(flag=True)).pack(pady=(0, 10))
+        failed = list(skipped)
+        done = [0]
+
+        def in_episode_label(scene, fallback) -> str:
+            story = self.workflow.scenes_in_story(scene) if self.workflow else []
+            for i, s in enumerate(story or []):
+                if s is scene:
+                    return f"第{i + 1}场"
+            return str(scene.get("id") or fallback)
+
+        def ui(fn):
+            try:
+                self.root.after(0, fn)
+            except Exception:
+                pass
+
+        updated: list = []
+
+        def apply(scene, img, label):
+            try:
+                self._replace_current_clip_image_from_pil(img, scene=scene, defer_video=True)
+                done[0] += 1
+                updated.append(scene)
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"{label}：写回失败 {exc}")
+
+        def worker():
+            if use_gemini:
+                from utility import gemini_cdp as engine
+            else:
+                from utility import grok_cdp as engine
+            n = len(jobs)
+            for k, (scene, prompt, images) in enumerate(jobs, 1):
+                if stop["flag"]:
+                    failed.append(f"其余 {n - k + 1} 场：已停止")
+                    break
+                label = in_episode_label(scene, k)
+                head = f"正在处理 {k}/{n}（本集{label}）"
+                ui(lambda h=head: var.set(h))
+
+                def status(msg, h=head):
+                    ui(lambda: var.set(f"{h}\n{msg}"))
+
+                try:
+                    img = engine.make_image(prompt, list(images), status=status)
+                    if img is None or not hasattr(img, "save"):
+                        raise RuntimeError("没有拿到图")
+                    ui(lambda s=scene, i=img, l=label: apply(s, i, l))
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"{label}：{exc}")
+            ui(finish)
+
+        def finish():
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+            note = f"图片修改完成（从当前场到本集结束）：{done[0]}/{len(jobs)} 场已换图。"
+            if failed:
+                note += "\n\n没处理 / 失败：\n" + "\n".join(failed[:30])
+            messagebox.showinfo("图片修改", note, parent=self.root)
+            self._rebuild_still_clips_after_batch(updated, jobs)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _stale_still_clip_scenes(self, scenes: list) -> list:
+        """clip 视频比 clip_image 旧（或没有 clip 视频）、且有 clip 音频的场景：需要用新图重做静态视频。"""
+        from utility.file_util import get_file_path
+
+        out = []
+        for s in scenes or []:
+            if not isinstance(s, dict):
+                continue
+            image = get_file_path(s, "clip_image")
+            audio = get_file_path(s, "clip_audio")
+            if not (image and os.path.isfile(image) and audio and os.path.isfile(audio)):
+                continue
+            clip = get_file_path(s, "clip")
+            if not clip or not os.path.isfile(clip) or os.path.getmtime(clip) < os.path.getmtime(image):
+                out.append(s)
+        return out
+
+    def _rebuild_still_clips_after_batch(self, updated: list, jobs: list, tries: int = 0) -> None:
+        """批量换图之后：换了图的场景，加上这一段里 clip 视频比图旧的场景（修复以前漏做的），一起重做静态 clip 视频。"""
+        pool = [sc for sc, _p, _i in jobs]
+        targets = list(updated)
+        for s in self._stale_still_clip_scenes(pool):
+            if all(s is not t for t in targets):
+                targets.append(s)
+        targets = [s for s in targets if s in self._stale_still_clip_scenes(targets) or s in updated]
+        if not targets:
+            return
+        if getattr(self, "_clip_video_worker_busy", False):
+            if tries < 60:  # 等前一个生场视频任务（最多约 1 分钟）
+                self.root.after(1000, lambda: self._rebuild_still_clips_after_batch(updated, jobs, tries + 1))
+            return
+        self._run_still_clip_videos(targets)
+
+    def repair_stale_still_clips(self) -> None:
+        """修复：本集里 clip 视频比 clip_image 旧的场景，用现在的 clip_image + clip_audio 重做静态 clip 视频。"""
+        self.update_current_scene()
+        cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+        if not isinstance(cur, dict):
+            return
+        stale = self._stale_still_clip_scenes(self.workflow.scenes_in_story(cur))
+        if not stale:
+            show_auto_close_popup(self.root, "生场视频", "本集没有 clip 视频比图片旧的场景。")
+            return
+        self._run_still_clip_videos(stale)
 
     def _place_popup_near(self, dlg: tk.Toplevel, anchor, *, below: bool) -> None:
         """把弹出窗口放在锚点旁边。below 为真时放在下面，否则放在上面，不挡住锚点。"""
@@ -310,11 +452,14 @@ class PromptFlowsMixin:
             cur = self.workflow.get_scene_by_index(self.current_scene_index)
             if not isinstance(cur, dict):
                 return [], []
+            # 每场的「集名」只用于显示（第N集分隔标题、范围说明），所以给的是 scenes.json 顺序里的位置，不是集号。
+            pos = self.workflow.episode_position
             if range_key == "to_end":
-                return self.workflow.scenes_from_episode_to_end(cur)
+                scenes, groups = self.workflow.scenes_from_episode_to_end(cur)
+                return scenes, [str(pos(g) or g) for g in groups]
             g = self.workflow.scene_group(cur)
             scenes = [s for s in self.workflow.scenes_in_story(cur) if isinstance(s, dict)]
-            return scenes, [g] * len(scenes)
+            return scenes, [str(pos(g) or g)] * len(scenes)
 
         def open_slides_manual(
             prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "", actor_pdf: str = "",

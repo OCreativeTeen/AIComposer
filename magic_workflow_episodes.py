@@ -1,4 +1,4 @@
-"""调整集 / 合并集：场景在相邻两集之间挪动、或整集合并时，连带处理这一集的图片库、PDF 导入记录和集号。
+"""调整集 / 合并集：场景在相邻两集之间挪动、或整集合并时，连带处理这一集的图片库和 PDF 导入记录。集号是身份，一旦用过就不改；界面按 scenes.json 顺序显示第几集。
 
 每集的东西都在 media/<集号>/ 里：编号页图（1.webp、2.webp…，是这一集的图片库）、<集号>.pdf、.<集号>.codec、
 pdf_imports.json。场景自己的视频/音频/图（clip、zero、back…）放在 media/ 根目录，不分集，挪集时不用动。
@@ -321,56 +321,6 @@ class EpisodeOpsMixin:
                     out.append(p)
         return sorted(out)
 
-    def _renumber_after(self, num: int) -> dict:
-        """集号大于 num 的各集往前挪一个号（文件夹、<集>.pdf、.<集>.codec、场景 episode / episode_pdf）。"""
-        media = config.get_media_path(self.pid)
-        later = sorted(
-            {
-                int(self.scene_group(s))
-                for s in self.scenes or []
-                if isinstance(s, dict) and self.scene_group(s).isdigit() and int(self.scene_group(s)) > num
-            }
-        )
-        plan = [(n, n - 1) for n in later]
-        sources = {n for n, _ in plan}
-        for n, m in plan:
-            if m in sources:
-                continue
-            busy = os.path.exists(os.path.join(media, str(m))) or any(
-                isinstance(s, dict) and self.scene_group(s) == str(m) for s in self.scenes or []
-            )
-            if busy:
-                return {"renamed": [], "renumber_skipped": f"第 {m} 集的号还被占着（文件夹或场景），后面的集没有改号。"}
-        renamed: list[tuple[int, int]] = []
-        for n, m in plan:
-            old_dir = os.path.join(media, str(n))
-            new_dir = os.path.join(media, str(m))
-            if os.path.isdir(old_dir):
-                try:
-                    os.rename(old_dir, new_dir)
-                except OSError as e:
-                    return {
-                        "renamed": renamed,
-                        "renumber_skipped": f"第 {n} 集文件夹改名失败（{e}），从这一集起没有改号。",
-                    }
-                for old_name, new_name in ((f"{n}.pdf", f"{m}.pdf"), (f".{n}.codec", f".{m}.codec")):
-                    src = os.path.join(new_dir, old_name)
-                    if os.path.isfile(src):
-                        try:
-                            os.replace(src, os.path.join(new_dir, new_name))
-                        except OSError:
-                            pass
-                self._rename_folder_refs(old_dir, new_dir)
-            for sc in self.scenes or []:
-                if isinstance(sc, dict) and self.scene_group(sc) == str(n):
-                    sc["episode"] = str(m)
-                    for key in _GROUP_KEYS:
-                        sc.pop(key, None)
-                    if str(sc.get("episode_pdf") or "").strip() == f"{n}.pdf":
-                        sc["episode_pdf"] = f"{m}.pdf"
-            renamed.append((n, m))
-        return {"renamed": renamed, "renumber_skipped": ""}
-
     def _retire_episode(self, absorbed: str, kept: str) -> dict:
         """absorbed 这一集已经没有场景了：PDF 导入记录并进 kept，文件夹挪成 media/_merged_ep<集>_<时间>/
         （只剩没用到的文件，等用户确认再删），后面的集号往前补。"""
@@ -400,12 +350,10 @@ class EpisodeOpsMixin:
                     folder = aside
                 except OSError as e:
                     freed = False
-                    info["renumber_skipped"] = f"第 {absorbed} 集文件夹挪不开（{e}），后面的集没有改号。"
+                    info["renumber_skipped"] = f"第 {absorbed} 集文件夹挪不开（{e}），剩下的文件还在原处。"
                 info["leftover_dir"] = folder
                 info["leftovers"] = self.folder_leftovers(folder)
-        num = self._episode_number(absorbed)
-        if freed and num is not None:
-            info.update(self._renumber_after(num))
+        # 集号不再往前补：并掉的集号空着不用，别的集的文件夹和路径都不变。
         return info
 
     def trash_leftovers(self, folder: str, episode_label: str) -> dict:
@@ -548,56 +496,11 @@ class EpisodeOpsMixin:
 
 
     # ---- 从本场之后分成新一集 -----------------------------------------------------------
-    def _renumber_up_plan(self, num: int) -> tuple[list[tuple[int, int]], str]:
-        """集号大于 num 的各集都往后挪一个号（num+1 腾出来给新集）。先检查不会撞号。"""
-        media = config.get_media_path(self.pid)
-        later = sorted(
-            {
-                int(self.scene_group(s))
-                for s in self.scenes or []
-                if isinstance(s, dict) and self.scene_group(s).isdigit() and int(self.scene_group(s)) > num
-            },
-            reverse=True,
-        )
-        plan = [(n, n + 1) for n in later]
-        sources = {n for n, _ in plan}
-        for m in [m for _, m in plan] + [num + 1]:
-            if m in sources:
-                continue
-            if os.path.exists(os.path.join(media, str(m))) or any(
-                isinstance(s, dict) and self.scene_group(s) == str(m) for s in self.scenes or []
-            ):
-                return [], f"第 {m} 集的号已经被占着（media/{m} 文件夹或场景），没法往后挪集号。"
-        return plan, ""
-
-    def _apply_renumber(self, plan: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        """按 plan 的顺序改号（往后挪时从最后一集开始，不会撞）。改名失败就抛 OSError。"""
-        media = config.get_media_path(self.pid)
-        done: list[tuple[int, int]] = []
-        for n, m in plan:
-            old_dir = os.path.join(media, str(n))
-            new_dir = os.path.join(media, str(m))
-            if os.path.isdir(old_dir):
-                os.rename(old_dir, new_dir)
-                for old_name, new_name in ((f"{n}.pdf", f"{m}.pdf"), (f".{n}.codec", f".{m}.codec")):
-                    src = os.path.join(new_dir, old_name)
-                    if os.path.isfile(src):
-                        os.replace(src, os.path.join(new_dir, new_name))
-                self._rename_folder_refs(old_dir, new_dir)
-            for sc in self.scenes or []:
-                if isinstance(sc, dict) and self.scene_group(sc) == str(n):
-                    sc["episode"] = str(m)
-                    for key in _GROUP_KEYS:
-                        sc.pop(key, None)
-                    if str(sc.get("episode_pdf") or "").strip() == f"{n}.pdf":
-                        sc["episode_pdf"] = f"{m}.pdf"
-            done.append((n, m))
-        return done
-
     def split_episode_after(self, index: int) -> tuple[str, str]:
-        """当前场景和它前面的留在本集；后面的场景成为新的一集（本集号 +1），后面各集集号往后挪一个。
+        """当前场景和它前面的留在本集；后面的场景成为新的一集，紧接在本集后面（scenes.json 顺序不变）。
 
-        新集的页图从本集图片库复制（不搬），按场景顺序从 1 编号；新集给一份空的 pdf_imports.json（记着从哪集拆出来）。
+        新集号 = 用过的最大集号 + 1（``next_group_name``），别的集一律不改号，文件夹不动。
+        搬走的场景的页图和本集文件夹里的其他文件搬进新集文件夹（还被留下的场景用着就复制），路径跟着改。
         成功返回 (新集号, "")，否则 ("", 原因)。细节在 self.last_episode_op。
         """
         scenes = self.scenes or []
@@ -607,72 +510,17 @@ class EpisodeOpsMixin:
         if index >= end:
             return "", "当前场景是本集最后一场，后面没有场景可以分出去。"
         cur = self.scene_group(scenes[index])
-        num = self._episode_number(cur)
-        if num is None:
-            return "", f"第 {cur} 集不是数字集号，没法按集号往后挪。"
-        plan, reason = self._renumber_up_plan(num)
-        if reason:
-            return "", reason
-        new_ep = str(num + 1)
-        later_names = [str(n) for n, _ in plan]
-        backups = self.backup_episode_files([cur] + later_names, "split_after")
-        moving = scenes[index + 1 : end + 1]
-        try:
-            renamed = self._apply_renumber(plan)
-        except OSError as e:
-            return "", f"改集号时文件夹改名失败（{e}）。scenes.json 还没保存，可以用 _backup 里的备份对照。"
-
-        src_dir = self.episode_media_dir(cur)
+        new_ep = self.next_group_name()
         new_dir = self.episode_media_dir(new_ep)
+        if os.path.exists(new_dir) or any(isinstance(s, dict) and self.scene_group(s) == new_ep for s in scenes):
+            return "", f"新集号 #{new_ep} 已经被占着（media/{new_ep} 或场景），没有分集。"
+        backups = self.backup_episode_files([cur], "split_after")
+        moving = scenes[index + 1 : end + 1]
         os.makedirs(new_dir, exist_ok=True)
-        mapping: dict[int, int | None] = {}
-        files_map: dict[str, str] = {}
-        copied: list[tuple[int, int]] = []
-        missing: list[int] = []
-        for sc in moving:
-            old = self._scene_page_no(sc)
-            if not old:
-                continue
-            if old not in mapping:
-                files = self._page_files(cur, old)
-                if not files:
-                    mapping[old] = None
-                    missing.append(old)
-                else:
-                    new = len(copied) + 1
-                    for f in files:
-                        d = os.path.join(new_dir, f"{new}{os.path.splitext(f)[1].lower()}")
-                        shutil.copy2(f, d)
-                        files_map[_norm(f)] = d
-                    mapping[old] = new
-                    copied.append((old, new))
-            if mapping[old] is None:
-                sc.pop("episode_page", None)
-            else:
-                sc["episode_page"] = mapping[old]
-        # 场景里别的指向本集文件夹的路径：也复制一份过去（本集原文件不动）。
-        other = 0
-        src_n = _norm(src_dir)
-        for sc in moving:
-            for k, v in list(sc.items()):
-                if not isinstance(v, str) or not v.strip():
-                    continue
-                try:
-                    pn = _norm(v)
-                except (TypeError, ValueError):
-                    continue
-                if not _inside(pn, src_n):
-                    continue
-                if pn not in files_map:
-                    if not os.path.isfile(v):
-                        continue
-                    d = _free_path(os.path.join(new_dir, os.path.relpath(pn, src_n)))
-                    os.makedirs(os.path.dirname(d), exist_ok=True)
-                    shutil.copy2(v, d)
-                    files_map[pn] = d
-                    other += 1
-                sc[k] = files_map[pn]
-        self._relabel_scenes(moving, cur, new_ep)
+        try:
+            info = self._transfer_scenes(moving, cur, new_ep)
+        except OSError as e:
+            return "", f"搬文件到新集文件夹时失败（{e}）。scenes.json 还没保存，可以用 _backup 里的备份对照。"
         hist = self.pdf_import_history_path(new_ep)
         with open(hist, "w", encoding="utf-8") as f:
             json.dump(
@@ -693,7 +541,8 @@ class EpisodeOpsMixin:
         self.touch_episode_media(new_ep)
         self.last_episode_op = {
             "op": "split_after", "source": cur, "new": new_ep, "scenes": len(moving),
-            "pages_copied": copied, "pages_missing": missing, "other_files_copied": other,
-            "renamed": renamed, "backups": backups,
+            "pages_moved": info.get("pages_moved"), "pages_copied": info.get("pages_copied"),
+            "pages_missing": info.get("pages_missing"), "other_files_moved": info.get("other_files_moved"),
+            "renamed": [], "backups": backups,
         }
         return new_ep, ""

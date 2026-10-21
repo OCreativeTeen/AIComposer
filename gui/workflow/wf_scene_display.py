@@ -97,7 +97,7 @@ class SceneDisplayMixin:
         if wf and wf.scenes:
             scene = wf.get_scene_by_index(self.current_scene_index)
             if isinstance(scene, dict):
-                text = f"第 {wf.scene_group(scene)} 集"
+                text = wf.episode_label(wf.scene_group(scene))
         label.config(text=text)
 
     def _update_scene_display_impl(self):

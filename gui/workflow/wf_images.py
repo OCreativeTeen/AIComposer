@@ -1094,17 +1094,19 @@ class ImagesMixin:
         except Exception as e:
             print(f"❌ 加载图片预览失败: {e}")
 
-    def _replace_current_clip_image_from_pil(self, pil_img) -> None:
-        """图片提示的手动窗口贴回了一张图：写成当前场景的 clip_image，并刷新预览。"""
+    def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False) -> None:
+        """图片修改返回了一张图：写成这一场（默认当前场景）的 clip_image；是当前场景时刷新预览。"""
         import tempfile
 
         if pil_img is None or not hasattr(pil_img, "save"):
             return
         if not self.workflow:
             return
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        current = self.workflow.get_scene_by_index(self.current_scene_index)
+        if scene is None:
+            scene = current
         if not isinstance(scene, dict):
-            messagebox.showwarning("图片提示", "没有当前场景，返回的图没有写入。", parent=self.root)
+            messagebox.showwarning("图片修改", "没有当前场景，返回的图没有写入。", parent=self.root)
             return
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         os.close(fd)
@@ -1112,7 +1114,9 @@ class ImagesMixin:
             pil_img.save(tmp_path)
             file_path = self.workflow.ffmpeg_processor.resize_image_smart(tmp_path)
         except Exception as exc:
-            messagebox.showerror("图片提示", f"返回的图没有写入 clip 图片：{exc}", parent=self.root)
+            if scene is not current:
+                raise
+            messagebox.showerror("图片修改", f"返回的图没有写入 clip 图片：{exc}", parent=self.root)
             return
         finally:
             if os.path.isfile(tmp_path):
@@ -1121,14 +1125,23 @@ class ImagesMixin:
                 except OSError:
                     pass
         if not file_path or not os.path.isfile(file_path):
-            messagebox.showerror("图片提示", "返回的图没有写成文件。", parent=self.root)
+            if scene is not current:
+                raise RuntimeError("返回的图没有写成文件")
+            messagebox.showerror("图片修改", "返回的图没有写成文件。", parent=self.root)
             return
         refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
         self._pool_clip_slot_image(scene, "clip_image", file_path)
         self.workflow.save_scenes_to_json()
+        if scene is not current:
+            print(f"✅ 图片修改已更新另一场 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
+            return
         self.display_image_on_canvas_for_track("clip_image")
-        print(f"✅ 图片提示已更新 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
-        self._after_clip_image_changed(scene, "图片提示返回的图已换成这一场的 clip 图片，并加进了本集图片库。")
+        if defer_video:
+            # 批量：静态 clip 视频等整批做完再一起重做（_run_still_clip_videos 同时只能跑一个）。
+            print(f"✅ 图片修改已更新 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
+            return
+        print(f"✅ 图片修改已更新 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
+        self._after_clip_image_changed(scene, "图片修改返回的图已换成这一场的 clip 图片，并加进了本集图片库。")
 
     def _frame_or_fallback(self, video_path: str, first: bool):
         img = self.workflow.ffmpeg_processor.extract_frame(video_path, first)

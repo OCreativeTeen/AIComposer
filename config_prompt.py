@@ -1810,9 +1810,34 @@ def picture_reference_images_note(actor_images: list | None, *, task: str, narra
             zh.append(f"- {who_zh}没有形象图（不对应任何一张图）：按名字里的性别、年龄段、族裔来画，前后保持一致。")
             en.append(f"- {who_en} has no reference image (no image belongs to them): draw them from the gender, "
                       "age band, and origin in the name, and keep that look consistent.")
+    with_img = [r for r in rows if r.get("image_no")]
+    no_img = [r for r in rows if not r.get("image_no")]
+    if base_image and with_img:
+        def _who(r):
+            ov = (r.get("override") or "").strip()
+            return f"{r.get('label') or '人物'} {r['name']}" + (f" (overridden to {ov})" if ov else "")
+        nos = sorted({int(r["image_no"]) for r in with_img})
+        span = f"Image {nos[0]}" if len(nos) == 1 else f"Images {nos[0]}..{nos[-1]}"
+        order = ", ".join(f"Image {r['image_no']} = {_who(r)}" for r in with_img)
+        en.append(
+            f"- Image 1 is the picture to edit. {span} are reference portraits of the cast, in this order: {order}."
+        )
+        en.append(
+            "- Match each person in Image 1 to a portrait by gender, age group and ethnicity (and role), then redraw that "
+            "person's face, hair and clothing to match the portrait, keeping pose, position, composition, lighting and "
+            "everything else in Image 1. Do not add or remove people. If a person in Image 1 has no matching portrait, "
+            "leave them as they are."
+        )
+        if no_img:
+            en.append("- Cast without a portrait (description only, no image): "
+                      + "; ".join(_who(r) for r in no_img) + ".")
+        zh.append("- 第1张图是要修改的图；后面几张是人物形象图，顺序同上。按性别、年龄段、族裔（和身份）把第1张图里的每个人"
+                  "对上一张形象图，照形象图重画这个人的脸、发型和衣着；姿势、位置、构图、光线和其他一切照第1张图不变。"
+                  "不要加人也不要减人；对不上形象图的人保持原样。")
     zh += [
-        "- 这一场里出现的每个人，长相（脸、发型、年龄、衣着）都照他自己的形象图。把场景里原有的人换成他们；"
-        "场景描述或讲话需要他们出现而图里没有时，把他们加进去。不要为他们另编长相。",
+        "- 这一场里出现的每个人，长相（脸、发型、年龄、衣着）都照他自己的形象图。"
+        + ("" if (base_image and with_img) else "把场景里原有的人换成他们；场景描述或讲话需要他们出现而图里没有时，把他们加进去。")
+        + "不要为他们另编长相。",
         "- 形象图只提供长相，不提供画风：画风照上面「画风改变」的规则"
         + ("（转成项目风格：整张图转成项目风格，人物也是）" if task == "restyle" else "（保持画风：保持基础图的画风，人物也画成这个画风）")
         + "；形象图的画风、背景和光线都不要带进来。",
@@ -1820,8 +1845,9 @@ def picture_reference_images_note(actor_images: list | None, *, task: str, narra
     ]
     en += [
         "- Every person who appears in this scene takes the look from their own reference image: face, hair, age, and clothes. "
-        "Replace the people already in the scene with them, or add them where the scene description or the lines need them. "
-        "Never invent another look for them.",
+        + ("" if (base_image and with_img) else
+           "Replace the people already in the scene with them, or add them where the scene description or the lines need them. ")
+        + "Never invent another look for them.",
         "- The reference images only supply faces and looks, not their art style: follow the style rule above"
         + (" (convert to the project style: the whole picture, people included, takes the project style)" if task == "restyle"
            else " (keep the style: keep the base picture's style and draw the people in that style)")

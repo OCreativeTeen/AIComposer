@@ -65,7 +65,10 @@ def _story_scene_list(video_detail: dict, scene_ui: dict) -> list:
 
 
 def _story_avatar_dir(video_detail: dict) -> str:
-    """这一条有项目时用项目的 avatar 目录（actor.pdf 的形象图），没有就空。"""
+    """这一条有项目时用项目的 avatar 目录（没有就建），人物形象图存在这里；没有项目返回 ""（调用方退到 avatar/story）。
+
+    项目刚建好时，这个故事人物先前贴在 avatar/story 里的图复制进项目 avatar（原图留着，别的故事可能同名）。
+    """
     try:
         pid = (project_manager.list_json_row_workflow_pid(video_detail) or "").strip()
     except Exception:  # noqa: BLE001
@@ -73,7 +76,22 @@ def _story_avatar_dir(video_detail: dict) -> str:
     if not pid:
         return ""
     d = os.path.join(config.get_project_path(pid), "avatar")
-    return d if os.path.isdir(d) else ""
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return ""
+    try:
+        from utility.story_portraits import adopt_story_portraits
+
+        pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
+        texts = [video_detail.get("story_actors") if isinstance(video_detail, dict) else ""]
+        if isinstance(pp, dict):
+            texts.append(pp.get("story_actors"))
+        for src, dest in adopt_story_portraits(d, texts):
+            print(f"[portrait] 故事人物图复制进项目: {os.path.basename(src)} -> {dest}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[portrait] 故事人物图没有复制进项目: {exc}")
+    return d
 
 
 def _story_setting_place(video_detail: dict) -> tuple[str, str]:

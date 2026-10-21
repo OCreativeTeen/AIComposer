@@ -1368,11 +1368,40 @@ class MagicWorkflow(EpisodeOpsMixin):
         return used
 
     def next_group_name(self) -> str:
+        """新集号 = 所有用过的集号（场景 + media/ 下的数字文件夹）最大值 + 1。不补空号，集号一旦用过就不再变。"""
         used = self._used_group_numbers()
-        n = 1
-        while n in used:
+        n = (max(used) if used else 0) + 1
+        media_dir = config.get_media_path(self.pid)
+        while os.path.exists(os.path.join(media_dir, str(n))):
             n += 1
         return str(n)
+
+    # ---- 显示用：集在 scenes.json 里的先后位置（集号只是身份 / 文件夹名，不一定连续）----
+    def episode_order(self) -> list[str]:
+        """各集按 scenes.json 里第一次出现的顺序。"""
+        order: list[str] = []
+        for sc in self.scenes or []:
+            if isinstance(sc, dict):
+                g = self.scene_group(sc)
+                if g and g not in order:
+                    order.append(g)
+        return order
+
+    def episode_position(self, episode: str) -> int:
+        """这一集在 scenes.json 顺序里是第几集（从 1 起）；找不到返回 0。"""
+        order = self.episode_order()
+        ep = str(episode or "").strip()
+        return order.index(ep) + 1 if ep in order else 0
+
+    def episode_label(self, episode: str, *, short: bool = False) -> str:
+        """界面上的集名：位置和集号一样时「第N集」，不一样时「第N集（#集号）」。short=True 不带「第…集」。"""
+        ep = str(episode or "").strip()
+        pos = self.episode_position(ep)
+        if not pos:
+            return f"#{ep or '-'}" if short else f"第 #{ep or '-'} 集"
+        if str(pos) == ep:
+            return str(pos) if short else f"第{pos}集"
+        return f"{pos}（#{ep}）" if short else f"第{pos}集（#{ep}）"
 
     def episode_groups_from(self, scene) -> list[str]:
         """从 ``scene`` 所在的集起，到项目最后一集，按 scenes.json 里各集第一次出现的顺序。"""

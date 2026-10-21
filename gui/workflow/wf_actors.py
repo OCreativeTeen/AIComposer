@@ -480,7 +480,11 @@ class ActorsMixin:
             return ""
         folder, stem = os.path.dirname(dest), os.path.splitext(os.path.basename(dest))[0]
         token = config.visual_style_token(self._portrait_style())
-        for level in ([os.path.join(folder, token)] if token else []) + [folder]:
+        story_dir = os.path.join(config.AVATAR_PATH, "story")  # 故事预览没有项目 avatar 目录时存在这里
+        levels = []
+        for base in (folder, story_dir):
+            levels += ([os.path.join(base, token)] if token else []) + [base]
+        for level in levels:
             path = config.find_image_by_stem(level, stem)  # .png / .jpg / .jpeg / .webp，.png 优先
             if path:
                 return path

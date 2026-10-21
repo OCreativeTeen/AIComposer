@@ -351,6 +351,87 @@ class SceneStructureMixin:
         self.current_scene_index = spans[target][1]
         self.refresh_gui_scenes()
 
+    def _jump_episode_edge(self, which: str) -> None:
+        """跳到本集第一场（which="first"）或最后一场（"last"）；已经在那一场就不动。"""
+        spans = self._episode_spans()
+        if not spans:
+            return
+        idx = self.current_scene_index
+        for _name, start, end in spans:
+            if start <= idx <= end:
+                target = start if which == "first" else end
+                break
+        else:
+            return
+        if target == idx:
+            return
+        if hasattr(self, "_save_timer") and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
+        self.update_current_scene()
+        self.current_scene_index = target
+        self.refresh_gui_scenes()
+
+    def _bind_single_double(self, widget, on_single, on_double, delay_ms: int = 250) -> None:
+        """同一个按钮：单击延迟 delay_ms 执行，期间来了双击就取消单击、只做双击。"""
+        state = {"after": None, "double": False}
+
+        def cancel():
+            if state["after"]:
+                try:
+                    self.root.after_cancel(state["after"])
+                except tk.TclError:
+                    pass
+                state["after"] = None
+
+        def fire_single():
+            state["after"] = None
+            on_single()
+
+        def release(event):
+            if state["double"]:
+                state["double"] = False
+                return
+            w = event.widget
+            # 松开时鼠标不在按钮上就不算点击（同 ttk 按钮的习惯）。
+            if not (0 <= event.x < w.winfo_width() and 0 <= event.y < w.winfo_height()):
+                return
+            cancel()
+            state["after"] = self.root.after(delay_ms, fire_single)
+
+        def double(_event):
+            cancel()
+            state["double"] = True  # 双击后的那次松开不再排单击
+            on_double()
+
+        widget.bind("<ButtonRelease-1>", release, add="+")
+        widget.bind("<Double-Button-1>", double, add="+")
+
+    def _attach_hover_hint(self, widget, text: str) -> None:
+        """鼠标停在控件上时显示一个小提示框。"""
+        tip = {"win": None}
+
+        def show(_e=None):
+            if tip["win"] is not None:
+                return
+            win = tk.Toplevel(widget)
+            win.wm_overrideredirect(True)
+            win.wm_geometry(f"+{widget.winfo_rootx() + 10}+{widget.winfo_rooty() + widget.winfo_height() + 4}")
+            tk.Label(win, text=text, justify=tk.LEFT, bg="#ffffe0", relief="solid", bd=1, padx=6, pady=3).pack()
+            tip["win"] = win
+
+        def hide(_e=None):
+            if tip["win"] is not None:
+                try:
+                    tip["win"].destroy()
+                except tk.TclError:
+                    pass
+                tip["win"] = None
+
+        widget.bind("<Enter>", show, add="+")
+        widget.bind("<Leave>", hide, add="+")
+        widget.bind("<ButtonPress-1>", hide, add="+")
+
     def prev_episode(self):
         """跳到上一集的第一场。"""
         self._jump_episode(-1)

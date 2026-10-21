@@ -1545,6 +1545,8 @@ class LLMApi:
                         use_gemini = str(extra_params.get("image_backend") or "").strip().lower() == "gemini"
                         who = "Gemini" if use_gemini else "Grok Imagine"
                         _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…")
+                        print(f"[CLI自动] 发给 {who} 的图（{len(image_paths)} 张）: " + " | ".join(
+                            f"{k}={os.path.basename(str(p))}" for k, p in enumerate(image_paths, 1)))
                         if use_gemini:
                             from . import gemini_cdp
                             img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
