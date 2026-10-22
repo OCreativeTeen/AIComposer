@@ -183,7 +183,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
     """
     from gui.slide_prompt_dialog import open_slide_prompt_dialog
 
-    working = r"D:\AI_MEDIA\working"
+    working = config.WORKING_DIR
     material_pdf = (_find_gen_video_slide_for_row(video_detail) or "").strip()
     if material_pdf and not material_pdf.lower().endswith(".pdf"):
         material_pdf = ""
@@ -417,6 +417,9 @@ class SceneEditorImpl:
             for _src in (video_detail, video_detail.get(project_manager.PROJECT_PROFILE_KEY)):
                 if isinstance(_src, dict) and (_src.get("scene_prompt_label") or "").strip():
                     _saved_prompt_label = (_src.get("scene_prompt_label") or "").strip()
+                    _saved_prompt_label = config_channel.STORY_PROMPT_LABEL_RENAMES.get(
+                        _saved_prompt_label, _saved_prompt_label
+                    )
                     break
             if _saved_prompt_label in [opt[0] for opt in nb_prompt_choices]:
                 default_prompt_label = _saved_prompt_label

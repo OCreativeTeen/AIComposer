@@ -3,7 +3,7 @@ Voicebox TTS / ASR 客户端：与 MinimaxSpeechService 相同入口（create_ss
 便于在 GUI 中替换导入。
 
 环境变量（可选）：
-  VOICEBOX_BASE_URL   默认 http://192.168.1.36:17493
+  VOICEBOX_BASE_URL   默认见 config.VOICEBOX_BASE_URL
   VOICEBOX_PROFILE_ID 默认示例 UUID（可被 VOICES 中 voice 覆盖）
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _repo_media_voices_json_path() -> str:
     return os.path.join(config.AVATAR_PATH, "voices.json")
 
 
-DEFAULT_BASE_URL = "http://192.168.1.36:17493"
+DEFAULT_BASE_URL = config.VOICEBOX_BASE_URL  # .env VOICEBOX_BASE_URL
 DEFAULT_PROFILE_ID = "5c3b89e6-7eab-4809-8145-ba1c995e8abe"
 
 

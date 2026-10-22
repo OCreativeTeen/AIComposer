@@ -4011,13 +4011,13 @@ def _physical_download_via_preview_menu(page, hwnd: int, dest: Path) -> bool:
 
 def working_media_dir() -> Path:
     """Folder for itc PNG captures. Always prefer ``D:\\AI_MEDIA\\working``."""
-    preferred = Path(r"D:\AI_MEDIA\working")
+    preferred = Path(config.WORKING_DIR)
     try:
         preferred.mkdir(parents=True, exist_ok=True)
         if preferred.is_dir():
             return preferred
     except OSError as exc:
-        log(f"D:\\AI_MEDIA\\working not usable: {exc}")
+        log(f"{config.WORKING_DIR} not usable: {exc}")
     raw = str(getattr(config, "WORKING_MEDIA_PATH", "") or "").strip()
     candidates: list[Path] = []
     if raw:

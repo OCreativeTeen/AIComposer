@@ -10,7 +10,20 @@ import html
 import os
 import tempfile
 
-CONTENT_PDF_PATH = r"D:\AI_MEDIA\working\content.pdf"
+
+
+def _working_dir() -> str:
+    """config.WORKING_DIR；config 还导入不了时按 .env AI_MEDIA_ROOT 算（同样的默认值）。"""
+    try:
+        import config
+
+        return config.WORKING_DIR
+    except Exception:
+        root = os.getenv("AI_MEDIA_ROOT") or ("D:/AI_MEDIA" if os.name == "nt" else "/AI_MEDIA")
+        return os.path.normpath(os.path.join(root, "working"))
+
+
+CONTENT_PDF_PATH = os.path.join(_working_dir(), "content.pdf")
 CONTENT_PDF_NAME = "content.pdf"
 
 # 提示词里的英文栏名 → PDF 里的「中文 / English」栏名
@@ -184,7 +197,7 @@ def build_content_pdf(
 # ---------------------------------------------------------------------------
 # actor.pdf：本集出场人物（全名 + 形象图），给 NotebookLM 对照人物外貌。
 # ---------------------------------------------------------------------------
-ACTOR_PDF_PATH = r"D:\AI_MEDIA\working\actor.pdf"
+ACTOR_PDF_PATH = os.path.join(_working_dir(), "actor.pdf")
 ACTOR_PDF_NAME = "actor.pdf"
 
 

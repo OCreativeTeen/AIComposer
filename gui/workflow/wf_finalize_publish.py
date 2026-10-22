@@ -141,9 +141,11 @@ class FinalizePublishMixin:
         
         try:
             # 1. 检查 X:\output 中新生成的原始视频（监控逻辑）
-            self.media_scanner.scanning("X:\\output")                      # clip_p202512231259_10005_S2V__00003-audio.mp4
+            # 输出目录见 config.WAN_OUTPUT_DIRS（.env 可改，默认 X:\\output;W:\\wan_video\\output_mp4）
+            # clip_p202512231259_10005_S2V__00003-audio.mp4 / clip_p20251208_10708_ENH_13231028_0_.mp4 ~~~ enhance
+            for _out_dir in config.WAN_OUTPUT_DIRS:
+                self.media_scanner.scanning(_out_dir)
             #self.media_scanner.scanning("Z:\\wan_video\\output_mp4")                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
-            self.media_scanner.scanning("W:\\wan_video\\output_mp4")      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
 
             self.workflow.save_scenes_to_json()
 
@@ -772,6 +774,8 @@ class FinalizePublishMixin:
             self.scene_dialogue_mode.set(talk)
         scene_style = config_prompt.normalize_scene_style(pc.get("scene_style"))
         self.scene_style.set(scene_style or config_prompt.SCENE_STYLE_LABELS[0])
+        if hasattr(self, "story_style"):
+            self.story_style.set(config_prompt.story_style_label(config_prompt.project_story_style()))
         region = (pc.get("setting_region") or "").strip()
         if region not in config_prompt.SETTING_PLACES:
             region = ""
@@ -814,6 +818,12 @@ class FinalizePublishMixin:
         scene_style = config_prompt.normalize_scene_style(self.scene_style.get())
         if (pc.get("scene_style") or "") != scene_style:
             pc["scene_style"] = scene_style
+            changed = True
+        story_style = config_prompt.normalize_story_style(self.story_style.get()) if hasattr(self, "story_style") else ""
+        if story_style:
+            project_manager.remember_story_style(story_style)
+        if story_style and pc.get("story_style") != story_style:
+            pc["story_style"] = story_style
             changed = True
         region = (self.setting_region.get() or "").strip()
         era = (self.setting_era.get() or "").strip()

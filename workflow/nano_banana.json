@@ -700,7 +700,7 @@
             "widgets_values": [
                 "for bible book SOng of Songs, scene:\n\nmiddle east ancient, the girl  meet her first love , a sheppard boy, in the hill",
                 "edit",
-                "AIzaSyCKy6FpOmMQmUeALCgpyf_SL1j5F5evRu0",
+                "<GOOGLE_API_KEY from .env>",
                 1,
                 0.7,
                 "high",

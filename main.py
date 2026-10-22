@@ -46,6 +46,8 @@ class MainApplication:
         tools_menu.add_separator()
         tools_menu.add_command(label="转录工具", command=self.launch_transcript_tool)
         tools_menu.add_command(label="缩略图工具", command=self.launch_thumbnail_tool)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="YouTube 下载", command=self.launch_youtube_download)
         
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -86,25 +88,48 @@ class MainApplication:
         
     def open_main_workflow(self):
         """Open main workflow GUI"""
-        from magic_workflow_gui import MagicWorkflowGUI
-        workflow_window = tk.Toplevel(self.root)
-        app = MagicWorkflowGUI(workflow_window)
+        MagicWorkflowGUI = self._optional_import("magic_workflow_gui", "MagicWorkflowGUI", "主工作流")
+        if MagicWorkflowGUI:
+            MagicWorkflowGUI(tk.Toplevel(self.root))
         
     def launch_magic_tool(self):
         """Launch magic tool (combined transcript and thumbnail)"""
-        from GUI_Magic_Tool import MagicToolGUI
-        tool = MagicToolGUI(tk.Toplevel(self.root))
+        MagicToolGUI = self._optional_import("GUI_Magic_Tool", "MagicToolGUI", "综合工具集")
+        if MagicToolGUI:
+            MagicToolGUI(tk.Toplevel(self.root))
         
     def launch_transcript_tool(self):
         """Launch transcript tool"""
-        from transcript_tool import TranscriptTool
-        tool = TranscriptTool(tk.Toplevel(self.root))
+        TranscriptTool = self._optional_import("transcript_tool", "TranscriptTool", "转录工具")
+        if TranscriptTool:
+            TranscriptTool(tk.Toplevel(self.root))
         
     def launch_thumbnail_tool(self):
         """Launch thumbnail tool"""
-        from thumbnail_tool import ThumbnailTool
-        tool = ThumbnailTool(tk.Toplevel(self.root))
+        ThumbnailTool = self._optional_import("thumbnail_tool", "ThumbnailTool", "缩略图工具")
+        if ThumbnailTool:
+            ThumbnailTool(tk.Toplevel(self.root))
         
+    def launch_youtube_download(self):
+        from utility.youtube_download import open_youtube_download_dialog
+
+        open_youtube_download_dialog(self.root)
+
+    def _optional_import(self, module_name, attr, label):
+        """这些旧模块已不在仓库里；找不到时提示用 GUI_wf.py（start_gui.bat），不再抛 ImportError。"""
+        import importlib
+
+        try:
+            return getattr(importlib.import_module(module_name), attr)
+        except (ImportError, AttributeError) as exc:
+            messagebox.showwarning(
+                label,
+                f"「{label}」模块 {module_name}.py 已不在本仓库里（{exc}）。\n"
+                "主工作流请用 start_gui.bat / python GUI_wf.py 启动。",
+                parent=self.root,
+            )
+            return None
+
     def show_about(self):
         """Show about dialog"""
         messagebox.showinfo("关于", 

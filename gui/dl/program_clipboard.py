@@ -26,7 +26,7 @@ def _program_clipboard_file() -> str:
         return path
     root = (getattr(config, "BASE_AIAGENT_PATH", "") or "").strip()
     if not root:
-        root = os.path.join(config.BASE_MEDIA_PATH or "/AI_MEDIA", "aiagent")
+        root = os.path.join(config.BASE_MEDIA_PATH, "aiagent")
     os.makedirs(root, exist_ok=True)
     return os.path.join(root, PROGRAM_CLIPBOARD_JSON_NAME)
 
@@ -71,7 +71,7 @@ def _migrate_legacy_channel_clipboards(data: dict) -> dict:
     seen = {str(x.get("id", "")) for x in items if isinstance(x, dict) and x.get("id")}
     root = (config.BASE_PROGRAM_PATH or "").strip()
     if not root:
-        root = os.path.join(config.BASE_MEDIA_PATH or "/AI_MEDIA", "program")
+        root = os.path.join(config.BASE_MEDIA_PATH, "program")
     global_path = os.path.normcase(_program_clipboard_file())
     if root and os.path.isdir(root):
         if not data.get("_migrated_channel_clipboards_v1"):

@@ -870,8 +870,37 @@ TRANSCRIBE_LLM_RETRIES = 1
 # =============================================================================
 # 基础路径配置
 # =============================================================================
-BASE_MEDIA_PATH = "/AI_MEDIA"
+# 媒体根目录：.env 里 AI_MEDIA_ROOT（Windows 默认 D:/AI_MEDIA）。
+# 根目录就是本盘的 /AI_MEDIA 时，BASE_MEDIA_PATH 仍写成旧的 "/AI_MEDIA"，
+# 这样已经存进项目 JSON 的旧路径和新算出来的路径字面一致；换了别的根目录才用新写法。
+_LEGACY_MEDIA_ROOT = "/AI_MEDIA"
+AI_MEDIA_ROOT = (
+    os.environ.get("AI_MEDIA_ROOT") or ("D:/AI_MEDIA" if os.name == "nt" else _LEGACY_MEDIA_ROOT)
+).strip().replace("\\", "/").rstrip("/")
+
+
+def _same_dir(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+BASE_MEDIA_PATH = _LEGACY_MEDIA_ROOT if _same_dir(AI_MEDIA_ROOT, _LEGACY_MEDIA_ROOT) else AI_MEDIA_ROOT
+
+
+def resolve_media_path(path: str) -> str:
+    """旧 JSON 里的 ``/AI_MEDIA/...``、``D:/AI_MEDIA/...``、``D:\\AI_MEDIA\\...`` 换到当前媒体根目录。
+    根目录没换时原样返回。"""
+    if not path or BASE_MEDIA_PATH == _LEGACY_MEDIA_ROOT:
+        return path
+    norm = str(path).replace("\\", "/")
+    m = re.match(r"^(?:[A-Za-z]:)?/AI_MEDIA(?=/|$)", norm)
+    if not m:
+        return path
+    return BASE_MEDIA_PATH + norm[m.end():]
+
+
 WORKING_MEDIA_PATH = f"{BASE_MEDIA_PATH}/working"
+# 同一个 working 目录的本机绝对路径（D:\\AI_MEDIA\\working），给 Explorer / 下载 / 临时文件用
+WORKING_DIR = os.path.normpath(os.path.abspath(WORKING_MEDIA_PATH))
 INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
@@ -884,6 +913,42 @@ CHARACTER_PERSON_OPTIONS = load_character_person_options()
 LEGACY_PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PROJECT_DATA_PATH = LEGACY_PROJECT_DATA_PATH
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
+
+
+# =============================================================================
+# 服务地址（service endpoints）：都可在 .env 里改，下面是当前默认值
+# =============================================================================
+def _env(name: str, default: str) -> str:
+    return (os.environ.get(name) or default).strip()
+
+
+def _env_list(name: str, default: str, sep: str = ",") -> list:
+    """逗号（或 sep）分隔，去空、去重，保持顺序。"""
+    out = []
+    for part in _env(name, default).split(sep):
+        part = part.strip()
+        if part and part not in out:
+            out.append(part)
+    return out
+
+
+# 本机 Strata（OpenAI 兼容）
+STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.185:8080/v1")
+# Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
+VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://192.168.1.36:17493")
+# 远程转写服务（AudioTranscriber.api_url）
+TRANSCRIBE_URL = _env("TRANSCRIBE_URL", "http://10.0.0.231:9001/transcribe")
+# 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
+COMFYUI_URL = _env("COMFYUI_URL", "http://10.0.0.x:8188")  # dead placeholder
+SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
+COMFYUI_WORKFLOW_DIR = _env("COMFYUI_WORKFLOW_DIR", r"\\10.0.0.179\wan22\ComfyUI\user\default\workflows")
+WAN_I2V_URL = _env("WAN_I2V_URL", "http://10.0.0.231:9001")
+WAN_S2V_URL = _env("WAN_S2V_URL", "http://10.0.0.222:9001")
+INTERP_URL = _env("INTERP_URL", "http://10.0.0.235:9001")
+# 视频增强服务，逗号分隔，去重后轮流用
+ENHANCE_SERVERS = _env_list("ENHANCE_SERVERS", "http://10.0.0.235:5000")
+# 收尾时扫描新生成视频的输出目录，分号分隔
+WAN_OUTPUT_DIRS = _env_list("WAN_OUTPUT_DIRS", r"X:\output;W:\wan_video\output_mp4", sep=";")
 # 频道列表拖放加水印成片 / 封面 webp（Youtube 摘要窗等）
 INPUT_MEDIA_GEN_VIDEO_PATH = f"{PUBLISH_PATH}/gen_video"
 TEMP_PATH_BASE = PROJECT_DATA_PATH  # 旧注释；临时文件在 program/<channel>/project/<pid>/temp
@@ -1255,16 +1320,28 @@ CHROME_CDP_USER_DATA_DIR = (
 # Telegram 询问 owner 时按此列表编号（回复 1/2/3/4/5/6）
 # CLI 编号 1–6 → 邮箱；directory 为 HermesChromeCDP 内文件夹名（与日常 Chrome 无关）。
 # 若 directory 与 Local State 不一致，browser_tasks 会按已登录邮箱自动纠正。
-GEMINI_CHROME_PROFILES = [
-    {"label": "ocreativeteen@gmail.com", "directory": "Profile 2"},
-    {"label": "creative4teen@gmail.com", "directory": "Profile 3"},
-    {"label": "triumphdt777@gmail.com", "directory": "Default"},
-    {"label": "myhomefun@gmail.com", "directory": "Profile 4"},
-    {"label": "mindstoryroom@gmail.com", "directory": "Profile 5"},
-    {"label": "bjtombj2023@gmail.com", "directory": "Profile 6"},
-]
-# Grok Imagine（``grv``）轮换账号：GEMINI_CHROME_PROFILES 的 1-based 编号（非 Chrome 文件夹名）
-GROK_IMAGINE_PROFILE_INDICES = [1, 6]  # ocreativeteen, bjtombj2023
+# 账号列表放在本机 .env 的 CHROME_PROFILES_JSON 里（不进代码库），例：
+# CHROME_PROFILES_JSON='[{"label": "you@example.com", "directory": "Default"}]'
+def _load_chrome_profiles() -> list:
+    import json as _json
+
+    raw = (os.environ.get("CHROME_PROFILES_JSON") or "").strip()
+    if raw:
+        try:
+            rows = _json.loads(raw)
+            rows = [r for r in rows if isinstance(r, dict) and r.get("label")]
+            if rows:
+                return [{"label": str(r["label"]), "directory": str(r.get("directory") or "Default")} for r in rows]
+        except ValueError as exc:
+            print(f"⚠️ CHROME_PROFILES_JSON 解析失败：{exc}")
+    return [{"label": "profile-1", "directory": "Default"}]
+
+
+GEMINI_CHROME_PROFILES = _load_chrome_profiles()
+# Grok Imagine（``grv``）轮换账号：GEMINI_CHROME_PROFILES 的 1-based 编号（非 Chrome 文件夹名）；.env 的 GROK_IMAGINE_PROFILE_INDICES，如 1,6
+GROK_IMAGINE_PROFILE_INDICES = [
+    int(x) for x in re.split(r"[,\s]+", os.environ.get("GROK_IMAGINE_PROFILE_INDICES") or "1") if x.strip().isdigit()
+] or [1]
 # 当前选中的账号（交互选号后会改这个值）
 GEMINI_CHROME_PROFILE = GEMINI_CHROME_PROFILES[0]["label"]
 GEMINI_CHROME_PROFILE_DIRECTORY = (
@@ -1273,7 +1350,7 @@ GEMINI_CHROME_PROFILE_DIRECTORY = (
 GEMINI_URL = "https://gemini.google.com/"
 NOTEBOOKLM_URL = "https://notebooklm.google.com/"
 # 手工 LLM 窗口 CLI自动：演示文稿 / 信息图 / 音频概览 / 视频概览 用这个笔记本（项目配置 notebooklm_studio_url 可覆盖）
-NOTEBOOKLM_STUDIO_URL = os.environ.get("NOTEBOOKLM_STUDIO_URL") or "https://notebook.google.com/notebook/dedcfa57-6639-4635-82ed-461550d48a94"
+NOTEBOOKLM_STUDIO_URL = (os.environ.get("NOTEBOOKLM_STUDIO_URL") or "").strip()
 # NotebookLM / itc: use HermesChromeCDP on GROK_CDP_PORT (9222), same as Hermes nb_cover_dl.
 NOTEBOOKLM_CDP_PORT = int(os.environ.get("NOTEBOOKLM_CDP_PORT") or "9222")
 # Grok ``grv``: HermesChromeCDP + profile（与 D:\Hermes\run_grok_imagine.bat 相同模型）。
@@ -2425,7 +2502,7 @@ CHANNEL_CONFIG = {
         "channel_id": "counseling",
         "channel_category_id": "22",
         "channel_tags": ["心理咨询", "心理治疗", "心理健康", "Psychology", "Psychological Counseling", "Psychological Therapy", "Psychological Health"],
-        "channel_key": "client_secret_creative4teen.json",
+        "channel_key": os.environ.get("YT_CLIENT_SECRET_CREATIVE4TEEN") or "config/client_secret_main.json",
 
         "scene_min_length": 20,
         "watermark": {
@@ -2442,7 +2519,8 @@ CHANNEL_CONFIG = {
         "scenes_prompt_choices": [
             ("Series . Podcast", config_channel.COUNSELING_TALK_SCENES),
             ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
-            ("Series · Story Only", config_channel.COUNSELING_SERIES_STORY_ONLY),
+            ("Series · Story Speak", config_channel.COUNSELING_SERIES_STORY_SPEAK),
+            ("Series · Story Act", config_channel.COUNSELING_SERIES_STORY_ACT),
             (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),
             (config_channel.SCENE_SUMMARY_IMAGE_LABEL, config_channel.SCENE_SUMMARY_IMAGE_TEMPLATE_MARK),
             (config_channel.STEP_IMAGE_LABEL, config_channel.STEP_IMAGE_TEMPLATE_MARK),
@@ -2466,7 +2544,7 @@ CHANNEL_CONFIG = {
             "低空经济", "无人机", "航空通信", "UAV", "eVTOL", "UTM",
             "Low Altitude Economy", "Drone", "Aviation Communication", "Urban Air Mobility"
         ],
-        "channel_key": "client_secret_creative4teen.json",
+        "channel_key": os.environ.get("YT_CLIENT_SECRET_CREATIVE4TEEN") or "config/client_secret_main.json",
 
         "scene_min_length": 20,
         "watermark": {
@@ -2503,7 +2581,7 @@ CHANNEL_CONFIG = {
         "channel_id": "comic",
         "channel_category_id": "1",
         "channel_tags": ["连环画", "漫画故事", "Comic", "Picture Story"],
-        "channel_key": "client_secret_creative4teen.json",
+        "channel_key": os.environ.get("YT_CLIENT_SECRET_CREATIVE4TEEN") or "config/client_secret_main.json",
 
         "scene_min_length": 20,
         "watermark": {
@@ -2539,7 +2617,7 @@ CHANNEL_CONFIG = {
         "channel_id": "music_story",
         "channel_category_id": "10",
         "channel_tags": ["音乐故事", "Music Story", "Music", "Story", "Musical", "Musical Story", "Musical Myth", "Musical Legend"],
-        "channel_key": "client_secret_ocreativeteen.json",
+        "channel_key": os.environ.get("YT_CLIENT_SECRET_OCREATIVETEEN") or "config/client_secret_main.json",
 
         "scene_min_length": 20,
         "watermark": {

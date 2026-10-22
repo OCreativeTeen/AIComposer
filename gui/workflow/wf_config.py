@@ -282,6 +282,7 @@ class ConfigMixin:
                 (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
             ),
             'scene_style': config_prompt.normalize_scene_style(self.scene_style.get()),
+            'story_style': config_prompt.normalize_story_style(self.story_style.get()) or config_data.get('story_style') or config_prompt.STORY_STYLE_CHOICES[0][0],
             'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
             'setting_region': (self.setting_region.get() or "").strip(),
             'setting_era': (self.setting_era.get() or "").strip(),
@@ -331,6 +332,8 @@ class ConfigMixin:
                     (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
                 ),
                 'scene_style': config_prompt.normalize_scene_style(self.scene_style.get()),
+                'story_style': config_prompt.normalize_story_style(self.story_style.get()) or config_data.get('story_style') or config_prompt.STORY_STYLE_CHOICES[0][0],
+            'story_style': config_prompt.normalize_story_style(self.story_style.get()) or config_data.get('story_style') or config_prompt.STORY_STYLE_CHOICES[0][0],
             'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
                 'setting_region': (self.setting_region.get() or "").strip(),
                 'setting_era': (self.setting_era.get() or "").strip(),
@@ -461,7 +464,7 @@ class ConfigMixin:
             field.bind('<KP_Enter>', self.on_scene_field_return_commit)
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
 
-        for field in (self.shared_language, self.scene_visual_style, self.scene_dialogue_mode, self.scene_style, self.scene_language, self.setting_era):
+        for field in (self.shared_language, self.scene_visual_style, self.scene_dialogue_mode, self.scene_style, self.story_style, self.scene_language, self.setting_era):
             field.bind("<<ComboboxSelected>>", self._save_project_look)
             field.bind("<FocusOut>", self._save_project_look)
         self.setting_region.bind("<<ComboboxSelected>>", self._on_setting_region_selected)

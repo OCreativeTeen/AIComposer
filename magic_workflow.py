@@ -32,7 +32,7 @@ import tkinter as tk
 
 
 
-PDF_STAGING_ROOT = r"D:\AI_MEDIA\working\pdf_pages"
+PDF_STAGING_ROOT = os.path.join(config.WORKING_DIR, "pdf_pages")
 PDF_IMPORT_HISTORY_NAME = "pdf_imports.json"  # 每集一份：media/<集>/pdf_imports.json
 PDF_IMPORT_HISTORY_CAP = 20
 
@@ -1393,13 +1393,14 @@ class MagicWorkflow(EpisodeOpsMixin):
         ep = str(episode or "").strip()
         return order.index(ep) + 1 if ep in order else 0
 
-    def episode_label(self, episode: str, *, short: bool = False) -> str:
-        """界面上的集名：位置和集号一样时「第N集」，不一样时「第N集（#集号）」。short=True 不带「第…集」。"""
+    def episode_label(self, episode: str, *, short: bool = False, always_id: bool = False) -> str:
+        """界面上的集名：位置和集号一样时「第N集」，不一样时「第N集（#集号）」。short=True 不带「第…集」。
+        always_id=True 时总带集号（「本集内容」旁的标签用）。"""
         ep = str(episode or "").strip()
         pos = self.episode_position(ep)
         if not pos:
             return f"#{ep or '-'}" if short else f"第 #{ep or '-'} 集"
-        if str(pos) == ep:
+        if str(pos) == ep and not always_id:
             return str(pos) if short else f"第{pos}集"
         return f"{pos}（#{ep}）" if short else f"第{pos}集（#{ep}）"
 

@@ -257,7 +257,7 @@ class SceneStructureMixin:
         self._speech_sections = kept
         self._speech_span_duration = max(0.0, float(self._speech_span_duration or 0.0) - cut) if where == "head" else cut
         self.workflow.save_scenes_to_json()
-        self._put_speaking_text(scene.get("speaking") or "")
+        self._put_speaking_text(project_manager.speaking_box_text(scene))
         self.refresh_gui_scenes()
         show_auto_close_popup(
             self.root,

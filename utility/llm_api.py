@@ -37,7 +37,7 @@ STRATA_MAX_TOKENS = 32768
 
 MODELS = {
     STRATA : {
-        "url": "http://192.168.1.185:8080/v1"
+        "url": config.STRATA_BASE_URL
     },
     GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -1439,7 +1439,8 @@ class LLMApi:
         # ---- CLI自动：通过 CDP 驱动 Chrome 里的 Grok，自动完成这次手动来回（utility/grok_cdp.py）----
         # ``extra``：不进提示词的参数（如 {"duration": "10s", "resolution": "720p"}），交给 CLI自动；只读显示。
         extra_params = dict(extra) if isinstance(extra, dict) else {}
-        shown_params = {k: v for k, v in extra_params.items() if k != "image_backend" and v not in (None, "")}
+        shown_params = {k: v for k, v in extra_params.items()
+                        if k not in ("image_backend", "video_backend", "orientation") and v not in (None, "")}
         if shown_params:
             ttk.Label(
                 model_frame,
@@ -1447,6 +1448,23 @@ class LLMApi:
                 font=("TkDefaultFont", 9),
                 foreground="gray35",
             ).pack(anchor=tk.W, pady=(2, 0))
+        # 视频：选 Grok / Gemini 生成（默认来自生场视频窗口按的按钮），并显示画面方向。
+        video_backend_var = tk.StringVar(
+            master=dialog,
+            value=("gemini" if str(extra_params.get("video_backend") or "").strip().lower() == "gemini" else "grok"),
+        )
+        if cli_kind == "video":
+            vb_row = ttk.Frame(model_frame)
+            vb_row.pack(anchor=tk.W, pady=(2, 0))
+            ttk.Label(vb_row, text="视频生成：").pack(side=tk.LEFT)
+            ttk.Radiobutton(vb_row, text="Grok", value="grok", variable=video_backend_var).pack(side=tk.LEFT)
+            ttk.Radiobutton(vb_row, text="Gemini", value="gemini", variable=video_backend_var).pack(side=tk.LEFT, padx=(4, 0))
+            _orient = str(extra_params.get("orientation") or "").strip().lower()
+            if _orient:
+                ttk.Label(
+                    vb_row, text="  方向：" + ("纵向 9:16" if _orient == "portrait" else "横向 16:9"),
+                    foreground="gray35",
+                ).pack(side=tk.LEFT, padx=(8, 0))
         cli_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="#1f5fbf")
         cli_status.pack(anchor=tk.W, pady=(2, 0))
         cli_busy = [False]
@@ -1506,6 +1524,7 @@ class LLMApi:
             if cli_btn_ref[0] is not None:
                 cli_btn_ref[0].state(["disabled"])
             cli_status.config(text="CLI自动 开始 …", foreground="#1f5fbf")
+            video_backend = video_backend_var.get()  # 主线程里取，后台线程不碰 Tk 变量
 
             def _work():
                 try:
@@ -1528,11 +1547,20 @@ class LLMApi:
                     elif cli_kind == "video":
                         if not image_path:
                             raise RuntimeError("生成视频需要一张起始图")
-                        mp4 = grok_cdp.make_video(
-                            prompt, image_path, dest_dir=file_dest_dir or "", status=_cli_set_status,
-                            resolution=str(extra_params.get("resolution") or "720p"),
-                            duration=str(extra_params.get("duration") or "15s"),
-                        )
+                        if video_backend == "gemini":
+                            from . import gemini_cdp
+
+                            _cli_set_status("CLI自动：Gemini 生成视频 …")
+                            mp4 = gemini_cdp.make_video(
+                                prompt, image_path, dest_dir=file_dest_dir or "", status=_cli_set_status,
+                                orientation=str(extra_params.get("orientation") or "landscape"),
+                            )
+                        else:
+                            mp4 = grok_cdp.make_video(
+                                prompt, image_path, dest_dir=file_dest_dir or "", status=_cli_set_status,
+                                resolution=str(extra_params.get("resolution") or "720p"),
+                                duration=str(extra_params.get("duration") or "15s"),
+                            )
 
                         def _apply_file():
                             _cli_done_ui()

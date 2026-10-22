@@ -667,7 +667,7 @@ def slide_flow_scene_payload(
         elif silent_cast and actor:
             lines.append(f"{SILENT_ACTORS_FIELD}: {actor}")
         if use_speaking:
-            speaking = (base.get("speaking") or "").strip()
+            speaking = (base.get("speaking") or base.get("story_content") or "").strip()
             voiceover = (base.get("voiceover") or "").strip()
             if not use_actor or telling:
                 speaking = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", speaking)
@@ -1784,6 +1784,25 @@ def build_picture_flow_prompt(
     return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
 
 
+def output_aspect_line(video_size: str = "", width=None, height=None) -> str:
+    """出图比例，放在提示词最前面。video_size 是 "1920x1080" / "1080x1920"；也可以给宽高。"""
+    w = h = 0
+    try:
+        if video_size and "x" in str(video_size):
+            w, h = (int(v) for v in str(video_size).lower().split("x", 1))
+        elif width and height:
+            w, h = int(width), int(height)
+    except (TypeError, ValueError):
+        w = h = 0
+    if w <= 0 or h <= 0:
+        return ""
+    if w >= h:
+        return (f"OUTPUT FORMAT: 16:9 landscape ({w}x{h}). The output image MUST be 16:9 landscape (wider than tall).\n"
+                "输出比例：16:9 横屏。输出的图片必须是 16:9。")
+    return (f"OUTPUT FORMAT: 9:16 portrait ({w}x{h}). The output image MUST be 9:16 portrait (taller than wide).\n"
+            "输出比例：9:16 竖屏。输出的图片必须是 9:16。")
+
+
 def picture_reference_images_note(actor_images: list | None, *, task: str, narrative: str, base_image: bool = True) -> str:
     """图片提示：发出去的图各是什么，以及人物形象图怎么用。没有任何人物形象图返回 ""。"""
     rows = [r for r in (actor_images or []) if isinstance(r, dict) and (r.get("name") or "").strip()]
@@ -2431,7 +2450,7 @@ def _image_painting_direction(scene: dict, use_visual: bool = True) -> str:
     parts: list[str] = []
     vis = (scene.get("visual") or scene.get("story") or "").strip() if use_visual else ""
     actor = (scene.get("actor") or "").strip()
-    speaking = (scene.get("speaking") or "").strip()
+    speaking = (scene.get("speaking") or scene.get("story_content") or "").strip()
     caption = (scene.get("caption") or "").strip()
     if caption:
         parts.append(f"Scene title: {caption}")
@@ -3124,6 +3143,374 @@ def _video_prompt_scene_payload(
     return out
 
 
+# 故事风格（STORY 窗口的三种 Series 提示）：决定视频里谁说话、讲员出不出镜、人物怎么演。
+STORY_STYLE_CHOICES = (
+    ("podcast", "Series · Podcast"),
+    ("counselor", "Series · Counselor"),
+    ("story_speak", "Series · Story Speak"),
+    ("story_act", "Series · Story Act"),
+)
+STORY_STYLE_LABELS = tuple(label for _k, label in STORY_STYLE_CHOICES)
+
+
+def normalize_story_style(value) -> str:
+    """存值 / 标签（含旧写法 "Series . Podcast"、旧的 Story Only）→ podcast / counselor / story_speak / story_act；认不出返回空。"""
+    text = re.sub(r"\s+", " ", str(value or "")).strip().lower().replace("·", ".")
+    if not text:
+        return ""
+    for key, label in STORY_STYLE_CHOICES:
+        if text in (key, label.lower().replace("·", ".")):
+            return key
+    if "podcast" in text:
+        return "podcast"
+    if "counselor" in text:
+        return "counselor"
+    if "story act" in text or "story_act" in text:
+        return "story_act"
+    if "story only" in text or "story_only" in text or "story speak" in text or "story_speak" in text:
+        return "story_speak"
+    return ""
+
+
+def story_style_label(value) -> str:
+    key = normalize_story_style(value) or STORY_STYLE_CHOICES[0][0]
+    return dict(STORY_STYLE_CHOICES)[key]
+
+
+def project_story_style() -> str:
+    """项目里存的故事风格；没存过就看生成场景时用的 STORY 提示（scene_prompt_label）；都没有用 Podcast。"""
+    try:
+        import project_manager
+
+        pc = project_manager.PROJECT_CONFIG or {}
+    except Exception:  # noqa: BLE001
+        pc = {}
+    if not isinstance(pc, dict):
+        pc = {}
+    pp = pc.get("project_profile") if isinstance(pc.get("project_profile"), dict) else {}
+    for raw in (pc.get("story_style"), pc.get("scene_prompt_label"), pp.get("scene_prompt_label")):
+        key = normalize_story_style(raw)
+        if key:
+            return key
+    try:
+        import project_manager
+
+        last = normalize_story_style(getattr(project_manager, "LAST_STORY_STYLE", ""))
+        if last:
+            return last  # 项目里没存过：用上次选的
+    except Exception:  # noqa: BLE001
+        pass
+    return STORY_STYLE_CHOICES[0][0]
+
+
+_SPEAKER_MARK = re.compile(r"<\s*(\d+)\s*>")
+_PAUSE_MARK = re.compile(r"<\s*\d+\.\d+\s*>")
+
+
+def _strip_speech_marks(text: str) -> str:
+    out = _PAUSE_MARK.sub(" ", text or "")
+    out = _SPEAKER_MARK.sub(" ", out)
+    return re.sub(r"[ \t]{2,}", " ", out).strip()
+
+
+def _video_cast(scenes: list, use_actor: bool) -> list:
+    """actor 栏里要出场的人（跳过 不出现），按顺序。多场时取第一场有人的。"""
+    import project_manager
+
+    if not use_actor:
+        return []
+    for scene in scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        text = project_manager.actor_text_for_generation(scene.get("actor") or "")
+        rows = project_manager.active_actor_entries(text)
+        if rows:
+            return rows
+    return []
+
+
+def _speaker_slots(scenes: list) -> list:
+    """speaking 里用到的 <N>（不含停顿）。没有标记但有话 → [1]。"""
+    used: list = []
+    for scene in scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        text = str(scene.get("speaking") or "")
+        for m in _SPEAKER_MARK.finditer(text):
+            n = int(m.group(1))
+            if n not in used:
+                used.append(n)
+        if not used and text.strip():
+            used.append(1)
+        if str(scene.get("voiceover") or "").strip() and 2 not in used:
+            used.append(2)
+    return sorted(used)
+
+
+def _who(row: dict) -> str:
+    import project_manager
+
+    body, _m = project_manager.split_actor_motion(row.get("body") or "")
+    label = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
+    return f"{label} {body}".strip()
+
+
+def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
+                        host_narrator: str, use_speaking: bool) -> tuple:
+    """返回 (说明行, 内容字段名)。故事风格决定谁说话；叙事风格只管画面怎么表现（见 _video_form_line）。"""
+    import project_manager
+
+    real = [s for s in scenes if isinstance(s, dict)]
+    if real and all(project_manager.scene_is_story_act(s) for s in real):
+        story_style = "story_act"  # 场景本身是 Story Act 生成的（只有 story_content）
+    if story_style == "story_act":
+        has_content = any(
+            str(s.get("story_content") or s.get("speaking") or s.get("voiceover") or "").strip() for s in real
+        )
+        if not use_speaking or not has_content:
+            return ["Speech: nobody speaks in this clip. No narration, no dialogue, no lip-sync."], ""
+        return [
+            "Story style STORY ACT: ``story_content`` is what happens in this scene. The people act it out silently "
+            "through action, behavior, facial expression, and gesture, so the picture itself tells it.",
+            "Speech: nobody speaks. No dialogue, no lip-sync, no narrator, no voice-over; ``story_content`` is never said aloud.",
+        ], "story_content"
+    if not use_speaking or not any(
+        str(s.get("speaking") or s.get("voiceover") or "").strip() for s in scenes if isinstance(s, dict)
+    ):
+        return ["Speech: nobody speaks in this clip. No narration, no dialogue, no lip-sync."], ""
+    hosts = [r for r in cast if r.get("role") == "host"]
+    people = [r for r in cast if r.get("role") != "host"]
+    lines: list = []
+    if not cast:
+        voice = narrator_voice_phrase(host_narrator) or "one narrator voice"
+        if story_style == "story_speak":
+            lines.append(
+                "Speech: pure drama, no narrator. ``narration`` is what the people in the picture say to each other; "
+                "give it to the person it fits, one voice at a time, with lip-sync for that person only."
+            )
+            return lines, "narration"
+        lines.append(
+            f"Speech: ``narration`` is one off-screen voice-over ({voice}). Do not show a narrator or host. "
+            "Nobody in the picture speaks or moves their lips; they act silently."
+        )
+        return lines, "narration"
+    lines.append(
+        "Speakers: ``<N>`` in ``speaking`` is the Nth person in ``actor`` (only 1 to 3 speak); the same person keeps "
+        "talking until the next ``<N>``; ``<0.5>`` is a pause in seconds. One voice at a time. "
+        "Lip-sync only the person whose line it is; everyone else listens or reacts."
+    )
+    if story_style == "podcast":
+        lines.append(
+            "Story style PODCAST: the people in ``actor`` are the podcast speakers"
+            + (" (the 讲员 is the host" + (", the 人物 are guests)" if people else ")") if hosts
+               else " (the first 人物 is the host, the others are guests)")
+            + ". They talk ABOUT the story; they never act it out. A speaker visible in the picture talks on camera; "
+            "a speaker not in the picture is heard as voice-over. People of the story shown in the picture act silently: "
+            "no lines, no lip-sync."
+        )
+    elif story_style == "counselor":
+        if hosts:
+            lines.append(
+                "Story style COUNSELOR: the 讲员 is the counselor, on camera, speaking as a third person "
+                "(background, what is going on, the remedy). The 人物 are actors living the story, not guests: "
+                "they speak their own lines to each other, act, and show emotion. The 讲员 may speak to them and they may "
+                "answer, but they stay inside the life, never a studio discussion."
+            )
+        else:
+            lines.append(
+                "Story style COUNSELOR without an on-screen counselor: the 人物 are actors living the story; "
+                "they speak their own lines to each other, act, and show emotion."
+            )
+    else:  # story_speak
+        if hosts and not people:
+            lines.append(
+                "Story style STORY SPEAK, narrator beat: the 讲员 is the narrator, on camera, giving a brief introduction, "
+                "transition, or closing. Do not act the story out here."
+            )
+        else:
+            lines.append(
+                "Story style STORY SPEAK: a dramatized moment like a film or TV drama. ``speaking`` is the 人物's dialogue: "
+                "they say these lines aloud to each other, in the scene, as the people of the story. Their actions, faces, "
+                "and the picture help express what is being said."
+                + (" The 讲员 stays apart, speaks only the lines marked for them, and never takes over the scene." if hosts else
+                   " No narrator, no voice-over.")
+            )
+    if narrative in TELLING_NARRATIVES and story_style != "podcast" and people:
+        lines.append("Even in this telling style, the 人物's lines are their own spoken lines, not narration.")
+    # 声音：只写用到的位置
+    slots = _speaker_slots(scenes)
+    voice_bits = []
+    for n in slots:
+        if 1 <= n <= min(3, len(cast)):
+            row = cast[n - 1]
+            import project_manager
+
+            body, _m = project_manager.split_actor_motion(row.get("body") or "")
+            name = chosen_actor_voice(body, row.get("role") or "person")
+            voice_bits.append(f"<{n}> {_who(row)}" + (f" = voice {name}" if name else ""))
+    if voice_bits:
+        lines.append("Voices: " + "; ".join(voice_bits) + ". Use exactly these voices.")
+    lines.append(
+        "Each voice matches that person's gender and age band (woman = female, man = male), on or off screen; "
+        "lip-sync uses the same voice."
+    )
+    return lines, "speaking"
+
+
+def _video_form_line(narrative: str) -> str:
+    """叙事风格：只说画面怎么表现，不涉及谁说话（谁说话由故事风格决定）。"""
+    return {
+        "story": "Form: the people act the moment out; faces, gestures, and what passes between them carry it.",
+        "narration": "Form: telling. The place, objects, symbols, and composition carry the content; people, if any, support it.",
+        "tech": "Form: a clean technical slide (architecture / flow / comparison diagram) in reading order; people rarely appear.",
+        "exec": "Form: one sparse executive slide: one conclusion, backed by one key number, trend, or simple chart.",
+    }.get(narrative, "")
+
+
+def _video_text_line(text: str, background: str, narrative: str) -> str:
+    """说明文字（画面上的字），只写一次。"""
+    if text != "keep":
+        return "Text: " + flow_caption_rule(text).replace("\n", " ")
+    if background == "art_text":
+        return ("Text: one short artistic keyword (Chinese at most 8 characters, English at most 3 words) may sit in the deep "
+                "background, blended into a wall, sign, or sky, taken from the spoken content. Never a sentence, never a "
+                "caption bar. " + NO_TEXT_PANEL_LINE)
+    if background == "bubble" and narrative == "story":
+        return ("Text: at most one small thought bubble near a speaker, holding a keyword from their line; "
+                "never a subtitle bar, never over a face.")
+    return "Text: no words on the picture: no subtitle, caption, title card, sign text, or speech bubble."
+
+
+def _video_style_line(frames: str, evolve: str, style: str) -> str:
+    if frames == "two":
+        return ("Pictures: picture 1 is the opening frame, picture 2 the ending frame. Move from 1 to 2 so the start, "
+                "the change, and the end are all seen; their own looks set the style, invent no third look.")
+    head = "Pictures: picture 1 is the scene, the first frame; keep the same place. "
+    if evolve == "to_style":
+        return head + (f"Hold picture 1's own look, then change it slowly and visibly into {style} "
+                       "(start, halfway, finished); no page turn, dissolve, wipe, or flash. Same people and place throughout.")
+    if evolve == "to_style_page":
+        return head + (f"Over about 4-5 seconds, turn pages, each one closer to {style}; the last page is {style}. "
+                       "Same people and place on every page.")
+    if evolve == "to_style_dissolve":
+        return head + (f"Over about 4-5 seconds, several soft dissolves, each closer to {style}, ending in {style}. "
+                       "Same people and place in every blend.")
+    return head + "Keep picture 1's own look for the whole clip; do not restyle it. The motion stays gentle and natural."
+
+
+def _video_camera_short(camera: str) -> str:
+    line = _video_flow_camera_line(camera).lstrip("* ").strip()
+    if camera in (None, "", "none"):
+        return "Camera: no prescribed move unless ``visual`` describes one."
+    return line
+
+
+def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruction: list,
+                           language: str, payload: list, extra_sections: dict | None = None) -> str:
+    lang_label = ""
+    try:
+        import config
+
+        lang_label = (config.audio_language_label(language) or "") if (language or "").strip() else ""
+    except Exception:  # noqa: BLE001
+        lang_label = ""
+    parts = {"Visual_Style": style, "Video_choices": choices}
+    parts.update(extra_sections or {})
+    parts["Instructions"] = "\n".join(f"- {line}" for line in instruction if line)
+    if lang_label:
+        parts["Audio"] = f"- Spoken language: {lang_label}. Every spoken word is delivered in {lang_label}."
+    parts["Story_Scene_Content"] = json.dumps(payload, ensure_ascii=False, indent=2)
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
+def _video_payload(scenes: list, *, variant: str, host_narrator: str, use_visual: bool,
+                   use_speaking: bool, cast: list, content_key: str) -> list:
+    raw = scene_payload_for_notebooklm_export(scenes, "video", variant, narrator=host_narrator, use_visual=use_visual)
+    src = [s for s in (scenes or []) if isinstance(s, dict)]
+    out: list = []
+    for idx, sc in enumerate(raw):
+        if not isinstance(sc, dict):
+            continue
+        orig = src[idx] if idx < len(src) else {}
+        slim: dict = {}
+        if use_visual and sc.get("visual"):
+            slim["visual"] = sc["visual"]
+        if cast and sc.get("actor"):
+            slim["actor"] = sc["actor"]
+        if use_speaking and content_key:
+            speaking = (sc.get("speaking") or "").strip()
+            voiceover = (sc.get("voiceover") or "").strip()
+            if content_key == "story_content":
+                # Story Act：story_content；旧数据只有 speaking 时，把 speaking（去掉 <N>）当作要演的内容
+                act = str(orig.get("story_content") or sc.get("story_content") or "").strip()
+                act = act or _strip_speech_marks(" ".join(p for p in (speaking, voiceover) if p))
+                if act:
+                    slim["story_content"] = act
+            elif content_key == "narration":
+                combined = _strip_speech_marks(" ".join(p for p in (speaking, voiceover) if p))
+                if combined:
+                    slim["narration"] = combined
+            else:
+                if voiceover and "<2>" not in speaking:
+                    speaking = (speaking + " <2> " + voiceover).strip()
+                if speaking:
+                    slim["speaking"] = speaking
+        out.append(slim)
+    return out
+
+
+def _cast_name(row: dict) -> str:
+    import project_manager
+
+    body, _m = project_manager.split_actor_motion(row.get("body") or "")
+    bits = [b for b in body.split("/") if b.strip()]
+    if row.get("role") == "host":
+        return "讲员"
+    return bits[3].strip() if len(bits) >= 4 else (row.get("label") or "人物")
+
+
+def people_count_line(cast: list, where: str = "clip") -> str:
+    """有名单时的人数规则（视频 where="clip" / 图片 where="picture"）。"""
+    n = len(cast)
+    names = ", ".join(_cast_name(r) for r in cast)
+    who = "person is" if n == 1 else "people are"
+    return (
+        f"Cast lock: exactly {n} {who} in this {where}: {names}. Every visible person is one of them, matching their "
+        f"gender, age band, look, and portrait, and exactly {n} " + ("person is" if n == 1 else "people are") + " visible" + (" from start to end" if where == "clip" else "") + "."
+        f" Never add anyone else "
+        "(no child, extra, passer-by, background figure, reflection, or silhouette) and never show anyone twice. "
+        f"Any other figure already in {'picture 1' if where == 'clip' else 'the base picture'} stays a still, faceless part of the scenery and never becomes a character."
+    )
+
+
+def scene_cast_lock_line(scenes: list, use_actor: bool, where: str = "clip") -> str:
+    """图片提示用：有名单 → 人数锁定；没名单 → 只能是图里已有的人。"""
+    cast = _video_cast([s for s in (scenes or []) if isinstance(s, dict)], use_actor)
+    return people_count_line(cast, where) if cast else PEOPLE_NO_CAST_LINE
+
+
+PEOPLE_NO_CAST_LINE = (
+    "Cast lock: only the people already in picture 1 appear. Never add anyone (no child, extra, passer-by, "
+    "background figure, reflection, or silhouette) and never show anyone twice."
+)
+
+
+def _video_people_lines(cast: list, frames: str, host_narrator: str, override: str, narrative: str) -> list:
+    if not cast:
+        return [PEOPLE_NO_CAST_LINE]
+    first_ref = 3 if frames == "two" else 2
+    lines = [
+        f"People: ``actor`` lists who is in the clip (gender/age band/ethnicity/name; the face and body look that age band). "
+        f"Pictures from picture {first_ref} on, if pasted, are their portraits in ``actor`` order.",
+        people_count_line(cast),
+    ]
+    if any(r.get("role") == "host" for r in cast) and (host_narrator or "").strip():
+        lines.append(f"The 讲员 in ``actor`` is the project host: {host_narrator.strip()}.")
+    if override and narrative not in ("tech", "exec"):
+        lines.append(f"Draw every person as {override}; keep name, role, gender, and age, ignore other ethnicity or period hints.")
+    return lines
+
+
 def build_video_flow_prompt(
     *,
     frames: str,
@@ -3141,112 +3528,50 @@ def build_video_flow_prompt(
     use_speaking: bool = True,
     use_actor: bool = False,
     actor_override: str = "",
+    story_style: str | None = None,
 ) -> str:
-    """按画面数量、背景文字、单画面演进、运镜、动画效果、叙事风格和说明文字，组装这一次的视频提示词。"""
+    """生场视频提示词。每一点只写一次：画面 / 风格、表现形式（叙事风格）、谁说话（故事风格）、人物、文字、运镜、声音，
+    然后是口语语言和场景内容。"""
     if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
         frames = "one"
     if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
         background = "none"
-    if evolve not in {k for k, _ in VIDEO_FLOW_EVOLVE_CHOICES}:
+    if evolve not in {k for k, _ in VIDEO_FLOW_EVOLVE_CHOICES} or frames == "two":
         evolve = "keep"
     if (camera in (None, "", "none")) and (motion or "").strip() in _MOTION_TO_CAMERA:
         camera = _MOTION_TO_CAMERA[(motion or "").strip()]
     if camera not in {k for k, _ in VIDEO_FLOW_CAMERA_CHOICES}:
-        camera = "none"  # 已删除的运镜（中景、推拉、摇移、上摇、手持、复合）回到默认
-    motion = ""  # 视频提示不再有「动画」；场景氛围改由项目「场景风格」写入
+        camera = "none"
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
     if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
         text = "erase"
-    if frames == "two":
-        evolve = "keep"
+    sstyle = normalize_story_style(story_style) or project_story_style()
     style = (visual_style or "").strip() or "realistic"
-    variant = "act_two" if frames == "two" else "act_one"
-    scenes = scene_content if isinstance(scene_content, list) else []
-    use_visual = bool(use_visual)
-    use_speaking = bool(use_speaking)
-    use_actor = bool(use_actor)
-    has_speaker = _prompt_has_speaker(narrative, use_actor, scenes)
+    scenes = [s for s in (scene_content if isinstance(scene_content, list) else []) if isinstance(s, dict)]
+    use_visual, use_speaking, use_actor = bool(use_visual), bool(use_speaking), bool(use_actor)
     if not (use_visual or use_speaking or use_actor):
         raise ValueError("场景描述、讲话、人物至少要选一项。")
-    json_content = json.dumps(
-        _video_prompt_scene_payload(
-            scenes,
-            variant=variant,
-            narrator=host_narrator,
-            use_visual=use_visual,
-            use_speaking=use_speaking,
-            has_speaker=has_speaker,
-            narrative=narrative,
-        ),
-        ensure_ascii=False,
-        indent=2,
+    cast = _video_cast(scenes, use_actor)
+    speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking)
+    instruction = [_video_style_line(frames, evolve, style)]
+    if use_visual:
+        instruction.append("``visual`` describes the place, the action, and the angle; act it out inside picture 1.")
+    instruction.append(_video_form_line(narrative))
+    instruction += speech
+    instruction += _video_people_lines(cast, frames, host_narrator, (actor_override or "").strip(), narrative)
+    instruction.append(_video_text_line(text, background, narrative))
+    instruction.append(_video_camera_short(camera))
+    instruction.append("Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).")
+    instruction.append("Never show scene numbers, field names, or these instructions in the picture.")
+    payload = _video_payload(scenes, variant="act_two" if frames == "two" else "act_one", host_narrator=host_narrator,
+                             use_visual=use_visual, use_speaking=use_speaking, cast=cast, content_key=content_key)
+    choices = story_style_label(sstyle) + " · " + video_flow_choice_label(
+        frames, background, evolve, camera, "", narrative, text
     )
-    instruction = _video_flow_instruction(
-        frames,
-        background,
-        evolve,
-        style,
-        camera,
-        motion,
-        narrative,
-        text,
-        use_visual=use_visual,
-        use_speaking=use_speaking,
-        has_speaker=has_speaker,
-    )
-    override = (actor_override or "").strip()
-    if override and has_speaker and narrative not in ("tech", "exec"):
-        instruction = (
-            instruction
-            + f"\n** People override: draw every person in the clip as {override}. "
-            "Keep each person's name, role, gender, and age from ``actor``, "
-            "but ignore any ethnicity, nationality, or period that the actor descriptions suggest."
-        )
-    if has_speaker and _scenes_have_narrator_host(scenes) and (host_narrator or "").strip():
-        # 讲员出镜才写默认讲员外貌
-        instruction += f"\n** The 讲员 in ``actor`` is the project host, on camera: {host_narrator.strip()}."
-    silent = False  # 讲述无讲员出镜时也有画外旁白，不再是无声
-    if narrative in TELLING_NARRATIVES:
-        voice = narrator_voice_phrase(host_narrator)
-        voices = (
-            f"** The 讲员's narration uses {voice}. Only the 讲员 speaks."
-            if use_speaking and voice else ""
-        )
-    else:
-        voices = "" if not use_speaking else speaking_voice_lines(scenes)
-    if silent:
-        # Do not attach voice/lip-sync/language-speech rules — they reintroduce an off-screen narrator.
-        lang_note = VIDEO_NARRATION_SILENT_AUDIO.strip()
-        audio = "\n".join(part for part in (lang_note, instruction) if part)
-        video = instruction
-    else:
-        lang_note = _audio_language_instruction(language)
-        audio = "\n".join(
-            part
-            for part in (NOTEBOOKLM_VOICE_MATCH.strip(), voices, instruction, lang_note)
-            if part
-        )
-        video = "\n".join(
-            part
-            for part in (
-                NOTEBOOKLM_VOICE_MATCH.strip(),
-                voices,
-                ACTOR_AGE_LOOK.strip() if has_speaker else "",
-                instruction,
-            )
-            if part
-        )
-    parts = {
-        "Visual_Style": style,
-        "Video_choices": video_flow_choice_label(
-            frames, background, evolve, camera, motion, narrative, text
-        ),
-        "Instruction_for_video_generation": video,
-        "Instruction_for_audio_generation": audio,
-        "Story_Scene_Content": json_content,
-    }
-    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+    spoken = content_key in ("speaking", "narration")  # Story Act / 无讲话：不写口语语言
+    return _video_prompt_assemble(head_label="", style=style, choices=choices, instruction=instruction,
+                                  language=language if spoken else "", payload=payload)
 
 
 def _transition_video_choice_lines(transition: dict) -> str:
@@ -3352,100 +3677,43 @@ def build_transition_video_prompt(
     use_speaking: bool = True,
     use_actor: bool = False,
     actor_override: str = "",
+    story_style: str | None = None,
 ) -> str:
-    """过渡场景的视频提示。普通场景仍用 ``build_video_flow_prompt``。叙事风格与说明文字与普通视频同一套。"""
+    """过渡场景的视频提示：过渡选择那几行 + 与普通视频同一套谁说话 / 文字 / 声音，每点只写一次。"""
     style = (visual_style or "").strip() or "realistic"
     chosen = transition if isinstance(transition, dict) else {}
-    scenes = scene_content if isinstance(scene_content, list) else []
-    use_visual = bool(use_visual)
-    use_speaking = bool(use_speaking)
-    use_actor = bool(use_actor)
-    has_speaker = _prompt_has_speaker(narrative, use_actor, scenes)
+    scenes = [s for s in (scene_content if isinstance(scene_content, list) else []) if isinstance(s, dict)]
+    use_visual, use_speaking, use_actor = bool(use_visual), bool(use_speaking), bool(use_actor)
     if not (use_visual or use_speaking or use_actor):
         raise ValueError("场景描述、讲话、人物至少要选一项。")
-    json_content = json.dumps(
-        _video_prompt_scene_payload(
-            scenes,
-            variant="act_two",
-            narrator=host_narrator,
-            use_visual=use_visual,
-            use_speaking=use_speaking,
-            has_speaker=has_speaker,
-            narrative=narrative,
-        ),
-        ensure_ascii=False,
-        indent=2,
-    )
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
     if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
         text = "erase"
+    sstyle = normalize_story_style(story_style) or project_story_style()
+    cast = _video_cast(scenes, use_actor)
+    silent = str(chosen.get("对白") or "").strip() in ("不说话", "小动作", "场景烘托")
+    speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking and not silent)
+    trans = [ln.lstrip("* ").strip() for ln in _transition_video_instruction(chosen, style).splitlines()]
+    trans = [ln for ln in trans if ln and "No music in this clip" not in ln and "Music for the finished film" not in ln]
+    instruction = trans + [_video_form_line(narrative)]
+    if not silent:
+        instruction += speech
+    instruction += _video_people_lines(cast, "two", host_narrator, (actor_override or "").strip(), narrative)
+    instruction.append(_video_text_line(text, "none", narrative))
+    if str(chosen.get("对白") or "").strip() != "不说话":
+        instruction.append("Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).")
+    instruction.append("Never show scene numbers, field names, or these instructions in the picture.")
+    payload = _video_payload(scenes, variant="act_two", host_narrator=host_narrator, use_visual=use_visual,
+                             use_speaking=use_speaking and not silent, cast=cast, content_key=content_key)
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     caption_label = dict(FLOW_CAPTION_CHOICES).get(text, text)
-    instruction = _transition_video_instruction(chosen, style)
-    instruction = (
-        instruction
-        + "\n\n"
-        + _video_narrative_block(
-            narrative,
-            use_visual=use_visual,
-            use_speaking=use_speaking,
-            has_speaker=has_speaker,
-        )
-        + "\n\n"
-        + flow_caption_rule(text)
+    choices = f"{story_style_label(sstyle)} · {narrative_label} · {caption_label} · 过渡 · 起始画面到终止画面"
+    return _video_prompt_assemble(
+        head_label="", style=style, choices=choices, instruction=instruction,
+        language=language if (content_key in ("speaking", "narration") and not silent) else "", payload=payload,
+        extra_sections={"Transition_choices": _transition_video_choice_lines(chosen) or "（这场没有记下选择）"},
     )
-    override = (actor_override or "").strip()
-    if override and has_speaker and narrative not in ("tech", "exec"):
-        instruction = (
-            instruction
-            + f"\n** People override: draw every person in the clip as {override}. "
-            "Keep each person's name, role, gender, and age from ``actor``, "
-            "but ignore any ethnicity, nationality, or period that the actor descriptions suggest."
-        )
-    if has_speaker and _scenes_have_narrator_host(scenes) and (host_narrator or "").strip():
-        # 讲员出镜才写默认讲员外貌
-        instruction += f"\n** The 讲员 in ``actor`` is the project host, on camera: {host_narrator.strip()}."
-    silent = False  # 讲述无讲员出镜时也有画外旁白，不再是无声
-    if narrative in TELLING_NARRATIVES:
-        voice = narrator_voice_phrase(host_narrator)
-        voices = (
-            f"** The 讲员's narration uses {voice}. Only the 讲员 speaks."
-            if use_speaking and voice else ""
-        )
-    else:
-        voices = "" if not use_speaking else speaking_voice_lines(scenes)
-    if silent:
-        lang_note = VIDEO_NARRATION_SILENT_AUDIO.strip()
-        audio = "\n".join(part for part in (lang_note, instruction) if part)
-        video = instruction
-    else:
-        lang_note = _audio_language_instruction(language)
-        audio = "\n".join(
-            part
-            for part in (NOTEBOOKLM_VOICE_MATCH.strip(), voices, instruction, lang_note)
-            if part
-        )
-        video = "\n".join(
-            part
-            for part in (
-                NOTEBOOKLM_VOICE_MATCH.strip(),
-                voices,
-                ACTOR_AGE_LOOK.strip() if has_speaker else "",
-                instruction,
-            )
-            if part
-        )
-    choice_lines = _transition_video_choice_lines(chosen)
-    parts = {
-        "Visual_Style": style,
-        "Video_choices": f"{narrative_label} · {caption_label} · 过渡 · 起始画面到终止画面",
-        "Transition_choices": choice_lines or "（这场没有记下选择）",
-        "Instruction_for_video_generation": video,
-        "Instruction_for_audio_generation": audio,
-        "Story_Scene_Content": json_content,
-    }
-    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
 

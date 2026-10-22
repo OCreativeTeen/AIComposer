@@ -1,4 +1,4 @@
-"""LayoutMixin: methods moved verbatim from GUI_wf.py:WorkflowGUI."""
+﻿"""LayoutMixin: methods moved verbatim from GUI_wf.py:WorkflowGUI."""
 import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.scrolledtext as scrolledtext
@@ -17,6 +17,13 @@ class LayoutMixin:
         row.pack(fill=tk.X)
 
         ttk.Button(row, text="SUNO", command=self._open_suno_gui).pack(side=tk.RIGHT, padx=(4, 0))
+
+        def _open_yt_download():
+            from utility.youtube_download import open_youtube_download_dialog
+
+            open_youtube_download_dialog(self.root)
+
+        ttk.Button(row, text="YT下载", command=_open_yt_download).pack(side=tk.RIGHT, padx=(4, 0))
         self.btn_clean = ttk.Button(row, text="清理", command=self._open_clean_menu)
         self.btn_clean.pack(side=tk.RIGHT, padx=(4, 0))
         self.btn_finalize = ttk.Button(row, text="成片", command=self._open_finalize_menu)
@@ -503,6 +510,15 @@ class LayoutMixin:
         )
         self.scene_style.set(config_prompt.SCENE_STYLE_LABELS[0])
         self.scene_style.pack(side=tk.LEFT, padx=(0, 0))
+        # 故事风格（Series · Podcast / Counselor / Story Speak / Story Act）：决定生场视频提示里谁说话、讲员出不出镜。
+        self.story_style = ttk.Combobox(
+            look_row2,
+            width=18,
+            values=list(config_prompt.STORY_STYLE_LABELS),
+            state="readonly",
+        )
+        self.story_style.set(config_prompt.STORY_STYLE_LABELS[0])
+        self.story_style.pack(side=tk.LEFT, padx=(4, 0))
 
         episode_gap = ttk.Frame(right_panel, height=24)
         episode_gap.pack(side=tk.TOP)
@@ -510,7 +526,8 @@ class LayoutMixin:
         # 标题旁边放“第几集”和上一集 / 下一集按钮。
         episode_title = ttk.Frame(right_panel)
         ttk.Label(episode_title, text="本集内容").pack(side=tk.LEFT)
-        self.episode_label = ttk.Label(episode_title, text="第 1 集")
+        # 固定宽度（够放「第12集（#15）」），切换集时 ⏪⏩ 不左右移动。
+        self.episode_label = ttk.Label(episode_title, text="第 1 集", width=13, anchor=tk.W)
         self.episode_label.pack(side=tk.LEFT, padx=(8, 4))
         # 单击 = 本集第一场 / 最后一场；双击 = 上一集 / 下一集的第一场（没有 command，免得点一下触发两次）。
         ep_prev_btn = ttk.Button(episode_title, text="⏪", width=3)

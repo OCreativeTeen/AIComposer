@@ -238,7 +238,9 @@ def program_mode_key(mode_label: str) -> str:
         return "podcast"
     if "counselor" in low:
         return "counselor"
-    if "story only" in low or "story_only" in low:
+    if "story act" in low or "story_act" in low:
+        return "story_act"
+    if "story only" in low or "story_only" in low or "story speak" in low or "story_speak" in low:
         return "story_only"
     return ""
 
@@ -246,7 +248,7 @@ def program_mode_key(mode_label: str) -> str:
 def build_program_cast_block(video_detail, mode_label: str = "", output: str = "slides",
                              cast_source: str = "panel") -> str:
     """NotebookLM 生成节目(幻灯片/信息图/音频概述/视频概述)用:人物名单 + 场景生成方案对应的人物规则。
-    跟场景生成里 Series · Podcast / Counselor / Story Only 的规则保持一致。
+    跟场景生成里 Series · Podcast / Counselor / Story Speak / Story Act 的规则保持一致。
 
     ``cast_source``:"scenes" = content.pdf 是场景内容且场景里写了 actor,以场景里的人物为准(预览窗名单只补空);
     "panel"(默认) = 分析内容 / 材料 PDF / 场景里没有人物,以预览窗人物面板为准。"""
@@ -303,6 +305,12 @@ def build_program_cast_block(video_detail, mode_label: str = "", output: str = "
             "    ** The 讲员 is the counselor and the main voice of the program.",
             "    ** The other 人物 are the people of the story. They are performers, not guests: they act the story "
             "in its own place, through action, emotion, exclamation and short exchanges, while the counselor explains.",
+        ]
+    elif mode == "story_act":
+        lines += [
+            "    ** STYLE: Story act, like a silent film. The 人物 act the story out through action, behavior and "
+            "expression. Nobody speaks: no dialogue, no narrator.",
+            "    ** The 讲员, if listed, appears at most silently at the start and end.",
         ]
     elif mode == "story_only":
         lines += [
