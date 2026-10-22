@@ -199,12 +199,12 @@ pick next          # 下一条
 
 | # | 邮箱 | `--profile-directory` |
 |---|------|------------------------|
-| 1 | `ocreativeteen@gmail.com` | `Profile 2` |
-| 2 | `creative4teen@gmail.com` | `Profile 3` |
-| 3 | `triumphdt777@gmail.com` | `Default` |
-| 4 | `myhomefun@gmail.com` | `Profile 4` |
-| 5 | `mindstoryroom@gmail.com` | `Profile 5` |
-| 6 | `bjtombj2023@gmail.com` | `Profile 6` |
+| 1 | `account5@example.com` | `Profile 2` |
+| 2 | `account2@example.com` | `Profile 3` |
+| 3 | `account6@example.com` | `Default` |
+| 4 | `account4@example.com` | `Profile 4` |
+| 5 | `account3@example.com` | `Profile 5` |
+| 6 | `account1@example.com` | `Profile 6` |
 
 启动示例（profile 6）：
 

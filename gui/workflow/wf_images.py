@@ -32,7 +32,7 @@ class ImagesMixin:
         if not scene:
             return "break"
 
-        content = config.chinese_convert((scene.get("speaking") or ""), "zh")
+        content = config.chinese_convert((scene.get("speaking") or scene.get("story_content") or ""), "zh")
 
         menu_x = menu_y = None
         if event is not None:

@@ -175,3 +175,20 @@ cython_debug/
 
 config/
 _soul_samples/
+
+# --- local clutter / secrets (cleanup 2026-10-21) ---
+/_*.txt
+/_patch_*.py
+*.bak
+*.bak_portraits_*
+*.lnk
+@AutomationLog.txt
+cli/*.png
+btn_crops/
+_backup/
+*.patch
+*.diff
+.venv/
+client_secret*.json
+.env.*
+!.env.example

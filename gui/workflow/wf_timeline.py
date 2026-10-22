@@ -560,7 +560,7 @@ class TimelineMixin:
         ]
         self._speech_sections = sections
         self._write_speaking_sections(scene, sections)
-        self._put_speaking_text(scene.get("speaking") or "")
+        self._put_speaking_text(project_manager.speaking_box_text(scene))
         self.workflow.save_scenes_to_json()
         self._draw_speech_span_bar()
         show_auto_close_popup(self.root, "拆开", f"这一段已分成第 {speaker} 个人的两段。")

@@ -9,9 +9,9 @@ the way the user does by hand:
 
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
         --remote-debugging-port=9222
-        --user-data-dir="C:\\Users\\wenju\\AppData\\Local\\HermesChromeCDP"
+        --user-data-dir="%LOCALAPPDATA%\\HermesChromeCDP"
 
-That user-data-dir already holds the profile logged in as bjtombj2023@gmail.com;
+That user-data-dir already holds the logged-in Grok profile (see CHROME_PROFILES_JSON in .env);
 we reuse it as is and never create or switch profiles here.
 
 Everything here is blocking; call it from a worker thread, never the Tk thread.
@@ -32,9 +32,9 @@ import config
 
 CDP_PORT = int(getattr(config, "GROK_CDP_PORT", 9222) or 9222)
 CHROME_EXE = (getattr(config, "CHROME_EXE", "") or "").strip() or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-# Profile logged in as bjtombj2023@gmail.com lives in this user-data-dir (HermesChromeCDP).
+# The logged-in Grok profile lives in this user-data-dir (HermesChromeCDP).
 CHROME_USER_DATA_DIR = (getattr(config, "CHROME_CDP_USER_DATA_DIR", "") or "").strip() or os.path.join(
-    os.environ.get("LOCALAPPDATA") or r"C:\Users\wenju\AppData\Local", "HermesChromeCDP"
+    os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local"), "HermesChromeCDP"
 )
 CHROME_LAUNCH_WAIT_S = 30.0
 

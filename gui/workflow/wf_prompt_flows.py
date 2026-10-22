@@ -124,7 +124,9 @@ class PromptFlowsMixin:
 
         手动窗口只能一场一场贴，所以批量直接调 CLI自动 用的同一个 make_image。
         """
+        import queue
         import threading
+        import time
         from tkinter import ttk
 
         if not jobs:
@@ -156,52 +158,206 @@ class PromptFlowsMixin:
                 pass
 
         updated: list = []
+        rebuilt: list = []
+        clip_q: queue.Queue = queue.Queue()
 
         def apply(scene, img, label):
+            """UI 线程：写回这一场的图，有 clip 音频就马上排队重做这一场的静态 clip 视频。"""
             try:
                 self._replace_current_clip_image_from_pil(img, scene=scene, defer_video=True)
                 done[0] += 1
                 updated.append(scene)
             except Exception as exc:  # noqa: BLE001
                 failed.append(f"{label}：写回失败 {exc}")
+                return
+            if self._stale_still_clip_scenes([scene]):
+                clip_q.put((scene, label))
 
-        def worker():
+        def clip_worker():
+            """每换一张图就重做那一场的静态 clip 视频（一次一场，和生场视频共用忙碌标记）。"""
+            while getattr(self, "_clip_video_worker_busy", False):
+                time.sleep(1.0)  # 等前一个生场视频任务
+            self._clip_video_worker_busy = True
+            try:
+                while True:
+                    item = clip_q.get()
+                    if item is None:
+                        break
+                    scene, label = item
+                    try:
+                        out = self._make_still_clip_video(scene)
+                    except Exception as exc:  # noqa: BLE001
+                        out = f"error {exc}"
+                    if out == "ok":
+                        rebuilt.append(scene)
+                    else:
+                        failed.append(f"{label}：静态 clip 视频没有重做（{out}）")
+            finally:
+                ui(finish)
+
+        def scene_status(head):
+            def status(msg, h=head):
+                ui(lambda: var.set(f"{h}\n{msg}"))
+            return status
+
+        def per_call_worker():
+            """Grok（或旧方式）：每一场单独调 make_image。"""
             if use_gemini:
                 from utility import gemini_cdp as engine
             else:
                 from utility import grok_cdp as engine
             n = len(jobs)
-            for k, (scene, prompt, images) in enumerate(jobs, 1):
+            for k, job in enumerate(jobs, 1):
+                scene, prompt, images = job[0], job[1], job[2]
                 if stop["flag"]:
                     failed.append(f"其余 {n - k + 1} 场：已停止")
                     break
                 label = in_episode_label(scene, k)
-                head = f"正在处理 {k}/{n}（本集{label}）"
+                head = f"正在处理第 {k}/{n} 张（本集{label}）"
                 ui(lambda h=head: var.set(h))
-
-                def status(msg, h=head):
-                    ui(lambda: var.set(f"{h}\n{msg}"))
-
                 try:
-                    img = engine.make_image(prompt, list(images), status=status)
+                    img = engine.make_image(prompt, list(images), status=scene_status(head))
                     if img is None or not hasattr(img, "save"):
                         raise RuntimeError("没有拿到图")
                     ui(lambda s=scene, i=img, l=label: apply(s, i, l))
                 except Exception as exc:  # noqa: BLE001
                     failed.append(f"{label}：{exc}")
-            ui(finish)
+
+        def gemini_session_worker():
+            """Gemini：整批同一个对话，没有单独的开场消息。
+
+            每个对话的第一条 = 基础图（Image 1）+ 人物形象图（Image 2..，按名字标好，最多共 5 张），
+            提示词里说明形象图要记住，后面几场也用。之后每场只发基础图（加上这一场要用、但还没发过的形象图）。
+            出错：开新对话，这一场按「第一条」的方式重发（基础图 + 形象图）。
+            """
+            from utility import gemini_cdp
+
+            n = len(jobs)
+            cap = gemini_cdp.MAX_IMAGES
+            info, order = {}, []
+            for job in jobs:
+                meta = job[3] if len(job) > 3 and isinstance(job[3], dict) else {}
+                for r in meta.get("actors") or []:
+                    p = r.get("image") if isinstance(r, dict) else ""
+                    if p and os.path.isfile(p) and p not in info:
+                        info[p] = r
+                        order.append(p)
+            sent: set = set()  # 当前对话里已经发过的形象图
+
+            def who(r):
+                return f"{r.get('label') or '人物'} {r.get('name') or ''}".strip()
+
+            def scene_rows(job):
+                meta = job[3] if len(job) > 3 and isinstance(job[3], dict) else {}
+                return [r for r in (meta.get("actors") or []) if isinstance(r, dict) and (r.get("name") or "").strip()]
+
+            def build(k, job):
+                """返回 (提示词, 要附的图)。"""
+                meta = job[3] if len(job) > 3 and isinstance(job[3], dict) else {}
+                rows = scene_rows(job)
+                base = [p for p in list(job[2])[:1] if p]
+                first = not sent
+                need = [r.get("image") for r in rows if r.get("image") in info and r.get("image") not in sent]
+                attach = []
+                for p in need + (order if first else []):  # 第一条：这一场要的先放，再放其余形象图
+                    if p not in attach and len(base) + len(attach) < cap:
+                        attach.append(p)
+                parts = [meta["aspect"], ""] if meta.get("aspect") else []
+                parts.append(f"Scene {k} of {n}. Image 1 = the base picture of this scene. Edit only Image 1.")
+                if attach:
+                    parts.append("The other attached images are character portraits:")
+                    for i, p in enumerate(attach, 2):
+                        parts.append(f"- Image {i} = portrait of {who(info[p])}")
+                    parts.append("Remember these portraits by name: the next scenes in this chat will only send the scene "
+                                 "picture and refer to the characters by name.")
+                if sent:
+                    parts.append("Earlier images in this chat are not part of this request, except the character portraits you "
+                                 "were given before (remember them by name).")
+                if rows:
+                    parts.append("People in this scene:")
+                    for r in rows:
+                        p = r.get("image") or ""
+                        if p in attach:
+                            parts.append(f"- {who(r)}: use the portrait Image {attach.index(p) + 2}")
+                        elif p in sent:
+                            parts.append(f"- {who(r)}: use the portrait of {who(r)} sent earlier in this chat")
+                        else:
+                            parts.append(f"- {who(r)}: no portrait; draw from the name and description, keep the look consistent")
+                    parts.append(
+                        "Replace the people in Image 1 with these characters: match each person by gender, age and role, "
+                        "then redraw face, hair and clothing like their portrait. Keep pose, position, composition and lighting. "
+                        "Never carry over a portrait's art style, background or lighting. Do not add or remove people."
+                    )
+                else:
+                    parts.append("No cast is listed for this scene: do not put any of the portraits into it.")
+                parts += ["Output exactly one image.", "", job[1]]
+                return "\n".join(parts), base + attach
+
+            try:
+                with gemini_cdp.GeminiSession(status=scene_status("开新的 Gemini 对话")) as gs:
+                    for k, job in enumerate(jobs, 1):
+                        scene = job[0]
+                        if stop["flag"]:
+                            failed.append(f"其余 {n - k + 1} 场：已停止")
+                            break
+                        label = in_episode_label(scene, k)
+                        head = f"正在处理第 {k}/{n} 张（本集{label}，同一个 Gemini 对话）"
+                        ui(lambda h=head: var.set(h))
+                        gs.set_status(scene_status(head))
+                        for attempt in (1, 2):
+                            prompt, files = build(k, job)
+                            try:
+                                img = gs.make_image(prompt, files, reject_paths=order)
+                                if img is None or not hasattr(img, "save"):
+                                    raise RuntimeError("没有拿到图")
+                                sent.update(p for p in files[1:] if p in info)
+                                ui(lambda s=scene, i=img, l=label: apply(s, i, l))
+                                break
+                            except Exception as exc:  # noqa: BLE001
+                                if attempt == 2:
+                                    failed.append(f"{label}：重试后仍失败 · {exc}")
+                                    break
+                                print(f"图片修改：{label} 出错，开新对话（基础图 + 形象图）再试：{exc}")
+                                gs.set_status(scene_status(f"{head}\n出错（{str(exc)[:60]}），开新对话重发基础图 + 人物形象图"))
+                                try:
+                                    gs.restart()
+                                    sent.clear()
+                                except Exception as exc2:  # noqa: BLE001
+                                    failed.append(f"{label}：第1次失败 · {exc}；开新对话也失败 · {exc2}")
+                                    break
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"开新的 Gemini 对话（连接 / 登录 / 新对话）失败：{exc}")
+
+        def worker():
+            try:
+                if use_gemini:
+                    gemini_session_worker()
+                else:
+                    per_call_worker()
+            finally:
+                # 经 UI 线程排在最后一个 apply 之后：图都写回、clip 队列清空后才 finish
+                ui(lambda: clip_q.put(None))
 
         def finish():
+            self._clip_video_worker_busy = False
             try:
                 win.destroy()
             except tk.TclError:
                 pass
-            note = f"图片修改完成（从当前场到本集结束）：{done[0]}/{len(jobs)} 场已换图。"
+            try:
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+            except Exception as exc:  # noqa: BLE001
+                print(f"图片修改：刷新失败 {exc}")
+            note = (f"图片修改完成（从当前场到本集结束）：{done[0]}/{len(jobs)} 场已换图，"
+                    f"{len(rebuilt)} 场已重做静态 clip 视频。")
             if failed:
                 note += "\n\n没处理 / 失败：\n" + "\n".join(failed[:30])
             messagebox.showinfo("图片修改", note, parent=self.root)
-            self._rebuild_still_clips_after_batch(updated, jobs)
+            # 最后再查一遍：这一段里 clip 视频还比图旧的场景（以前漏做的）一起重做。
+            self._rebuild_still_clips_after_batch([], jobs)
 
+        threading.Thread(target=clip_worker, daemon=True).start()
         threading.Thread(target=worker, daemon=True).start()
 
     def _stale_still_clip_scenes(self, scenes: list) -> list:
@@ -223,7 +379,7 @@ class PromptFlowsMixin:
 
     def _rebuild_still_clips_after_batch(self, updated: list, jobs: list, tries: int = 0) -> None:
         """批量换图之后：换了图的场景，加上这一段里 clip 视频比图旧的场景（修复以前漏做的），一起重做静态 clip 视频。"""
-        pool = [sc for sc, _p, _i in jobs]
+        pool = [job[0] for job in jobs]
         targets = list(updated)
         for s in self._stale_still_clip_scenes(pool):
             if all(s is not t for t in targets):
@@ -469,7 +625,7 @@ class PromptFlowsMixin:
             import os
             from pathlib import Path
 
-            working = r"D:\AI_MEDIA\working"
+            working = config.WORKING_DIR
 
             def _open_file(path: str) -> None:
                 """Studio 下载结果移到 D:\\AI_MEDIA\\working（同名覆盖）。PDF 走拆页预览 / 分配；其余直接打开。"""

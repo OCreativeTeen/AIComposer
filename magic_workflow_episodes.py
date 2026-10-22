@@ -11,7 +11,7 @@ from datetime import datetime
 import config
 
 _PAGE_EXTS = (".webp", ".jpg", ".jpeg", ".png")
-EPISODE_TRASH_ROOT = r"D:\AI_MEDIA\working\_trash"
+EPISODE_TRASH_ROOT = os.path.join(config.WORKING_DIR, "_trash")
 _GROUP_KEYS = ("group", "group_page", "group_pdf")
 
 

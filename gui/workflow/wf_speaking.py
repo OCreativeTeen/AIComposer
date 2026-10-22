@@ -312,7 +312,7 @@ class SpeakingMixin:
         sections[hit:hit + 1] = [first, second]
         self._speech_sections = sections
         self._write_speaking_sections(scene, sections)
-        self._put_speaking_text(scene.get("speaking") or "")
+        self._put_speaking_text(project_manager.speaking_box_text(scene))
         self.workflow.save_scenes_to_json()
         self._draw_speech_span_bar()
         return "break"
@@ -338,7 +338,7 @@ class SpeakingMixin:
         widget = getattr(self, "scene_speaking", None)
         if widget is not None:
             try:
-                scene["speaking"] = widget.get("1.0", tk.END).strip()
+                project_manager.store_speaking_box_text(scene, widget.get("1.0", tk.END))
             except tk.TclError:
                 pass
         text = (scene.get("speaking") or "").strip()

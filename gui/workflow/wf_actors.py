@@ -564,7 +564,7 @@ class ActorsMixin:
         if not isinstance(current, dict):
             return
         if hasattr(self, "scene_speaking"):
-            current["speaking"] = self.scene_speaking.get("1.0", tk.END).strip()
+            project_manager.store_speaking_box_text(current, self.scene_speaking.get("1.0", tk.END))
         if scope == "episode":
             targets = self.workflow.scenes_in_story(current) or [current]
         elif scope == "all":
@@ -591,7 +591,7 @@ class ActorsMixin:
             self._scene_widgets_loading = True
             try:
                 self.scene_speaking.delete("1.0", tk.END)
-                self.scene_speaking.insert("1.0", current.get("speaking") or "")
+                self.scene_speaking.insert("1.0", project_manager.speaking_box_text(current))
             finally:
                 self._scene_widgets_loading = loading
         self._set_actor_text(current.get("actor") or "")
@@ -1083,7 +1083,7 @@ class ActorsMixin:
     def _sync_speaking_widget_to_scene(self, scene) -> None:
         if isinstance(scene, dict) and hasattr(self, "scene_speaking"):
             try:
-                scene["speaking"] = self.scene_speaking.get("1.0", tk.END).strip()
+                project_manager.store_speaking_box_text(scene, self.scene_speaking.get("1.0", tk.END))
             except tk.TclError:
                 pass
 
@@ -1093,9 +1093,10 @@ class ActorsMixin:
         loading = getattr(self, "_scene_widgets_loading", False)
         self._scene_widgets_loading = True
         try:
-            if self.scene_speaking.get("1.0", tk.END).strip() != (scene.get("speaking") or "").strip():
+            shown = project_manager.speaking_box_text(scene)
+            if self.scene_speaking.get("1.0", tk.END).strip() != shown.strip():
                 self.scene_speaking.delete("1.0", tk.END)
-                self.scene_speaking.insert("1.0", scene.get("speaking") or "")
+                self.scene_speaking.insert("1.0", shown)
         except tk.TclError:
             pass
         finally:

@@ -19,24 +19,25 @@ import subprocess
 
 # DEPRECATED: I2V / 2I2V / S2V / WS2V / AI2V / INTP 和下面的 enhance_clip 已不从界面调用。
 # 代码留在这里，免得以后想接回主动画、次动画、增主轨时找不到。
+# 地址都来自 config「服务地址」段（.env 可改）；10.0.0.x 是不可达的占位地址。
 GEN_CONFIG = {
         #"Story":{"url": "http://10.0.0.179:8188", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\nano_banana.json"},
         #"Story":{"url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0},
-        "Story":{"url": "http://10.0.0.x:8188",                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow.json"},
-        "Host": {"url": "http://10.0.0.x:8188",                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow_figure.json"},
-        "SD":   {"url": "http://10.0.0.x:7860/sdapi/v1/txt2img",       "face": "sd",  "seed": 1234567890, "steps": 30,"cfg": 7.0},
+        "Story":{"url": config.COMFYUI_URL,                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":os.path.join(config.COMFYUI_WORKFLOW_DIR, "flux_workflow.json")},
+        "Host": {"url": config.COMFYUI_URL,                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":os.path.join(config.COMFYUI_WORKFLOW_DIR, "flux_workflow_figure.json")},
+        "SD":   {"url": config.SD_WEBUI_URL + "/sdapi/v1/txt2img",       "face": "sd",  "seed": 1234567890, "steps": 30,"cfg": 7.0},
 
-        "I2V":    {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":16, "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
-        "2I2V":   {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+        "I2V":    {"url": config.WAN_I2V_URL + "/wan/image2video",    "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":16, "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+        "2I2V":   {"url": config.WAN_I2V_URL + "/wan/imagesss2video", "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
 
         #"HS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":120, "image_width":922, "image_height":518},
-        "HS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":196, "image_width":720, "image_height":405},
-        "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
-        "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":335, "image_width":550, "image_height":310},
-        "WS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":468, "image_height":480},
+        "HS2V":   {"url": config.WAN_S2V_URL + "/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":196, "image_width":720, "image_height":405},
+        "S2V":    {"url": config.WAN_S2V_URL + "/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
+        "FS2V":   {"url": config.WAN_S2V_URL + "/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":335, "image_width":550, "image_height":310},
+        "WS2V":   {"url": config.WAN_S2V_URL + "/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":468, "image_height":480},
         #"FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-        "AI2V":   {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},
-        "INTP":   {"url": "http://10.0.0.235:9001/interpolate",        "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":60, "max_frames":121, "image_width":853, "image_height":480}
+        "AI2V":   {"url": config.WAN_I2V_URL + "/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},
+        "INTP":   {"url": config.INTERP_URL + "/interpolate",        "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":60, "max_frames":121, "image_width":853, "image_height":480}
 }
 
 
@@ -602,7 +603,7 @@ class SDProcessor:
                 scene[track + "_status"] = "ENH1"
 
  
-    ENHANCE_SERVERS = ["http://10.0.0.235:5000", "http://10.0.0.235:5000",]
+    ENHANCE_SERVERS = list(config.ENHANCE_SERVERS) or ["http://10.0.0.235:5000"]
     current_enhance_server = 0
 
     def _enhance_video(self, video_path):

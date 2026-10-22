@@ -48,6 +48,20 @@ def _clean_choice(saved) -> dict:
     return choice
 
 
+def _project_video_size() -> str:
+    """项目的画面比例："1920x1080" 或 "1080x1920"（项目宽高 → story_video_size → 上次选择）。"""
+    cfg = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+    try:
+        w, h = int(cfg.get("video_width")), int(cfg.get("video_height"))
+        if w > 0 and h > 0:
+            return "1920x1080" if w >= h else "1080x1920"
+    except (TypeError, ValueError):
+        pass
+    if cfg.get("story_video_size") in ("1920x1080", "1080x1920"):
+        return cfg["story_video_size"]
+    return project_manager.video_size_key()
+
+
 def open_picture_prompt_dialog(
     parent,
     anchor,
@@ -222,8 +236,12 @@ def open_picture_prompt_dialog(
         if not isinstance(scene, dict):
             messagebox.showwarning("图片修改", "没有当前场景", parent=dlg)
             return
-        def build_request(scene: dict, quiet: bool = False):
-            """按现在的选择给这一场组提示词和图。返回 (prompt, images)；出错返回 None（quiet 时抛 ValueError）。"""
+        def build_request(scene: dict, quiet: bool = False, session: bool = False):
+            """按现在的选择给这一场组提示词和图。返回 (prompt, images, meta)；出错返回 None（quiet 时抛 ValueError）。
+
+            ``session``：Gemini 批量同一对话。人物形象图在开场时发过了，这里只发基础图，
+            提示词里不写图片序号（由批量那边按开场的序号加一段说明），比例行放在 meta["aspect"]。
+            """
             path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
             images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
             if not images and not quiet:
@@ -248,6 +266,8 @@ def open_picture_prompt_dialog(
                     sent.append(f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no")
                                 else f"（{r['label']} {r['name']} 没有形象图）")
                 print(f"图片修改：发出的图 = " + " | ".join(sent))
+            if session:
+                images = images[:1]
             try:
                 prompt = config_prompt.build_picture_flow_prompt(
                     task=task_var.get(),
@@ -264,7 +284,7 @@ def open_picture_prompt_dialog(
                     main_character=main_character or "",
                     actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
                     edit_request=fyi_now if edit_only else "",
-                    actor_images=actor_images,
+                    actor_images=[] if session else actor_images,
                     base_image=bool(path and isinstance(path, str) and os.path.isfile(path)),
                 )
             except ValueError as exc:
@@ -272,6 +292,11 @@ def open_picture_prompt_dialog(
                     raise
                 messagebox.showwarning("图片修改", str(exc), parent=dlg)
                 return None
+            if not extract:
+                # 人数锁定：防止多画出名单外的人（小孩、路人、背景人影）。
+                prompt = prompt.rstrip() + "\n\n" + config_prompt.scene_cast_lock_line(
+                    [scene], bool(actor_var.get()) and not edit_only, where="picture"
+                )
             if edit_only:
                 # 仅修改：FYI 已作为「主要修改要求」写在最前；背景条件放在后面。
                 bg = config_prompt.background_condition_block(region, era, host_narrator) if bg_include_var.get() else ""
@@ -286,7 +311,12 @@ def open_picture_prompt_dialog(
                 prompt = prepend_fyi(
                     prompt, get_fyi_text(), include=bool(fyi_include_var.get())
                 )
-            return prompt, images
+            # 出图比例放在最前面（人物提取出肖像，不加）。
+            aspect = "" if extract else config_prompt.output_aspect_line(_project_video_size())
+            if aspect and not session:
+                prompt = aspect + "\n\n" + prompt
+            meta = {"aspect": aspect, "actors": actor_images, "base": images[0] if images else ""}
+            return prompt, images, meta
 
         scope = "scene"
         batch_list, k_no, m_no = [], 0, 0
@@ -321,12 +351,12 @@ def open_picture_prompt_dialog(
                     skipped.append(f"{label}：没有图")
                     continue
                 try:
-                    req = build_request(sc, quiet=True)
+                    req = build_request(sc, quiet=True, session=(backend == "gemini"))
                 except ValueError as exc:
                     skipped.append(f"{label}：{exc}")
                     continue
                 if req:
-                    jobs.append((sc, req[0], req[1]))
+                    jobs.append((sc, req[0], req[1], req[2]))
             remember()
             dlg.destroy()
             run_batch(jobs, backend, skipped)
@@ -334,7 +364,7 @@ def open_picture_prompt_dialog(
         req = build_request(scene)
         if req is None:
             return
-        prompt, images = req
+        prompt, images = req[0], req[1]
         remember()
         dlg.destroy()
         if callable(open_manual):

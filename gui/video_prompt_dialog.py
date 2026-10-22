@@ -259,7 +259,7 @@ def open_video_prompt_dialog(
         keep_words = text_var.get() == "keep"
         for btn in bg_buttons:
             btn.configure(state=("normal" if keep_words else "disabled"))
-        go.config(text="提交")
+        go.config(text="Grok 生成")
         base = (
             "叙事风格下面的蓝字说明这次怎么讲。写进提示词的内容勾选场景描述、讲话、人物。说明文字决定字怎么处理。"
             + (
@@ -267,7 +267,7 @@ def open_video_prompt_dialog(
                 if (is_transition or two)
                 else "选「保留」时背景选项才生效。运镜选默认就不写镜头怎么动。"
             )
-            + "选好后点提交。选择会记下。"
+            + "选好后点 Grok 生成 或 Gemini 生成。选择会记下。"
         )
         hint.config(text=base)
 
@@ -275,7 +275,7 @@ def open_video_prompt_dialog(
         remember()
         dlg.destroy()
 
-    def on_go() -> None:
+    def on_go(backend: str = "grok") -> None:
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
         # 什么都没勾、但写了注意 / FYI：只按 FYI 让图动起来（同图片提示「仅修改」）。
         fyi_only = not (visual_var.get() or speaking_var.get() or actor_var.get())
@@ -351,6 +351,14 @@ def open_video_prompt_dialog(
             prompt = prepend_fyi(
                 prompt, get_fyi_text(), include=bool(fyi_include_var.get())
             )
+        # 出图比例：16:9 / 9:16（项目画面大小），提示词里没有才加在最前面。
+        from gui.picture_prompt_dialog import _project_video_size
+
+        _size = _project_video_size()
+        if "OUTPUT FORMAT" not in prompt:
+            _aspect = config_prompt.output_aspect_line(_size).replace("output image", "output video").replace("输出的图片", "输出的视频")
+            if _aspect:
+                prompt = _aspect + "\n\n" + prompt
         images = []
         missing = []
         if get_image is not None:
@@ -375,7 +383,12 @@ def open_video_prompt_dialog(
         remember()
         dlg.destroy()
         if callable(open_manual):
-            extra = {"duration": duration_var.get(), "resolution": "720p"}
+            extra = {
+                "duration": duration_var.get(),
+                "resolution": "720p",
+                "video_backend": backend,
+                "orientation": "portrait" if _size == "1080x1920" else "landscape",
+            }
             try:
                 open_manual(prompt, images, extra=extra)
             except TypeError:
@@ -428,8 +441,11 @@ def open_video_prompt_dialog(
         ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var).pack(anchor=tk.W)
     from gui.slide_prompt_dialog import big_submit_button
 
-    go = big_submit_button(dlg, actions, on_go)
+    go = big_submit_button(dlg, actions, lambda: on_go("grok"), text="Grok 生成")
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    big_submit_button(dlg, actions, lambda: on_go("gemini"), text="Gemini 生成").pack(
+        side=tk.LEFT, anchor=tk.S, padx=(8, 0)
+    )
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     text_var.trace_add("write", refresh_choices)

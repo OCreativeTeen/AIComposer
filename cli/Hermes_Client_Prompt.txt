@@ -4,7 +4,7 @@
 
 TELEGRAM ENV:
 	TELEGRAM_CLI_BOT_NAME=@StoryVideoGenerationWorkflow_bot
-	TELEGRAM_CLI_BOT_TOKEN=8981421223:AAGkHR-fZdASY89H86JyXtvIVayRjPyaJmQ
+	TELEGRAM_CLI_BOT_TOKEN=<set in .env (TELEGRAM_CLI_BOT_TOKEN)>
 	TELEGRAM_CLI_CHAT_ID=7075595427
 
 如果需要生成代码 请用这个目录：  
@@ -72,7 +72,7 @@ PRE-TASK (launch Telegram Bot):
 ### 步骤 7：触发 NotebookLM 生成 (NotebookLM Infographic Trigger)
 - **动作**：发送 `nbi 1` … `nbi 6`（按 Chrome 账号轮换）
 - **等待**：长任务（约 165 秒），直到收到 `ok [...] Nbi 1`。
-- FYI :   `nbi 1` … `nbi 6` 对应以不同 Profile 打开 HermesChromeCDP（1. `ocreativeteen@gmail.com`   2. `creative4teen@gmail.com`   3. `triumphdt777@gmail.com`   4. `myhomefun@gmail.com`   5. `mindstoryroom@gmail.com`   6. `bjtombj2023@gmail.com`）以此来突破每一个账户对 NotebookLM 使用的限制  
+- FYI :   `nbi 1` … `nbi 6` 对应以不同 Profile 打开 HermesChromeCDP（1. `account5@example.com`   2. `account2@example.com`   3. `account6@example.com`   4. `account4@example.com`   5. `account3@example.com`   6. `account1@example.com`）以此来突破每一个账户对 NotebookLM 使用的限制  
 
 ### 步骤 8：轮询检查生成状态 (Poll Infographic Status)
 - **循环动作**：

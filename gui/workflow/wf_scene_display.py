@@ -97,7 +97,7 @@ class SceneDisplayMixin:
         if wf and wf.scenes:
             scene = wf.get_scene_by_index(self.current_scene_index)
             if isinstance(scene, dict):
-                text = wf.episode_label(wf.scene_group(scene))
+                text = wf.episode_label(wf.scene_group(scene), always_id=True)
         label.config(text=text)
 
     def _update_scene_display_impl(self):
@@ -130,6 +130,8 @@ class SceneDisplayMixin:
             scene_data["speaking"] = speaking_text
             scene_data.pop("voiceover", None)
             self.workflow.save_scenes_to_json()
+        if project_manager.scene_is_story_act(scene_data):
+            speaking_text = project_manager.speaking_box_text(scene_data)  # Story Act：显示 story_content
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaking.insert("1.0", speaking_text)
 
@@ -255,8 +257,8 @@ class SceneDisplayMixin:
         else:
             scene["extension"] = ext_val
 
+        project_manager.store_speaking_box_text(scene, self.scene_speaking.get("1.0", tk.END))
         scene.update({
-            "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
             "actor": (self._actor_text or "").strip(),
             "visual": self.scene_visual.get("1.0", tk.END).strip(),
             "caption": self.scene_caption.get("1.0", tk.END).strip(),

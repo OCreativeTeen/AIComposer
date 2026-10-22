@@ -55,6 +55,8 @@ def _normalize_scene_dict_entry(item) -> dict | None:
     speaking = (out.get("speaking") or "").strip()
     voiceover = (out.get("voiceover") or "").strip()
     actor = (out.get("actor") or "").strip()
+    if not speaking:
+        speaking = (out.get("story_content") or "").strip()
     if not heading and not body and not speaking and not voiceover and not actor:
         return None
     return out
@@ -384,6 +386,38 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
     item.pop("voiceover", None)
     item.pop("narrator", None)
 
+
+
+# Series · Story Act：场景内容在 ``story_content``（只演不说），speaking 留空，所以不会做 TTS。
+# 本场内容的「讲话」框显示 / 编辑的就是这一栏。
+def scene_is_story_act(scene) -> bool:
+    return (
+        isinstance(scene, dict)
+        and bool(str(scene.get("story_content") or "").strip())
+        and not str(scene.get("speaking") or "").strip()
+    )
+
+
+def speaking_box_text(scene) -> str:
+    """「讲话」框里显示的文字：speaking；Story Act 场景显示 story_content。"""
+    if not isinstance(scene, dict):
+        return ""
+    if scene_is_story_act(scene):
+        return str(scene.get("story_content") or "")
+    return str(scene.get("speaking") or "")
+
+
+def store_speaking_box_text(scene, text: str) -> None:
+    """把「讲话」框写回场景：Story Act 场景写回 story_content（speaking 保持空），其余写 speaking。"""
+    if not isinstance(scene, dict):
+        return
+    text = (text or "").strip()
+    if scene_is_story_act(scene):
+        if text:
+            scene["story_content"] = text
+            scene["speaking"] = ""
+            return
+    scene["speaking"] = text
 
 
 def title_from_scene_content(scene_content) -> str:
@@ -1122,10 +1156,28 @@ def remember_scene_style(value: str) -> str:
     return key
 
 
+LAST_STORY_STYLE = ""
+
+
+def remember_story_style(value: str) -> str:
+    """记下故事风格（全场内容第 4 个选择），新项目默认用它。返回存盘用的值。"""
+    global LAST_STORY_STYLE
+    key = config_prompt.normalize_story_style(value)
+    if not key:
+        return ""
+    LAST_STORY_STYLE = key
+    try:
+        if (config.load_yt_tools_prefs() or {}).get("story_style") != key:
+            config.save_yt_tools_prefs({"story_style": key})
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 故事风格没有记下：{exc}")
+    return key
+
+
 def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     """用 ``YT_tools_prefs.json`` 覆盖内存中的 LAST_*（若值合法）。"""
     global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE, LAST_VIDEO_SIZE
-    global LAST_SETTING_REGION, LAST_SETTING_ERA, LAST_SCENE_STYLE
+    global LAST_SETTING_REGION, LAST_SETTING_ERA, LAST_SCENE_STYLE, LAST_STORY_STYLE
     prefs = prefs if prefs is not None else config.load_yt_tools_prefs()
     if not prefs:
         return {}
@@ -1155,6 +1207,7 @@ def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
         LAST_SETTING_ERA = era if era in eras else (eras[0] if eras else "")
 
     LAST_SCENE_STYLE = config_prompt.normalize_scene_style(prefs.get("scene_style"))
+    LAST_STORY_STYLE = config_prompt.normalize_story_style(prefs.get("story_style"))
 
     return prefs
 
@@ -1177,6 +1230,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "setting_region",
     "setting_era",
     "scene_style",
+    "story_style",
     "pid",
     "video_width",
     "video_height",
@@ -2047,6 +2101,7 @@ class ProjectSelectionDialog:
             'setting_region': self.initial_setting_region,
             'setting_era': self.initial_setting_era,
             'scene_style': self.initial_scene_style,
+            'story_style': LAST_STORY_STYLE or None,
             'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
