@@ -1186,8 +1186,16 @@ class chrome_lock:
 
     def __enter__(self):
         deadline = time.monotonic() + self.wait_s
-        if not _local_lock.acquire(timeout=max(0.0, self.wait_s)):
-            raise RuntimeError(f"Chrome 正被本程序的另一个 Grok 任务占用，等了 {self.wait_s:.0f} 秒")
+        # 只取一次（RLock，同一线程可重入）。取不到时先告诉界面是谁占着，再等。
+        # （t77 修：以前先 acquire(0.3) 成功后又 acquire 一次，退出只放一次 → 每次成功都漏一层，锁永远不放。）
+        if not _local_lock.acquire(timeout=0.3):
+            owner = _held.get("owner") or "未知任务"
+            since = _held.get("since")
+            age = f"，已占 {int(time.monotonic() - since)} 秒" if since else ""
+            _say(self.status, f"Chrome 正被本程序的另一个任务占用（{owner}{age}），排队等待 …")
+            if not _local_lock.acquire(timeout=max(0.0, self.wait_s - 0.3)):
+                raise RuntimeError(f"Chrome 正被本程序的另一个任务占用（{owner}），等了 {self.wait_s:.0f} 秒；"
+                                   "请等那个任务结束（或重开程序）再试")
         if _held["depth"] > 0:
             _held["depth"] += 1
             return self
@@ -1199,6 +1207,8 @@ class chrome_lock:
                 if _try_file_lock(fh):
                     _held["fh"] = fh
                     _held["depth"] = 1
+                    _held["owner"] = _threading.current_thread().name
+                    _held["since"] = time.monotonic()
                     return self
                 fh.close()
                 if time.monotonic() >= deadline:
@@ -1215,9 +1225,12 @@ class chrome_lock:
 
     def __exit__(self, *_exc):
         _held["depth"] -= 1
-        if _held["depth"] == 0 and _held["fh"] is not None:
-            _unlock_file(_held["fh"])
-            _held["fh"] = None
+        if _held["depth"] == 0:
+            if _held["fh"] is not None:
+                _unlock_file(_held["fh"])
+                _held["fh"] = None
+            _held["owner"] = None
+            _held["since"] = None
         _local_lock.release()
         return False
 

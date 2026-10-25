@@ -4,6 +4,7 @@ import tkinter.messagebox as messagebox
 import os
 import json
 import config
+import config_prompt
 from project_manager import save_project_config
 import project_manager
 from utility.file_util import show_auto_close_popup
@@ -109,6 +110,7 @@ class PromptFlowsMixin:
             self._nb_picture_btn,
             batch_scenes=batch_scenes,
             run_batch=self._run_picture_batch,
+            get_step_no=lambda: batch_scenes()[1],
             get_scene=current_scene,
             get_style=get_style,
             get_place=get_place,
@@ -521,10 +523,32 @@ class PromptFlowsMixin:
 
         def save_video_choice(choice: dict) -> None:
             cfg = project_manager.PROJECT_CONFIG
+            choice = {k: v for k, v in (choice or {}).items() if k != "narrative"}  # 叙事风格只存 story_style
             if not isinstance(cfg, dict) or cfg.get("video_prompt") == choice:
                 return
             cfg["video_prompt"] = choice
             save_project_config(parent=self.root)
+
+        def on_story_style(key: str) -> None:
+            """生场视频里选了叙事风格：写 project story_style，同步主窗口「故事风格」，记为上次选择。"""
+            key = config_prompt.normalize_story_style(key)
+            if not key:
+                return
+            if hasattr(self, "story_style"):
+                label = config_prompt.story_style_label(key)
+                if self.story_style.get() != label:
+                    self.story_style.set(label)
+            project_manager.remember_story_style(key)
+            cfg = project_manager.PROJECT_CONFIG
+            if isinstance(cfg, dict):
+                vp = cfg.get("video_prompt")
+                changed = cfg.get("story_style") != key
+                if isinstance(vp, dict) and "narrative" in vp:
+                    cfg["video_prompt"] = {k: v for k, v in vp.items() if k != "narrative"}
+                    changed = True
+                if changed:
+                    cfg["story_style"] = key
+                    save_project_config(parent=self.root)
 
         open_video_prompt_dialog(
             self.root,
@@ -547,6 +571,7 @@ class PromptFlowsMixin:
             ),
             saved_choice=(project_manager.PROJECT_CONFIG or {}).get("video_prompt"),
             save_choice=save_video_choice,
+            on_story_style=on_story_style,
             simple_actions=[
                 ("仅当前场景", lambda: self._run_clip_video("still", "single")),
                 ("本集从这一场起", lambda: self._run_clip_video("still", "story")),

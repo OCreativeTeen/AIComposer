@@ -221,9 +221,12 @@ class MaterialsPanel(ttk.Frame):
         on_rebuilt: Callable[[tk.Widget], None] | None = None,
         height: int = 190,
         on_analyze: Callable[[dict], None] | None = None,
+        on_delete: Callable[[dict], None] | None = None,
     ) -> None:
         super().__init__(master)
         self._on_analyze = on_analyze
+        self._on_delete = on_delete
+        self.focused_entry: dict | None = None  # 最后单击的那一行（Delete 键删它）
         self._get_entries = get_entries
         self._on_select = on_select
         self._on_copy = on_copy
@@ -239,7 +242,7 @@ class MaterialsPanel(ttk.Frame):
         ttk.Label(
             self,
             text="把 PDF、图片、音频或 mp4 拖到这里：PDF 换掉原来的，图片加进列表，音频/视频换掉原来的。"
-            "单击选作生成材料，双击拷到剪贴板，右键更多操作。",
+            "单击选作生成材料，双击拷到剪贴板，右键更多操作；选中后按 Delete 删除（文件保留）。",
             font=("TkDefaultFont", 8),
             foreground="gray30",
         ).pack(anchor=tk.W, pady=(0, 2))
@@ -257,6 +260,7 @@ class MaterialsPanel(ttk.Frame):
         for w in (self.canvas, self.inner):
             w.bind("<MouseWheel>", self._wheel)
             w.bind("<Button-3>", lambda e: self._popup(e, {"kind": "", "path": "", "placeholder": True}))
+            w.bind("<Delete>", self._delete_key)
         self.bind("<Destroy>", lambda e: self.player.stop() if e.widget is self else None)
 
     def _wheel(self, event):
@@ -373,7 +377,18 @@ class MaterialsPanel(ttk.Frame):
         except tk.TclError:
             pass
 
+    def _delete_key(self, _event=None):
+        entry = self.focused_entry
+        if self._on_delete and entry and entry.get("path") and not entry.get("placeholder"):
+            self._on_delete(entry)
+        return "break"
+
     def _click(self, entry: dict):
+        self.focused_entry = entry
+        try:
+            self.canvas.focus_set()  # 让 Delete 键落到这个面板
+        except tk.TclError:
+            pass
         sel = entry.get("select") or ""
         if sel:
             self.selected = sel

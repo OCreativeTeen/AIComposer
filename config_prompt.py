@@ -522,6 +522,9 @@ def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords:
 
 def narrative_mode_text(narrative: str, actor_checked: bool) -> str:
     """叙事风格 + 「人物」勾选 → 一句话，提示窗里显示。讲员有没有要看场景里的 actor，所以写成「若…否则…」。"""
+    if narrative == "step":
+        return ("提取第 N 步：把封面 / 信息图里第 N 步那一格单独画成一张新的场景图，其他格、编号、箭头都去掉；"
+                "N = 当前场景序号。只看画风改变，说明文字和写进提示词的选项不用。")
     if narrative == "story":
         if actor_checked:
             return ("故事：人物在场景中表演对话（套用 actor 形象）。若人物中有讲员，讲员为辅，"
@@ -3036,11 +3039,12 @@ def voice_choices_for_actor(body: str) -> tuple:
     canon = project_manager._person_body(raw) or (raw or "").strip()
     bits = [part.strip() for part in canon.split("/") if part.strip()]
     gender = bits[0].lower() if bits else ""
+    gender = {"girl": "woman", "boy": "man", "female": "woman", "male": "man"}.get(gender, gender)
     age = project_manager._ACTOR_AGE.get(bits[1].lower(), bits[1].lower()) if len(bits) >= 2 else ""
-    age = _VOICE_AGE_BAND.get(age, "")
+    age = _VOICE_AGE_BAND.get(age, "") or "mature"
     race = bits[2].lower() if len(bits) >= 3 else ""
-    if race not in ("chinese", "english"):
-        race = ""
+    # 默认表：没写民族 → chinese；其他民族 → english 那一档
+    race = race if race in ("chinese", "english") else ("english" if race else "chinese")
     return ACTOR_VOICE_NAMES.get((gender, age, race), ())
 
 
@@ -3149,7 +3153,17 @@ STORY_STYLE_CHOICES = (
     ("counselor", "Series · Counselor"),
     ("story_speak", "Series · Story Speak"),
     ("story_act", "Series · Story Act"),
+    ("tech", "技术方案汇报"),
+    ("exec", "高管简报"),
 )
+# 故事风格是唯一的权威：生场视频的「叙事风格」也用这一套。每个故事风格对应提示词里的叙事方式（narrative）。
+STORY_STYLE_NARRATIVE = {
+    "podcast": "narration", "counselor": "narration",
+    "story_speak": "story", "story_act": "story",
+    "tech": "tech", "exec": "exec",
+}
+# 旧的生场视频「叙事风格」存值 → 故事风格（迁移用）
+NARRATIVE_TO_STORY_STYLE = {"narration": "podcast", "story": "story_speak", "tech": "tech", "exec": "exec"}
 STORY_STYLE_LABELS = tuple(label for _k, label in STORY_STYLE_CHOICES)
 
 
@@ -3172,6 +3186,26 @@ def normalize_story_style(value) -> str:
     return ""
 
 
+def story_style_narrative(value) -> str:
+    """故事风格 → 提示词用的叙事方式（narration / story / tech / exec）。"""
+    return STORY_STYLE_NARRATIVE.get(normalize_story_style(value) or STORY_STYLE_CHOICES[0][0], "narration")
+
+
+def story_style_mode_text(value, actor_checked: bool) -> str:
+    """生场视频窗口里「叙事风格」下面的蓝字说明。"""
+    key = normalize_story_style(value) or STORY_STYLE_CHOICES[0][0]
+    if key == "story_act":
+        return ("Story Act：人物在场景中只表演、不说话；story_content 是这场发生的事，"
+                "靠动作、表情、手势演出来，没有对白、旁白、口型。")
+    if key == "story_speak":
+        return "Story Speak · " + narrative_mode_text("story", actor_checked)
+    if key == "podcast":
+        return "Podcast（讲述）：主持人讲述 · " + narrative_mode_text("narration", actor_checked)
+    if key == "counselor":
+        return "Counselor（讲述）：咨询师讲述 · " + narrative_mode_text("narration", actor_checked)
+    return narrative_mode_text(key, actor_checked)
+
+
 def story_style_label(value) -> str:
     key = normalize_story_style(value) or STORY_STYLE_CHOICES[0][0]
     return dict(STORY_STYLE_CHOICES)[key]
@@ -3192,6 +3226,11 @@ def project_story_style() -> str:
         key = normalize_story_style(raw)
         if key:
             return key
+    # 迁移：旧的生场视频「叙事风格」（video_prompt.narrative），项目里还没有 story_style 时用它
+    vp = pc.get("video_prompt") if isinstance(pc.get("video_prompt"), dict) else {}
+    old = NARRATIVE_TO_STORY_STYLE.get(str(vp.get("narrative") or ""))
+    if old:
+        return old
     try:
         import project_manager
 
@@ -3255,6 +3294,103 @@ def _who(row: dict) -> str:
     return f"{label} {body}".strip()
 
 
+_AGE_WORDS = {"kids": ("little", "a child's", "about 8-12"), "teenager": ("teenage", "a teenage", "about 15"),
+              "youth": ("young", "a young", "20s"), "mature": ("middle-aged", "a mature", "40s-50s"),
+              "senior": ("elderly", "an elderly", "60s+")}
+
+
+def _speaker_identity(row: dict) -> tuple:
+    """(称呼, 身份短语, 声音描述)：('阿明', 'young man', 'a young male voice, 20s')。"""
+    import project_manager
+
+    body, _m = project_manager.split_actor_motion(row.get("body") or "")
+    bits = [b.strip() for b in body.split("/") if b.strip()]
+    gender = bits[0].lower() if bits else ""
+    age = project_manager._ACTOR_AGE.get(bits[1].lower(), bits[1].lower()) if len(bits) > 1 else ""
+    name = bits[3] if len(bits) > 3 else ""
+    host = row.get("role") == "host"
+    male = gender in ("man", "boy", "male")
+    female = gender in ("woman", "girl", "female")
+    adj, voice_adj, years = _AGE_WORDS.get(age, ("", "a", ""))
+    noun = ("boy" if male else "girl" if female else "child") if age == "kids" else (
+        "man" if male else "woman" if female else "person")
+    ident = " ".join(x for x in (adj, noun) if x)
+    if host:
+        ident = "narrator" + (f", {ident}" if bits[:1] and (male or female) else "")
+    sex = "male" if male else "female" if female else ""
+    tone = " ".join(x for x in (voice_adj, sex, "voice") if x) + (f", {years}" if years else "")
+    who = name or ("讲员" if host else (row.get("label") or "人物"))
+    return who, ident, tone
+
+
+def _scene_speakers(scene: dict) -> list:
+    """这一场 actor 里的人（按顺序，<N> = 第 N 个）。"""
+    import project_manager
+
+    text = project_manager.actor_text_for_generation(scene.get("actor") or "") if isinstance(scene, dict) else ""
+    return project_manager.active_actor_entries(text)
+
+
+def dialogue_script(scene: dict) -> list:
+    """speaking 的 <N> → 逐句台词：'1. 阿明 (young man): "…"'。同一人连着说的合并成一句。"""
+    if not isinstance(scene, dict):
+        return []
+    rows = _scene_speakers(scene)
+    speaking = str(scene.get("speaking") or "")
+    voiceover = str(scene.get("voiceover") or "").strip()
+    if voiceover and "<2>" not in speaking:
+        speaking = (speaking + " <2> " + voiceover).strip()
+    text = _PAUSE_MARK.sub(" ", speaking)
+    turns: list = []
+    pos, who = 0, 1
+    for m in _SPEAKER_MARK.finditer(text):
+        chunk = text[pos:m.start()].strip()
+        if chunk:
+            turns.append([who, chunk])
+        who, pos = int(m.group(1)), m.end()
+    tail = text[pos:].strip()
+    if tail:
+        turns.append([who, tail])
+    merged: list = []
+    for n, chunk in turns:
+        if merged and merged[-1][0] == n:
+            merged[-1][1] += " " + chunk
+        else:
+            merged.append([n, chunk])
+    out = []
+    for i, (n, chunk) in enumerate(merged, start=1):
+        if 1 <= n <= len(rows):
+            name, ident, _tone = _speaker_identity(rows[n - 1])
+            out.append(f'{i}. {name} ({ident}): "{chunk}"')
+        else:
+            out.append(f'{i}. speaker {n}: "{chunk}"')
+    return out
+
+
+def _speaker_voice_line(scenes: list) -> str:
+    """'Voices: 阿明 (young man) = voice Leo, a young male voice, 20s; …'（只列真的说话的人）。"""
+    import project_manager
+
+    seen, bits = set(), []
+    for sc in scenes or []:
+        if not isinstance(sc, dict):
+            continue
+        rows = _scene_speakers(sc)
+        for n in _speaker_slots([sc]):
+            if not (1 <= n <= len(rows)):
+                continue
+            row = rows[n - 1]
+            body, _m = project_manager.split_actor_motion(row.get("body") or "")
+            key = (row.get("role"), body)
+            if key in seen:
+                continue
+            seen.add(key)
+            name, ident, tone = _speaker_identity(row)
+            voice = chosen_actor_voice(body, row.get("role") or "person")
+            bits.append(f"{name} ({ident}) = " + (f"voice {voice}, {tone}" if voice else tone))
+    return ("Voices: " + "; ".join(bits) + ". Each person keeps this one voice, on or off screen.") if bits else ""
+
+
 def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
                         host_narrator: str, use_speaking: bool) -> tuple:
     """返回 (说明行, 内容字段名)。故事风格决定谁说话；叙事风格只管画面怎么表现（见 _video_form_line）。"""
@@ -3278,10 +3414,16 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
         str(s.get("speaking") or s.get("voiceover") or "").strip() for s in scenes if isinstance(s, dict)
     ):
         return ["Speech: nobody speaks in this clip. No narration, no dialogue, no lip-sync."], ""
-    hosts = [r for r in cast if r.get("role") == "host"]
-    people = [r for r in cast if r.get("role") != "host"]
+    # 有 <N> 标记、场景里有人：逐句台词（谁说哪句写明），不再让模型自己猜
+    dialogue = any(
+        _SPEAKER_MARK.search(str(s.get("speaking") or "")) and _scene_speakers(s)
+        for s in scenes if isinstance(s, dict)
+    )
+    speakers = cast or next((_scene_speakers(s) for s in scenes if isinstance(s, dict) and _scene_speakers(s)), [])
+    hosts = [r for r in speakers if r.get("role") == "host"]
+    people = [r for r in speakers if r.get("role") != "host"]
     lines: list = []
-    if not cast:
+    if not cast and not dialogue:
         voice = narrator_voice_phrase(host_narrator) or "one narrator voice"
         if story_style == "story_speak":
             lines.append(
@@ -3294,11 +3436,17 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
             "Nobody in the picture speaks or moves their lips; they act silently."
         )
         return lines, "narration"
-    lines.append(
-        "Speakers: ``<N>`` in ``speaking`` is the Nth person in ``actor`` (only 1 to 3 speak); the same person keeps "
-        "talking until the next ``<N>``; ``<0.5>`` is a pause in seconds. One voice at a time. "
-        "Lip-sync only the person whose line it is; everyone else listens or reacts."
-    )
+    if dialogue:
+        lines.append(
+            "Dialogue: ``dialogue`` is the script. Speak its lines in this exact order, each only by its labeled "
+            "speaker, lip-synced to that person; never swap speakers. One voice at a time; the others listen or react."
+        )
+    else:
+        lines.append(
+            "Speakers: ``<N>`` in ``speaking`` is the Nth person in ``actor`` (only 1 to 3 speak); the same person keeps "
+            "talking until the next ``<N>``; ``<0.5>`` is a pause in seconds. One voice at a time. "
+            "Lip-sync only the person whose line it is; everyone else listens or reacts."
+        )
     if story_style == "podcast":
         lines.append(
             "Story style PODCAST: the people in ``actor`` are the podcast speakers"
@@ -3338,6 +3486,12 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
     if narrative in TELLING_NARRATIVES and story_style != "podcast" and people:
         lines.append("Even in this telling style, the 人物's lines are their own spoken lines, not narration.")
     # 声音：只写用到的位置
+    if dialogue:
+        lines = [ln.replace("``speaking``", "``dialogue``") for ln in lines]
+        voice_line = _speaker_voice_line(scenes)
+        if voice_line:
+            lines.append(voice_line)
+        return lines, "dialogue"
     slots = _speaker_slots(scenes)
     voice_bits = []
     for n in slots:
@@ -3446,6 +3600,10 @@ def _video_payload(scenes: list, *, variant: str, host_narrator: str, use_visual
                 act = act or _strip_speech_marks(" ".join(p for p in (speaking, voiceover) if p))
                 if act:
                     slim["story_content"] = act
+            elif content_key == "dialogue":
+                script = dialogue_script(orig)
+                if script:
+                    slim["dialogue"] = script
             elif content_key == "narration":
                 combined = _strip_speech_marks(" ".join(p for p in (speaking, voiceover) if p))
                 if combined:
@@ -3569,7 +3727,7 @@ def build_video_flow_prompt(
     choices = story_style_label(sstyle) + " · " + video_flow_choice_label(
         frames, background, evolve, camera, "", narrative, text
     )
-    spoken = content_key in ("speaking", "narration")  # Story Act / 无讲话：不写口语语言
+    spoken = content_key in ("speaking", "narration", "dialogue")  # Story Act / 无讲话：不写口语语言
     return _video_prompt_assemble(head_label="", style=style, choices=choices, instruction=instruction,
                                   language=language if spoken else "", payload=payload)
 
@@ -3849,13 +4007,45 @@ def build_direct_video_clipbody(
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
-def build_step_image_clipbody(step: int = 1, *, visual_style: str = "", main_character: str = "") -> str:
-    """故事窗「图片分解 (Step Image)」：第 k 步细节图的指令（与 Direct Video 剪贴板同格式，带画面风格）。"""
-    return build_direct_video_clipbody(
-        instruction=build_direct_step_image(step),
-        main_character=main_character,
-        visual_style=visual_style,
-    )
+def build_step_image_clipbody(
+    step: int = 1,
+    *,
+    visual_style: str = "",
+    main_character: str = "",
+    keep_style: bool = False,
+    scene_caption: str = "",
+    scene_visual: str = "",
+) -> str:
+    """图片修改 · 提取第 N 步：输入是多步骤的信息图 / 封面，输出这一步的一张新场景图（图片编辑，不是视频）。"""
+    try:
+        k = max(1, int(step))
+    except (TypeError, ValueError):
+        k = 1
+    lines = [
+        f"Image edit: extract step {k} as its own picture.",
+        "** The input image is an infographic or cover made of several numbered steps (panels).",
+        f"** Create a NEW single illustration of step {k} only: find panel {k} and redraw just that moment as one "
+        "full-frame scene (its characters, setting, action and mood), recomposed to fill the output frame stated above. "
+        "The input's layout and orientation do not carry over.",
+        "** Do not return the input image. Drop the other panels, step numbers, arrows, grid and layout.",
+        "** Keep that step's short title as one caption line; no other text.",
+        "** Keep every character's look (face, hair, clothing) as in the input.",
+    ]
+    vs = (visual_style or "").strip()
+    if keep_style or not vs:
+        lines.append("** Style: keep the input's art style.")
+    else:
+        lines.append(f"** Visual_Style: {vs}. Redraw the step in this style.")
+    who = (main_character or "").strip()
+    if who:
+        lines.append(f"** Characters: {who}")
+    ctx = [x for x in (
+        f"caption: {scene_caption.strip()}" if (scene_caption or "").strip() else "",
+        f"visual: {scene_visual.strip()}" if (scene_visual or "").strip() else "",
+    ) if x]
+    if ctx:
+        lines.append(f"** What step {k} shows (from the script): " + "; ".join(ctx))
+    return "\n".join(lines)
 
 
 SLIDE_ANALYSIS_OUTPUT_FORMAT = """

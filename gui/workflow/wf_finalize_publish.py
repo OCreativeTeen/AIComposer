@@ -17,6 +17,8 @@ from utility.file_util import get_file_path, make_safe_file_name
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor
 from utility.ffmpeg_processor import resolve_watermark_for_project, resolve_headmark_for_project
 from gui.downloader import ask_publish_schedule_dialog
+
+TELEGRAM_MISSING_NOTE = "Telegram 未配置:需要在 D:\\AIComposer\\.env 填 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_IDS（逗号分隔）,重启后可用。"
 from gui.publish_metadata_dialog import ask_publish_metadata_then_schedule, scene_content_list_for_publish
 
 
@@ -169,7 +171,8 @@ class FinalizePublishMixin:
         self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, track, "30")
         self.refresh_gui_scenes()
 
-    def publish_video(self):
+    def publish_video(self, send_telegram: bool = False):
+        """t99u: 只发 YouTube,上传后立即 unlisted(不排期);send_telegram 已废弃,Telegram 请用 publish_telegram。"""
         if getattr(self, "_publish_upload_running", False):
             win = getattr(self, "_publish_progress_win", None)
             try:
@@ -229,7 +232,8 @@ class FinalizePublishMixin:
             video_detail=list_row or None,
             on_summary_regenerated=_save_regenerated_summary,
             generate_text_fn=self.llm_api_local.generate_text,
-            schedule_dialog_fn=ask_publish_schedule_dialog,
+            # t99u: 不再排期,上传后立即 unlisted;排期到 YouTube Studio 自己调
+            schedule_dialog_fn=lambda *_a, **_k: ("unlisted", None),
             caption_scenes=scenes,
             metadata_dialog_title="上传视频 — 标题与描述",
         )
@@ -260,10 +264,62 @@ class FinalizePublishMixin:
                     parent=self.root,
                 )
                 return
-            tg_lines = workflow.finish_video_upload(up, publish_at=publish_at, telegram_title=conv)
+            tg_lines = workflow.finish_video_upload(
+                up, publish_at=None, telegram_title=conv, send_telegram=False
+            )
             self._show_publish_result(mode, tg_lines)
 
         self._run_upload_with_progress(_work, _done, title=conv)
+
+    def publish_telegram(self):
+        """t99u: 只发 Telegram:从列表里记录的 YouTube 链接下载小 mp4,再发视频 + 说明。"""
+        from utility.telegram_notify import telegram_publish_enabled
+        from utility.telegram_youtube_relay import published_youtube_url, send_published_youtube_to_telegram
+
+        if getattr(self, "_publish_tg_running", False):
+            messagebox.showinfo("发布 Telegram", "正在发送,请稍候。", parent=self.root)
+            return
+        if not telegram_publish_enabled():
+            messagebox.showerror("发布 Telegram", TELEGRAM_MISSING_NOTE, parent=self.root)
+            return
+        row = project_manager.load_video_detail_row_for_config(project_manager.PROJECT_CONFIG or {}) or {}
+        url = published_youtube_url(row)
+        if not url:
+            messagebox.showerror("发布 Telegram", "这一项还没有 YouTube 链接,请先「发布 YouTube」。", parent=self.root)
+            return
+        win = tk.Toplevel(self.root)
+        win.title("发布 Telegram")
+        win.transient(self.root)
+        var = tk.StringVar(value=f"从 YouTube 下载:{url}")
+        ttk.Label(win, textvariable=var, wraplength=480, justify=tk.LEFT, padding=12).pack(fill=tk.BOTH)
+        self._publish_tg_running = True
+
+        def ui(fn):
+            try:
+                self.root.after(0, fn)
+            except Exception:  # noqa: BLE001
+                pass
+
+        def _done(lines, err):
+            self._publish_tg_running = False
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+            if err:
+                messagebox.showerror("发布 Telegram", err, parent=self.root)
+            else:
+                messagebox.showinfo("发布 Telegram", url + "\n\n" + "\n".join(lines or ["(无结果)"]), parent=self.root)
+
+        def _run():
+            try:
+                lines = send_published_youtube_to_telegram(row, status=lambda m: ui(lambda: var.set(m)))
+                ui(lambda: _done(lines, ""))
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                ui(lambda: _done(None, msg))
+
+        threading.Thread(target=_run, daemon=True, name="telegram-publish").start()
 
     def _show_publish_result(self, mode, tg_lines) -> None:
         tg_block = ""
@@ -279,7 +335,7 @@ class FinalizePublishMixin:
                 parent=self.root,
             )
         else:
-            msg = "视频发布成功！"
+            msg = "已上传为 unlisted(排期请到 YouTube Studio 自己调)。\n" + "视频发布成功！"
             if vid := (project_manager.PROJECT_CONFIG or {}).get("published_youtube_video_id"):
                 msg += f"\nhttps://www.youtube.com/watch?v={vid}"
             messagebox.showinfo("提示", msg + tg_block, parent=self.root)
@@ -400,7 +456,7 @@ class FinalizePublishMixin:
             dlg.destroy()
             self.play_finalize_video(pid=pid)
 
-        def _publish():
+        def _publish(send_telegram: bool = False):  # True = 发布 Telegram(t99u)
             dlg.destroy()
             # 和顶部「成片 → 视频发布」同一个入口；它按当前打开的项目发布。
             cur = ""
@@ -415,10 +471,26 @@ class FinalizePublishMixin:
                     parent=self.root,
                 )
                 return
-            self.publish_video()
+            if send_telegram:
+                self.publish_telegram()
+            else:
+                self.publish_video()
 
         ttk.Button(btns, text="播放视频", command=_play).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btns, text="视频发布", command=_publish).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btns, text="发布 YouTube", command=lambda: _publish(False)).pack(side=tk.LEFT, padx=(0, 8))
+        from utility.telegram_notify import telegram_publish_enabled
+
+        from utility.telegram_youtube_relay import published_youtube_url
+
+        tg_btn = ttk.Button(btns, text="发布 Telegram", command=lambda: _publish(True))
+        tg_btn.pack(side=tk.LEFT, padx=(0, 8))
+        _row_now = project_manager.load_video_detail_row_for_config(project_manager.PROJECT_CONFIG or {}) or {}
+        if telegram_publish_enabled() and not published_youtube_url(_row_now):
+            tg_btn.state(["disabled"])
+            ttk.Label(frame, text="发布 Telegram 需要先「发布 YouTube」(用列表里记录的 YouTube 链接下载后再发)。", foreground="#a33", wraplength=460, justify=tk.LEFT).pack(anchor="w", pady=(8, 0))
+        if not telegram_publish_enabled():
+            tg_btn.state(["disabled"])
+            ttk.Label(frame, text="Telegram 未配置：需要在 D:\\AIComposer\\.env 填 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_IDS（逗号分隔），重启后可用。", foreground="#a33", wraplength=460, justify=tk.LEFT).pack(anchor="w", pady=(8, 0))
         ok = ttk.Button(btns, text="OK", command=dlg.destroy)
         ok.pack(side=tk.LEFT)
         dlg.bind("<Return>", lambda e: dlg.destroy())
@@ -522,6 +594,78 @@ class FinalizePublishMixin:
         return picked
 
     def run_finalize_video(self):
+        """t102u: 先问「右下角加 Logo」,要就给最终合成要用的所有 clip 加上(后台),再弹「最终视频生成方式」。"""
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            messagebox.showwarning("最终视频", "还没有场景。", parent=self.root)
+            return
+        pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+        last = bool(pc.get("final_logo"))
+        wm_path, wm_opts = self._resolve_watermark_config()
+        if not wm_path:
+            if not messagebox.askokcancel(
+                "右下角 Logo",
+                "需要在右下角加 Logo 吗?\n\n未找到 Logo PNG(频道 JSON 的 watermark.path,或 program/<频道>/watermark.png),"
+                "只能不加。\n\n确定 = 不加 Logo 继续;取消 = 不生成。",
+                parent=self.root,
+            ):
+                return
+            self._run_finalize_after_logo()
+            return
+        ans = messagebox.askyesnocancel(
+            "右下角 Logo",
+            "需要在右下角加 Logo 吗?\n\n是 = 先给这次合成用到的所有场景 clip 加上(已加过的跳过)\n否 = 不加\n取消 = 不生成",
+            default=(messagebox.YES if last else messagebox.NO),
+            parent=self.root,
+        )
+        if ans is None:
+            return
+        if bool(ans) != last and isinstance(project_manager.PROJECT_CONFIG, dict):
+            project_manager.PROJECT_CONFIG["final_logo"] = bool(ans)
+            try:
+                save_project_config(parent=self.root)
+            except Exception:  # noqa: BLE001
+                pass
+        if not ans:
+            self._run_finalize_after_logo()
+            return
+        start, end = self._marker_scene_bounds()
+        scenes = [sc for sc in (self.workflow.scenes or [])[start:end + 1] if isinstance(sc, dict)]
+        todo, already, no_clip = [], 0, []
+        for sc in scenes:
+            clip = sc.get("clip")
+            if not (isinstance(clip, str) and clip and os.path.isfile(clip)):
+                no_clip.append(str(sc.get("id", "?")))
+                continue
+            marks = sc.get("logo_applied") if isinstance(sc.get("logo_applied"), dict) else {}
+            if marks.get("clip") == clip:
+                already += 1
+                continue
+            todo.append(sc)
+        note = f"右下角 Logo:要加 {len(todo)} 场,已加过跳过 {already} 场"
+        if no_clip:
+            note += f",没有 clip 的场景 {len(no_clip)} 个(id: {', '.join(no_clip[:12])})"
+        self.log_to_output(self.video_output, note)
+        if not todo:
+            self._run_finalize_after_logo()
+            return
+
+        def _ok(scene, old_clip, new_clip):
+            marks = scene.get("logo_applied") if isinstance(scene.get("logo_applied"), dict) else {}
+            marks["clip"] = new_clip
+            scene["logo_applied"] = marks
+            scene["clip_nologo"] = old_clip
+
+        def _done(failed):
+            self.log_to_output(self.video_output, f"右下角 Logo 完成:{len(todo) - len(failed)}/{len(todo)} 场")
+            self._run_finalize_after_logo()
+
+        self._clip_overlay_ffmpeg_batch_async(
+            todo, wm_path, wm_opts, "右下角 Logo", "加 Logo 失败",
+            lambda fp, sr, dt, op, ot: fp.watermark_clip_with_preprocess(sr, dt, op, ot),
+            on_scene_ok=_ok, on_done=_done,
+        )
+
+    def _run_finalize_after_logo(self):
         picked = self._ask_final_video_options()
         if picked is None:
             return
@@ -573,7 +717,8 @@ class FinalizePublishMixin:
             "成片",
             [
                 ("generate", "视频生成"),
-                ("publish", "视频发布"),
+                ("publish", "发布 YouTube"),
+                ("publish_tg", "发布 Telegram"),
                 ("play", "视频播放"),
                 ("demo", "演示"),
             ],
@@ -581,7 +726,9 @@ class FinalizePublishMixin:
         if picked == "generate":
             self.run_finalize_video()
         elif picked == "publish":
-            self.publish_video()
+            self.publish_video(send_telegram=False)
+        elif picked == "publish_tg":
+            self.publish_telegram()
         elif picked == "play":
             self.play_finalize_video()
         elif picked == "demo":

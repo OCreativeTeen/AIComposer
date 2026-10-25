@@ -80,6 +80,13 @@ def _normalize(url: str) -> str:
 
 
 def _format_opts(resolution: str) -> dict:
+    if resolution == "telegram":
+        # t99u: <=720p mp4 (h264+m4a preferred) so the file stays under the Telegram bot 50MB limit
+        return {
+            "format": "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/bv*[height<=720]+ba/b[height<=720]/worst",
+            "format_sort": ["res:720", "+size", "vcodec:h264", "acodec:m4a"],
+            "merge_output_format": "mp4",
+        }
     if resolution == "lowest":
         return {
             "format": "worstvideo*+worstaudio/worst",

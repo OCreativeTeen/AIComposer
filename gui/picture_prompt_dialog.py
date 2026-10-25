@@ -34,7 +34,7 @@ def _clean_choice(saved) -> dict:
         choice["text"] = "express"
     elif saved.get("text") in {k for k, _ in config_prompt.PICTURE_FLOW_TEXT_CHOICES}:
         choice["text"] = saved["text"]
-    if saved.get("narrative") in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
+    if saved.get("narrative") in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES} | {"step"}:
         choice["narrative"] = saved["narrative"]
     for key in ("visual", "speaking", "actor"):
         if key in saved:
@@ -77,6 +77,7 @@ def open_picture_prompt_dialog(
     actor_avatar_dir: str = "",
     batch_scenes=None,
     run_batch=None,
+    get_step_no=None,
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
 
@@ -110,6 +111,20 @@ def open_picture_prompt_dialog(
 
     # 与全集生成相同：叙事风格 | 说明文字 | 写进提示词的内容；画风改变放到下面一行。
     _story_box, story_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
+    # 叙事风格第 5 项：提取第 N 步（N = 当前场景在这一集里的序号）
+    step_no = 0
+    if callable(get_step_no):
+        try:
+            step_no = int(get_step_no() or 0)
+        except (TypeError, ValueError):
+            step_no = 0
+    if step_no > 0:
+        ttk.Radiobutton(
+            _story_box, text=f"提取第 {step_no} 步（从封面/信息图取出这一步，画成单张场景图）",
+            value="step", variable=narrative_var,
+        ).pack(anchor=tk.W, after=story_buttons[-1])
+    elif narrative_var.get() == "step":
+        narrative_var.set("narration")
 
     text_box = ttk.LabelFrame(groups, text="说明文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
@@ -195,8 +210,14 @@ def open_picture_prompt_dialog(
 
     def refresh(*_args) -> None:
         extract = task_var.get() == "extract"
-        for btn in text_buttons + story_buttons + field_buttons:
+        step_mode = narrative_var.get() == "step"
+        for btn in story_buttons:
             btn.configure(state=("disabled" if extract else "normal"))
+        for btn in text_buttons + field_buttons:
+            btn.configure(state=("disabled" if extract or step_mode else "normal"))
+        if step_mode:
+            hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格），其他选项不进提示词。")
+            return
         edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
         hint.config(foreground=("#1f5fbf" if edit_only else ""))
         if edit_only:
@@ -213,6 +234,33 @@ def open_picture_prompt_dialog(
         dlg.destroy()
 
     def on_go(backend: str = "grok") -> None:
+        if narrative_var.get() == "step" and step_no > 0:
+            # 提取第 N 步：沿用 Step Image 提示词，当前选中的图当输入，结果走图片修改的正常回填
+            scene = get_scene() if get_scene is not None else None
+            path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
+            if not (isinstance(path, str) and path and os.path.isfile(path)):
+                messagebox.showwarning("图片修改", "当前场景没有可用的图，提取不了第几步。", parent=dlg)
+                return
+            style = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
+            prompt = config_prompt.build_step_image_clipbody(
+                step_no,
+                visual_style=style,
+                main_character=main_character or "",
+                keep_style=task_var.get() != "restyle",
+                scene_caption=str(scene.get("caption") or ""),
+                scene_visual=str(scene.get("visual") or ""),
+            )
+            aspect = config_prompt.output_aspect_line(_project_video_size())
+            if aspect:
+                prompt = aspect + "\n\n" + prompt
+            remember()
+            dlg.destroy()
+            if callable(open_manual):
+                try:
+                    open_manual(prompt, [path], backend)
+                except TypeError:
+                    open_manual(prompt, [path])
+            return
         extract = task_var.get() == "extract"
         edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""

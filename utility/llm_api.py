@@ -1408,8 +1408,73 @@ class LLMApi:
         selected_model.trace("w", on_model_changed)
         on_model_changed()
 
+        manual_since = [time.time()]  # 窗口打开 / CLI自动 开始的时间：手动下载的视频要比它新
+
+        def _newest_download_video():
+            """Windows「下载」文件夹里最新的视频（mp4/webm/mov）。优先取 manual_since 之后的；没有就取最新的。
+            返回 (路径, 是否是这次之后下载的)；一个都没有返回 ("", False)。"""
+            folder = os.path.join(os.path.expanduser("~"), "Downloads")
+            try:
+                files = [os.path.join(folder, n) for n in os.listdir(folder)
+                         if n.lower().endswith((".mp4", ".webm", ".mov"))]
+            except OSError:
+                return "", False
+            files = [f for f in files if os.path.isfile(f) and os.path.getsize(f) > 10_000]
+            if not files:
+                return "", False
+            newest = max(files, key=os.path.getmtime)
+            return newest, os.path.getmtime(newest) >= manual_since[0] - 5
+
+        def _manual_video_on_ok() -> bool:
+            """CLI自动 没成功、按「确定」：拿「下载」里最新的视频，像自动成功一样交出去（复制进视频目录）。"""
+            path, fresh = _newest_download_video()
+            if not path:
+                cli_status.config(text="「下载」文件夹里没有视频（mp4/webm/mov）。请先把 Gemini / Grok 的视频下载下来，或用「选视频文件…」。",
+                                  foreground="#c00000")
+                return False
+            if not fresh:
+                cli_status.config(text=f"「下载」里没有这次之后的新视频，用最新的一个：{os.path.basename(path)}", foreground="#b36b00")
+            else:
+                cli_status.config(text=f"用「下载」里的视频：{os.path.basename(path)}", foreground="#1f7f1f")
+            dialog.update_idletasks()
+            target = path
+            if file_dest_dir:
+                try:
+                    import shutil
+
+                    os.makedirs(file_dest_dir, exist_ok=True)
+                    base, ext = os.path.splitext(os.path.basename(path))
+                    target = os.path.join(file_dest_dir, base + ext)
+                    n = 1
+                    while os.path.exists(target):
+                        target = os.path.join(file_dest_dir, f"{base}_{n}{ext}")
+                        n += 1
+                    shutil.copy2(path, target)
+                except OSError as exc:
+                    print(f"⚠️ 复制下载的视频失败，直接用原文件：{exc}")
+                    target = path
+            print(f"[手动结果] 视频：{path} -> {target}")
+            _finish_with_file(target)
+            return True
+
         def on_ok():
             model = selected_model.get()
+            if model == MANUAL and not cli_busy[0]:
+                typed = response_text.get("1.0", tk.END).strip()
+                # 视频：没贴文字时，从「下载」里取最新视频，走和自动成功一样的文件结果
+                if cli_kind == "video" and not typed and response_image[0] is None:
+                    _manual_video_on_ok()
+                    return
+                # 图片：「返回的图」还空着、也没贴文字 → 从剪贴板取图；取不到就提示并留着窗口
+                if paste_image_handler[0] is not None and response_image[0] is None and not typed and image_paths:
+                    img = self._image_from_clipboard()
+                    if img is None:
+                        try:
+                            cli_status.config(text="没有结果图：请把处理好的图复制到剪贴板（或贴到「返回的图」）再按确定。", foreground="#c00000")
+                        except tk.TclError:
+                            pass
+                        return
+                    paste_image_handler[0](img=img)
             result_model[0] = model
             if model == MANUAL:
                 text = response_text.get("1.0", tk.END).strip()
@@ -1524,6 +1589,7 @@ class LLMApi:
             if cli_btn_ref[0] is not None:
                 cli_btn_ref[0].state(["disabled"])
             cli_status.config(text="CLI自动 开始 …", foreground="#1f5fbf")
+            manual_since[0] = time.time()
             video_backend = video_backend_var.get()  # 主线程里取，后台线程不碰 Tk 变量
 
             def _work():

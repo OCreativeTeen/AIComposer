@@ -93,6 +93,7 @@ def open_video_prompt_dialog(
     simple_actions=None,
     saved_choice=None,
     save_choice=None,
+    on_story_style=None,
 ) -> None:
     """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选叙事风格、画面、背景、演进、运镜、动画，
     再打开手动窗口，里面放提示词和画面）。
@@ -135,17 +136,15 @@ def open_video_prompt_dialog(
     actions = ttk.Frame(advanced)
     actions.pack(fill=tk.X)
 
-    saved_narrative = "narration"
     saved_text = "erase"
     saved_fyi = clean_fyi_history(saved_choice)
     if isinstance(saved_choice, dict):
-        picked = saved_choice.get("narrative")
-        if picked in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
-            saved_narrative = picked
         picked_text = saved_choice.get("text")
         if picked_text in {k for k, _ in config_prompt.FLOW_CAPTION_CHOICES}:
             saved_text = picked_text
-    narrative_var = tk.StringVar(value=saved_narrative)
+    # 叙事风格 = 主窗口「全场内容 · 故事风格」（project story_style，唯一存值）；旧的 video_prompt.narrative 只在迁移时读一次。
+    style_var = tk.StringVar(value=config_prompt.project_story_style())
+    narrative_var = tk.StringVar(value=config_prompt.story_style_narrative(style_var.get()))
     text_var = tk.StringVar(value=saved_text)
     # 视频长度：不进提示词，作为 extra 参数交给 CLI自动（Grok Imagine 视频时长）。记在 video_prompt["duration"]。
     saved_duration = saved_choice.get("duration") if isinstance(saved_choice, dict) else None
@@ -179,7 +178,39 @@ def open_video_prompt_dialog(
 
     narrative_row = ttk.Frame(body)
     narrative_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 8))
-    pack_narrative_choices(narrative_row, narrative_var, padx=(0, 8), actor_var=actor_var)
+    style_box = ttk.LabelFrame(narrative_row, text="叙事风格（= 故事风格）", padding=(8, 4))
+    style_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
+    for value, label in config_prompt.STORY_STYLE_CHOICES:
+        ttk.Radiobutton(style_box, text=label, value=value, variable=style_var).pack(anchor=tk.W)
+    style_note = ttk.Label(style_box, foreground="#1f5fbf", wraplength=340, justify=tk.LEFT)
+    style_note.pack(anchor=tk.W, pady=(4, 0))
+
+    def _on_style(*_a) -> None:
+        key = config_prompt.normalize_story_style(style_var.get()) or config_prompt.STORY_STYLE_CHOICES[0][0]
+        narrative_var.set(config_prompt.story_style_narrative(key))
+        style_note.config(text=config_prompt.story_style_mode_text(key, bool(actor_var.get())))
+        if on_story_style is not None:
+            try:
+                on_story_style(key)  # 写回 project story_style，并同步主窗口的「故事风格」
+            except Exception as exc:  # noqa: BLE001
+                print(f"视频提示：故事风格没有同步：{exc}")
+
+    def _resync_style(_e=None) -> None:
+        """主窗口那边改了故事风格：窗口拿到焦点时跟上。"""
+        key = config_prompt.project_story_style()
+        if key != style_var.get():
+            style_var.set(key)
+
+    style_var.trace_add("write", _on_style)
+    actor_var.trace_add("write", lambda *_a: style_note.config(
+        text=config_prompt.story_style_mode_text(style_var.get(), bool(actor_var.get()))))
+    dlg.bind("<FocusIn>", _resync_style, add="+")
+    style_note.config(text=config_prompt.story_style_mode_text(style_var.get(), bool(actor_var.get())))
+    if on_story_style is not None:
+        try:
+            on_story_style(style_var.get())  # 迁移：旧项目只有 video_prompt.narrative 时，这里写成 story_style
+        except Exception as exc:  # noqa: BLE001
+            print(f"视频提示：故事风格没有同步：{exc}")
     text_box = ttk.LabelFrame(narrative_row, text="说明文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
     for value, label in config_prompt.FLOW_CAPTION_CHOICES:
@@ -233,7 +264,6 @@ def open_video_prompt_dialog(
     def current_choice() -> dict:
         return {
             "duration": duration_var.get(),
-            "narrative": narrative_var.get(),
             "text": text_var.get(),
             "visual": bool(visual_var.get()),
             "speaking": bool(speaking_var.get()),
@@ -317,6 +347,7 @@ def open_video_prompt_dialog(
                     language=language or "",
                     host_narrator=host_narrator or "",
                     narrative=narrative_var.get(),
+                    story_style=style_var.get(),
                     text=text_var.get(),
                     **field_kw,
                 )
@@ -332,6 +363,7 @@ def open_video_prompt_dialog(
                     camera=camera_var.get(),
                     motion=motion_var.get(),
                     narrative=narrative_var.get(),
+                    story_style=style_var.get(),
                     text=text_var.get(),
                     **field_kw,
                 )

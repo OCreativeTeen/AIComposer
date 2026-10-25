@@ -933,13 +933,13 @@ def _env_list(name: str, default: str, sep: str = ",") -> list:
 
 
 # 本机 Strata（OpenAI 兼容）
-STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.185:8080/v1")
+STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.30:8080/v1")
 # Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
-VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://192.168.1.36:17493")
+VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://192.168.1.30:17493")
 # 远程转写服务（AudioTranscriber.api_url）
 TRANSCRIBE_URL = _env("TRANSCRIBE_URL", "http://10.0.0.231:9001/transcribe")
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
-COMFYUI_URL = _env("COMFYUI_URL", "http://10.0.0.x:8188")  # dead placeholder
+COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placeholder
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
 COMFYUI_WORKFLOW_DIR = _env("COMFYUI_WORKFLOW_DIR", r"\\10.0.0.179\wan22\ComfyUI\user\default\workflows")
 WAN_I2V_URL = _env("WAN_I2V_URL", "http://10.0.0.231:9001")
@@ -2522,9 +2522,6 @@ CHANNEL_CONFIG = {
             ("Series · Story Speak", config_channel.COUNSELING_SERIES_STORY_SPEAK),
             ("Series · Story Act", config_channel.COUNSELING_SERIES_STORY_ACT),
             (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),
-            (config_channel.SCENE_SUMMARY_IMAGE_LABEL, config_channel.SCENE_SUMMARY_IMAGE_TEMPLATE_MARK),
-            (config_channel.STEP_IMAGE_LABEL, config_channel.STEP_IMAGE_TEMPLATE_MARK),
-            (config_channel.SERIES_DIRECT_LABEL, config_channel.SERIES_DIRECT_DEFAULT),
         ],
 
         "channel_prompt": {
@@ -2560,8 +2557,6 @@ CHANNEL_CONFIG = {
 
         "scenes_prompt_choices": [
             (config_channel.STEP_STORY_LABEL, config_channel.FLYLINK_STORY_STEP),
-            (config_channel.SCENE_SUMMARY_IMAGE_LABEL, config_channel.SCENE_SUMMARY_IMAGE_TEMPLATE_MARK),
-            (config_channel.STEP_IMAGE_LABEL, config_channel.STEP_IMAGE_TEMPLATE_MARK),
             ("Mini Story", config_channel.FLYLINK_STORY_MINI),
             ("Long Story", config_channel.FLYLINK_STORY_LONG),
             ("Content to Scenes", config_channel.FLYLINK_CONTENT_SCENES)

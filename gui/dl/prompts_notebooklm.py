@@ -351,6 +351,19 @@ def _story_setting_block(video_detail) -> str:
         "    ** If the source material is set elsewhere or in another time, retell it inside this setting."
     )
 
+def _without_host_cast(video_detail):
+    """人物栏名单去掉讲员(只给提示词用,不改原数据)。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    cast = _story_cast_text(vd)
+    if cast is None:
+        return vd
+    rows = [r for r in project_manager.actor_entries(cast) if r.get("role") != "host"]
+    out = dict(vd)
+    out["story_actors"] = project_manager.format_actor_entries(rows)
+    out.pop("narrator", None)
+    return out
+
+
 def _build_notebooklm_prompt_for_row(
     mgr,
     video_detail: dict,
@@ -370,9 +383,15 @@ def _build_notebooklm_prompt_for_row(
 
     ``visual_style``：故事窗所选画面风格（config.VISUAL_STYLE_OPTIONS），非空时写进提示词。
     """
+    no_host = config_channel.STEP_STORY_NO_HOST_MARK in (template or "")
+    if no_host:
+        # t103u: Step Story = Story Speak 分步版,只有人物对话:从人物栏名单里去掉讲员
+        video_detail = _without_host_cast(video_detail)
     ctx = _notebooklm_prompt_context_from_video_detail(
         mgr, video_detail, instruction=instruction
     )
+    if no_host:
+        ctx["narrator"] = ""
     if content_override is not None:
         ctx["content"] = (content_override or "").strip()
     if topic:
