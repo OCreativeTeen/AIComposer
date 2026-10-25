@@ -2108,9 +2108,33 @@ class MagicWorkflow(EpisodeOpsMixin):
         if n_scenes <= 0:
             return
 
+        # 封面 + 分页 PDF 两种以上可选：弹窗让用户挑（点封面 / 点 PDF / 都不用 = 原默认）
+        self._seed_cover_override = ""
+        multi = isinstance(scene_list, list) and len(scene_list) > 1
+        covers = [c for c in (project_manager.get_cover_images(pc) or []) if isinstance(c, str) and os.path.isfile(c)]
+        pdf_opt = (pc.get("slide") or "").strip() if multi else ""
+        if pdf_opt and not os.path.isfile(pdf_opt):
+            pdf_opt = ""
+        picked = None
+        if len(covers) + (1 if pdf_opt else 0) >= 2:
+            picked = self._ask_cover_or_pdf(covers, pdf_opt, n_scenes)
+            if not picked:
+                # 都不用 / 关窗：当作没有封面、没有 PDF；add_story_scene 已随机填好频道图和 clip 视频
+                print("ℹ️ 新项目：不用封面 / PDF，场景保留随机的频道图片和 clip 视频")
+                return
+        if picked and picked[0] == "cover":
+            self._seed_cover_override = picked[1]
+            if multi:
+                self._seed_scenes_from_cover(pc)
+                return
+
         # 多场景：用幻灯片 PDF 逐页对应 clip_image
         if isinstance(scene_list, list) and len(scene_list) > 1:
             slide_pdf = (pc.get("slide") or "").strip()
+            if not (picked and picked[0] == "pdf") and (not slide_pdf or not os.path.isfile(slide_pdf)) and n_scenes <= 4:
+                # 没有分页 PDF、只有 2-4 场：预览里的封面图给每一场当 clip_image / clip_image_last
+                if self._seed_scenes_from_cover(pc):
+                    return
             if not slide_pdf or not os.path.isfile(slide_pdf):
                 print("⚠️ 多场景但 PROJECT_CONFIG 无可用 slide PDF，跳过封面导入")
                 return
@@ -2172,17 +2196,10 @@ class MagicWorkflow(EpisodeOpsMixin):
         # 单场景：封面图 → clip_image；封面成片 → clip
         if n_scenes == 1:
             scene = self.scenes[0]
-            cover = project_manager.get_primary_cover_image(pc)
+            cover = self._seed_cover_path(pc)
             cover_video = (pc.get("cover_video") or "").strip()
             if cover:
-                try:
-                    ext = os.path.splitext(cover)[1].lower() or ".webp"
-                    if ext not in (".webp", ".png", ".jpg", ".jpeg"):
-                        ext = ".webp"
-                    refresh_scene_media(scene, "clip_image", ext, cover, make_replacement_copy=True)
-                    print("✅ 已将封面图设为单场景 clip_image")
-                except Exception as e:
-                    print(f"⚠️ 设置封面 clip_image 失败: {e}")
+                self._seed_scenes_from_cover(pc)
             elif not cover_video or not os.path.isfile(cover_video):
                 print("⚠️ 单场景但 PROJECT_CONFIG 无可用 cover_image / cover_video，跳过封面导入")
                 return
@@ -2192,6 +2209,123 @@ class MagicWorkflow(EpisodeOpsMixin):
                     print(f"✅ 已将封面成片设为单场景 clip: {cover_video}")
                 except Exception as e:
                     print(f"⚠️ 设置封面 clip 失败: {e}")
+
+    def _seed_cover_path(self, pc: dict) -> str:
+        """建项目时给场景用的封面：封面列表里最新的一张（最后追加的，例如刚回来的信息图）。"""
+        override = getattr(self, "_seed_cover_override", "") or ""
+        if override and os.path.isfile(override):
+            return override
+        covers = [c for c in (project_manager.get_cover_images(pc) or []) if isinstance(c, str) and os.path.isfile(c)]
+        return covers[-1] if covers else ""
+
+    @staticmethod
+    def _has_own_clip_image(scene: dict) -> bool:
+        """场景有"自己的"首图：不是 add_story_scene 随机填进去的那张频道图（zero_image 的拷贝）。"""
+        import filecmp
+
+        clip = get_file_path(scene, "clip_image")
+        if not clip:
+            return False
+        zero = get_file_path(scene, "zero_image")
+        try:
+            if zero and filecmp.cmp(clip, zero, shallow=False):
+                return False
+        except OSError:
+            pass
+        return True
+
+    def _ask_cover_or_pdf(self, covers: list, pdf_path: str, n_scenes: int):
+        """模态小窗：每张封面一个缩略图（点了就用它），分页 PDF 一个按钮（带页数），都不用 = 原默认。
+        返回 ("cover", path) / ("pdf", path) / None。"""
+        root = tk._default_root
+        if root is None:
+            return None
+        from PIL import Image, ImageTk
+
+        result = [None]
+        win = tk.Toplevel(root)
+        win.title("新项目：场景图用哪个？")
+        win.transient(root)
+        win.resizable(False, False)
+        frm = tk.Frame(win, padx=12, pady=10)
+        frm.pack(fill=tk.BOTH, expand=True)
+        covers_ok = n_scenes <= 4
+        tip = f"共 {n_scenes} 场。点一张封面：拷进每一场的首图 / 尾图（已有首图的场不动）。"
+        if not covers_ok:
+            tip = f"共 {n_scenes} 场，超过 4 场，封面不能用；可以用 PDF 分页。"
+        tk.Label(frm, text=tip, justify=tk.LEFT, wraplength=640).pack(anchor=tk.W, pady=(0, 8))
+
+        def pick(val):
+            result[0] = val
+            win.destroy()
+
+        row = tk.Frame(frm)
+        row.pack(anchor=tk.W)
+        win._thumbs = []
+        for i, path in enumerate(covers):
+            cell = tk.Frame(row, padx=4, pady=4)
+            cell.grid(row=i // 5, column=i % 5, sticky=tk.N)
+            try:
+                im = Image.open(path)
+                im.thumbnail((160, 160))
+                ph = ImageTk.PhotoImage(im)
+                win._thumbs.append(ph)
+                btn = tk.Button(cell, image=ph, command=lambda p=path: pick(("cover", p)))
+            except Exception:  # noqa: BLE001
+                btn = tk.Button(cell, text="(预览失败)", width=20, height=6, command=lambda p=path: pick(("cover", p)))
+            if not covers_ok:
+                btn.configure(state=tk.DISABLED)
+            btn.pack()
+            tk.Label(cell, text=os.path.basename(path), wraplength=160, font=("Arial", 8)).pack()
+        if pdf_path:
+            try:
+                from utility.pdf_util import _pdf_page_count
+
+                pages = int(_pdf_page_count(pdf_path) or 0)
+            except Exception:  # noqa: BLE001
+                pages = 0
+            cell = tk.Frame(row, padx=4, pady=4)
+            cell.grid(row=len(covers) // 5, column=len(covers) % 5, sticky=tk.N)
+            tk.Button(
+                cell, text=f"📄 PDF\n{pages} 页" if pages else "📄 PDF", font=("Arial", 14),
+                width=8, height=4, command=lambda: pick(("pdf", pdf_path)),
+            ).pack()
+            tk.Label(cell, text=os.path.basename(pdf_path), wraplength=160, font=("Arial", 8)).pack()
+        tk.Button(frm, text="都不用（随机频道素材）", command=lambda: pick(None)).pack(anchor=tk.E, pady=(10, 0))
+        win.protocol("WM_DELETE_WINDOW", lambda: pick(None))
+        win.update_idletasks()
+        try:
+            x = root.winfo_rootx() + max(0, (root.winfo_width() - win.winfo_width()) // 2)
+            y = root.winfo_rooty() + max(0, (root.winfo_height() - win.winfo_height()) // 3)
+            win.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            pass
+        win.grab_set()
+        win.focus_force()
+        root.wait_window(win)
+        return result[0]
+
+    def _seed_scenes_from_cover(self, pc: dict) -> bool:
+        """1-4 场 + 有封面：封面拷进每一场的 clip_image 和 clip_image_last（已有 clip_image 的场不动）。"""
+        cover = self._seed_cover_path(pc)
+        if not cover or not (1 <= len(self.scenes) <= 4):
+            return False
+        ext = os.path.splitext(cover)[1].lower() or ".webp"
+        if ext not in (".webp", ".png", ".jpg", ".jpeg"):
+            ext = ".webp"
+        done = 0
+        for scene in self.scenes:
+            if not isinstance(scene, dict) or self._has_own_clip_image(scene):
+                continue
+            try:
+                refresh_scene_media(scene, "clip_image", ext, cover, make_replacement_copy=True)
+                if not get_file_path(scene, "clip_image_last"):
+                    refresh_scene_media(scene, "clip_image_last", ext, cover, make_replacement_copy=True)
+                done += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠️ 封面写入场景 clip_image 失败: {e}")
+        print(f"✅ 封面 {os.path.basename(cover)} 已拷进 {done}/{len(self.scenes)} 场的 clip_image / clip_image_last")
+        return True
 
     def get_image_main_scenes(self):
         """获取所有标记为IMAGE_MAIN的场景，用于制作缩略图"""
@@ -2473,6 +2607,7 @@ class MagicWorkflow(EpisodeOpsMixin):
         description=None,
         *,
         telegram_title: str | None = None,
+        send_telegram: bool = True,
     ):
         """
         publish_at: None 表示立即按 privacy 上传（默认不公开列出）。
@@ -2484,7 +2619,9 @@ class MagicWorkflow(EpisodeOpsMixin):
         同步版本 = upload_video_file（可放后台线程）+ finish_video_upload（要在主线程）。
         """
         up = self.upload_video_file(youtube_title, publish_at=publish_at, description=description)
-        return self.finish_video_upload(up, publish_at=publish_at, telegram_title=telegram_title)
+        return self.finish_video_upload(
+            up, publish_at=publish_at, telegram_title=telegram_title, send_telegram=send_telegram
+        )
 
     def upload_video_file(
         self,
@@ -2540,7 +2677,9 @@ class MagicWorkflow(EpisodeOpsMixin):
             "title": youtube_title,
         }
 
-    def finish_video_upload(self, up: dict, publish_at=None, *, telegram_title: str | None = None):
+    def finish_video_upload(
+        self, up: dict, publish_at=None, *, telegram_title: str | None = None, send_telegram: bool = True
+    ):
         """上传完成后的收尾（主线程）：记 published_youtube_video_id、Telegram。返回 Telegram 状态行。"""
         video_id = up.get("video_id")
         summary = up.get("summary") or ""
@@ -2571,10 +2710,33 @@ class MagicWorkflow(EpisodeOpsMixin):
         if vid_s:
             watch = f"https://www.youtube.com/watch?v={vid_s}"
 
-        tg_lines: list[str] = []
-        try:
-            from utility.telegram_notify import notify_youtube_publish_extras
+        # t99u: 把 unlisted 链接 + 标题/说明记到频道列表的这一项(「发布 Telegram」用)
+        if pc is not None and watch:
+            from datetime import datetime as _dt
+            from utility.telegram_youtube_relay import AT_KEY, DESC_KEY, ID_KEY, TITLE_KEY, URL_KEY
 
+            row_updates = {
+                URL_KEY: watch,
+                ID_KEY: vid_s,
+                TITLE_KEY: (telegram_title or youtube_title or "").strip(),
+                DESC_KEY: summary,
+                AT_KEY: _dt.now().strftime("%Y-%m-%d %H:%M"),
+            }
+            ok_row, list_path, err_row = project_manager.save_list_row_fields_for_config(pc, row_updates)
+            print(f"✓ YouTube 链接已写入列表: {list_path}" if ok_row else f"⚠ YouTube 链接未写入列表: {err_row} ({list_path})")
+            up["watch_url"] = watch
+
+        tg_lines: list[str] = []
+        if not send_telegram:
+            return tg_lines  # t98u: 只发布 YouTube
+        try:
+            from utility.telegram_notify import notify_youtube_publish_extras, telegram_publish_enabled
+
+            if not telegram_publish_enabled():
+                tg_lines = ["Telegram 未发送：未配置 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS（逗号分隔）（D:\\AIComposer\\.env）。"]
+                for line in tg_lines:
+                    print(line)
+                return tg_lines
             tg_lines = notify_youtube_publish_extras(
                 mp4_path=final_video_path,
                 watch_url=watch,

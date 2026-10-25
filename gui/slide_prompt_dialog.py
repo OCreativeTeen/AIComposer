@@ -393,6 +393,8 @@ def open_slide_prompt_dialog(
         on_material_toggle()
     elif initial_source == "scenes" and has_scenes:
         pass
+    elif initial_source != "analysis" and story_mode and has_scenes:
+        pass  # 没记过来源（或记的来源现在不可用）：有场景就优先用场景
     elif analysis_ok:
         analysis_var.set(True)
         on_analysis_toggle()
@@ -584,6 +586,22 @@ def open_slide_prompt_dialog(
             cast_block=_safe_cast_block(get_cast_block, output_var.get(), "panel"),
             source_kind="material",
         )
+        if output_var.get() == "infographic":
+            # 材料 PDF 做信息图：每一页当一场，信息图按页序分成同样多的部分
+            try:
+                from utility.pdf_util import _pdf_page_count
+
+                pages = int(_pdf_page_count(material_pdf) or 0)
+            except Exception as exc:  # noqa: BLE001
+                print(f"{title}：数不出材料 PDF 页数：{exc}")
+                pages = 0
+            if pages > 0:
+                prompt = (prompt or "").rstrip() + "\n\n" + (
+                    f"素材 PDF 共 {pages} 页：每一页就是一场。信息图只有一张，分成 {pages} 个部分，每页一个部分，"
+                    f"按页序排列（第 1 页在最前）。\n"
+                    f"The source PDF has {pages} pages. Treat each page as one scene. Make one single infographic with "
+                    f"exactly {pages} sections, one per page, in page order (page 1 first). Do not merge, skip, or add sections."
+                )
         try:
             copy_text(prompt)
         except (tk.TclError, OSError):

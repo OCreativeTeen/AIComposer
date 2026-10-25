@@ -48,8 +48,13 @@ class StoryActorPanel(ttk.Frame):
     ``style``：可调用，返回当前画面风格（找讲员形象图用）。
     """
 
-    def __init__(self, master, *, text: str = "", on_change=None, person_dir=None, style=None):
+    def __init__(self, master, *, text: str = "", on_change=None, person_dir=None, style=None,
+                 on_row_edit=None, on_row_delete=None, on_reorder=None):
         super().__init__(master)
+        # 改 / 删一个演员时通知外面（STORY 预览：同步改所有场景的 actor / speaking）
+        self._on_row_edit = on_row_edit
+        self._on_row_delete = on_row_delete
+        self._on_reorder = on_reorder
         self._text = project_manager.normalize_actor_text(text or "")
         self._on_change = on_change
         self._person_dir = person_dir
@@ -190,6 +195,11 @@ class StoryActorPanel(ttk.Frame):
             self._skip_release = False
             return
         if moved:
+            if callable(self._on_reorder):
+                try:
+                    self._on_reorder([dict(r) for r in self._rows_from_chips()])
+                except Exception as exc:  # noqa: BLE001
+                    print(f"演员栏：同步场景顺序失败 {exc}")
             # 人物在新顺序里重新编号，讲员留在被放到的位置。
             self.set_text(project_manager.format_actor_entries(self._rows_from_chips()))
 
@@ -207,9 +217,19 @@ class StoryActorPanel(ttk.Frame):
         rows = self._rows_from_chips()
         who = self._chip_text(rows[idx])
         if messagebox.askyesno("人物", f"从名单里删掉「{who}」吗？", parent=self):
+            self._notify_row("delete", rows[idx])
             rows.pop(idx)
             self.set_text(project_manager.format_actor_entries(rows))
         return "break"
+
+    def _notify_row(self, what: str, old_row: dict, new_row: dict | None = None) -> None:
+        cb = self._on_row_edit if what == "edit" else self._on_row_delete
+        if not callable(cb):
+            return
+        try:
+            cb(dict(old_row), dict(new_row)) if what == "edit" else cb(dict(old_row))
+        except Exception as exc:  # noqa: BLE001
+            print(f"演员栏：同步场景失败 {exc}")
 
     # ---------- 形象图 ----------
     def _style_now(self) -> str:
@@ -305,6 +325,7 @@ class StoryActorPanel(ttk.Frame):
         rows = self._rows_from_chips()
         if new_row is None:  # 删除
             if index is not None and index < len(rows):
+                self._notify_row("delete", rows[index])
                 rows.pop(index)
         elif index is None:
             if new_row.get("role") == "host":
@@ -312,6 +333,7 @@ class StoryActorPanel(ttk.Frame):
             else:
                 rows.append(new_row)
         else:
+            self._notify_row("edit", rows[index], new_row)
             rows[index] = new_row
         if len(rows) > 4:
             messagebox.showinfo("人物", "一场最多四个人（含讲员），多出来的不会进画面。", parent=self)
@@ -380,6 +402,18 @@ class ActorEditDialog(tk.Toplevel):
         name_entry.bind("<FocusOut>", lambda _e: self._show_portrait())
         ttk.Label(self.person_frm, text="例：woman/mature/chinese/封氏", foreground="#777").pack(anchor=tk.W, pady=(2, 0))
 
+        self.voice_var = tk.StringVar()
+        self.voice_frm = ttk.Frame(left)
+        ttk.Label(self.voice_frm, text="\u58f0\u97f3", width=6).pack(side=tk.LEFT)
+        self.voice_box = ttk.Combobox(self.voice_frm, textvariable=self.voice_var, values=(), width=14, state="readonly")
+        self.voice_box.pack(side=tk.LEFT)
+        for w in (host_combo,):
+            w.bind("<<ComboboxSelected>>", lambda _e: (self._show_portrait(), self._refresh_voice()), add="+")
+        for child in self.person_frm.winfo_children():
+            for cb in child.winfo_children():
+                if isinstance(cb, ttk.Combobox):
+                    cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_voice(), add="+")
+
         btns = ttk.Frame(left)
         btns.pack(side=tk.BOTTOM, anchor=tk.W, pady=(10, 0))
         ttk.Button(btns, text="贴图 (Ctrl+V)", command=self._paste).pack(side=tk.LEFT, padx=(0, 4))
@@ -411,7 +445,43 @@ class ActorEditDialog(tk.Toplevel):
         else:
             self.host_frm.pack_forget()
             self.person_frm.pack(anchor=tk.W)
+        self.voice_frm.pack_forget()
+        self.voice_frm.pack(anchor=tk.W, pady=(4, 0))
+        self._refresh_voice()
         self._show_portrait()
+
+    def _refresh_voice(self) -> None:
+        """t95u: \u58f0\u97f3\u4e0b\u62c9:\u7528\u6237\u9009\u5b9a\u4f18\u5148,\u5426\u5219\u6309\u6027\u522b/\u5e74\u9f84/\u65cf\u88d4\u9ed8\u8ba4\u3002"""
+        import config_prompt
+
+        row = self._row()
+        opts = tuple(config_prompt.voice_choices_for_actor(row.get("body") or ""))
+        self.voice_box.configure(values=opts)
+        cur = self.voice_var.get()
+        if cur not in opts:
+            self.voice_var.set(config_prompt.chosen_actor_voice(row.get("body") or "", row["role"]) if opts else "")
+
+    def _save_voice(self, row: dict) -> None:
+        import config_prompt
+
+        voice = (self.voice_var.get() or "").strip()
+        pc = project_manager.PROJECT_CONFIG
+        if not voice or not isinstance(pc, dict):
+            return
+        key = config_prompt.actor_voice_storage_key(row.get("body") or "", row["role"])
+        if not key:
+            return
+        table = pc.get("actor_voices")
+        if not isinstance(table, dict):
+            table = {}
+            pc["actor_voices"] = table
+        if table.get(key) == voice:
+            return
+        table[key] = voice
+        try:
+            project_manager.save_project_config(parent=self.panel.winfo_toplevel())
+        except Exception:  # noqa: BLE001
+            pass
 
     def _show_portrait(self) -> None:
         path = self.panel.portrait_path(self._row())
@@ -439,5 +509,6 @@ class ActorEditDialog(tk.Toplevel):
         if not (row.get("body") or "").strip():
             messagebox.showwarning("人物", "先选 / 填好这一位。", parent=self)
             return
+        self._save_voice(row)
         self.destroy()
         self.on_done(row)

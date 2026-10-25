@@ -1172,7 +1172,35 @@ def resolve_dynamic_scene_template(label: str, template: str, params: dict | Non
             params.get("episode") or 1,
             params.get("episodes") or SERIES_DIRECT_DEFAULT_EPISODES,
         )
+    elif is_series_label(label):
+        return series_episode_template(template, params.get("episode") or 1, params.get("episodes") or 1)
     return template
+
+
+def is_series_label(label: str) -> bool:
+    """四个 Series 选项（Podcast / Counselor / Story Speak / Story Act；旧名 Story Only 也算）。"""
+    low = (label or "").strip().lower()
+    return low.startswith("series") and not is_series_direct_label(label)
+
+
+def series_episode_template(template: str, episode=1, episodes=1) -> str:
+    """Series 选项 + 共 N 集（N > 1）：这一次只写第 k 集；N = 1 原样（整套节目）。"""
+    k, n = _clamp_episode(episode, episodes)
+    if n <= 1:
+        return template
+    # Podcast 里那条"多集时的开场 / 收尾"由下面的连续性一句代替，不重复
+    body = "\n".join(
+        ln for ln in (template or "").split("\n") if not ln.startswith("    ** Several episodes: episode 1 opens the series")
+    )
+    head = (
+        f"*** THIS RUN: EPISODE {k} OF {n}\n"
+        f"    ** The material describes the whole series. Work out how it falls into {n} episodes and write only "
+        f"episode {k}: its part of the material, nothing from {_series_others(k, n)}, nothing the material lacks.\n"
+        f'    ** Every scene has "episode": "{k}". This replaces the EPISODES block and any other episode numbering below.\n'
+        + _series_continuity(k, n)
+        + "\n\n"
+    )
+    return head + body
 
 
 def visual_style_prompt_block(visual_style: str) -> str:
@@ -1186,6 +1214,23 @@ def visual_style_prompt_block(visual_style: str) -> str:
         "Do not name the style inside the JSON text."
     )
 
+
+
+STEP_STORY_NO_HOST_MARK = "There is NO 讲员, no narrator"
+# Step Story = Series · Story Speak 的分步版:只有故事人物对话,没有讲员 / 旁白 / 咨询师。
+STORY_SPEAK_CAST_RULES = """
+    ** Told as Series · Story Speak, like a film or a TV drama. ONLY the story people (人物) appear and speak. There is NO 讲员, no narrator, no host, no counselor, no storyteller, and no voice-over in any scene. If a 讲员 is listed anywhere else in this prompt, leave the 讲员 out.
+    ** The 人物 carry everything by talking to each other: ``speaking`` is their dialogue, said aloud in the scene, and ``visual`` supports it. Meaning, insight, and any small turn toward hope come through what they say and do, never through an explaining voice.
+    ** ``actor``: only 人物, at most four, joined with " | ", never ";". Each is ``人物N:gender/age band/ethnicity/name``, e.g. ``人物1:woman/mature/chinese/林芳 | 人物2:man/youth/chinese/小林``. Age band is kids, youth, teenager, mature, or senior; no age number. When the source is a picture or a PDF page, read the age band from how the person looks. The same person keeps the same id and age band in every scene. After each id add parentheses for this scene's emotion and action, e.g. ``人物1:woman/mature/chinese/林芳(低头,轻声)``; they must match ``visual``. Mood, gesture, and camera direction are not people.
+    ** ``speaking``: every line marked with <N>, N = that 人物's place in this scene's ``actor``, from 1. At most three speak; a fourth only appears. Never write <4>. There is no voiceover field.
+"""
+STORY_SPEAK_SPEAKING_FIELD = (
+    "The whole conversation in this scene, between the 人物 only (no narrator). Mark who speaks with <N>: "
+    "that person's place in actor, from 1. At most three people speak, so <N> is only 1, 2, or 3. "
+    "A fourth person in actor only appears. The same person continues until the next <N>. "
+    "Example: <1> xxx, xxx?<2> xxx?<1> xxx, xxx? In {language}."
+)
+STORY_SPEAK_ACTOR_FIELD = "人物1:woman/mature/chinese/林芳(低头,轻声) | 人物2:man/youth/chinese/小林(不安,搓着手)"
 
 
 COUNSELING_STORY_CORE = """
@@ -1212,6 +1257,7 @@ You are a psychological counselor and master of high-empathy storytelling.
 		* If more than one Scenes, they should conneced tighly following the emotional development of ONE story (a single relationship). And a typical Narrative Arc can be: Setup - Core Conflict - Shift (subtle turning point) - Ending (hopeful but not "everything solved")
 
     ** Execution & Style**
+        * Dialogue only between the story people, as in Series · Story Speak (rules in STEP 3). No narrator, no counselor voice.
         * Show, Don't Tell: Events are just vehicles; the emotional pattern is the destination. 
 			* NO clinical or academic language. NO therapy speeches, counseling notes.
 			* NO summarizing the "lesson," "moral," or the psychological insight at the end.
@@ -1219,31 +1265,16 @@ You are a psychological counselor and master of high-empathy storytelling.
         * If two people are in the life, most scenes are both of them. Both people speak inside ``speaking``, each with their own ``<N>``, said aloud, not as a private thought. They may trade lines. Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
 
 ## STEP 3 - (Json structure)
-    * (1) **Caption**: poetic, evocative title of the story & scene. 
-    * (2) **Voiceover**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
-        * Host look chosen for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, not a separate 人物.
-        * Position 2 says this field. That is the second person, or the narrator when 讲员 is in position 2.
-        * Exactly one story person, and you choose to include the host: this field is the host's line.
-        * The scene is only the host: ``speaking`` is the host, and this field is empty.
-    * (3) **Visual**: the story visual scene (all scenes (if more than 1) should be connected to express ONE story). No words painted on the image.
-        * Include the place, and what the people do to each other: a hand, a step back, walking side by side.
-        * When they move or answer, the picture may change — a cut, another angle, a closer shot. Write that change here so the video can cut.
-    * (4) **Speaking**: one powerful line, the FIRST actor, poignant 1st-person, daily life language.
-    * (5) **Actor**: everyone visible, at most four people in all, the one 讲员 included, then 讲员 if the narrator is in this scene. Join with " | ". Never use ";".
-        * There is no voiceover field. Every line is in ``speaking``, marked with ``<N>``. Only three people speak. The fourth only appears and has no line.
-        * Each 人物 has gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村``.
-        * Age band is kids, youth, teenager, mature, or senior. No age number. Without a name: woman/mature/chinese.
-        * When the source is a picture or a PDF page, read the age band from how that person looks. The words rarely give an age. A name in the picture or the text goes last. The same person keeps that age band in every scene.
-        * If the narrator is presenting this scene, ``讲员：{narrator}`` is position 1 and is not also a 人物.
-        * Mood, gesture, and camera direction are not people.
+""" + STORY_SPEAK_CAST_RULES + """
+    * Each scene has: caption (poetic, evocative title of the story & scene), visual (the story scene: the place and what the people do to each other; when they move or answer the picture may cut or change angle - write that here; no words painted on the image; all scenes express ONE story), speaking (the 人物 dialogue, poignant, daily-life language), actor.
 
     like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
         {{
             "caption": "Title in {language}.",
             "visual": "the story scene, their interaction, and any cut or angle change. about ###LENGTH### {language} char. No on-image text.",
-            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-            "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村 | 人物3：woman/kids/chinese"
+            "speaking": """ + '"' + STORY_SPEAK_SPEAKING_FIELD + '"' + """,
+            "actor": """ + '"' + STORY_SPEAK_ACTOR_FIELD + '"' + """
         }}
     ]
 
@@ -1543,6 +1574,7 @@ COUNSELING_TALK_SCENES = """
     ** Next several. A real moment from that life is told: how it repeats, what it costs. With guests, each scene is one exchange between host and guest(s). The visual shows that moment silently.
     ** Then the turn. A question (or, with only one voice, a turn in the telling) names what is underneath.
     ** Last 2–3. Land the episode. Come back to the opening moment and say what would be different. If another part remains in the material, the last line can point at it without telling that episode.
+    ** Several episodes: episode 1 opens the series by saying in a few natural sentences what these episodes will walk through and why it matters. A later episode opens by picking up where the previous one stopped, with no full recap. The last episode closes the whole series: gather in a few sentences what the episodes walked through and leave one warm, concrete takeaway, with no teaser.
 
 *** OUTPUT
     * JSON array in watch order. All text in {language}.
@@ -1640,10 +1672,8 @@ You are a senior aviation-industry storyteller and low-altitude economy analyst.
         * Dialogue: engineers, pilots, dispatchers, regulators, operators — natural speech, not white-paper tone.
 
 ## STEP 3 - (Json structure)
-    * (1) **Caption**: concise scene / story title.
-    * (2) **Voiceover**: 2–3 short rhythmic sentences — industry insight as field guidance, not textbook definition.
-    * (3) **Visual**: cinematic operational scene (connected across scenes if multi-scene).
-    * (4) **Speaking**: one powerful 1st-person line from operator, engineer, or pilot.
+""" + STORY_SPEAK_CAST_RULES + """
+    * Each scene has: caption (concise scene / story title), visual (cinematic operational scene, connected across scenes), speaking (the dialogue of operators, engineers, pilots, dispatchers - natural speech, not white-paper tone), actor. Every scene includes "episode": "1".
 
     Output (###STEP### scene(s)):
     [
@@ -1651,15 +1681,10 @@ You are a senior aviation-industry storyteller and low-altitude economy analyst.
             "episode": "1",
             "caption": "Title in {language}.",
             "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars. No on-image text.",
-            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-            "actor": "People in this picture, at most four altogether, counting the one narrator if this scene has one. There is no voiceover field. speaking holds every line. <N> is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "speaking": """ + '"' + STORY_SPEAK_SPEAKING_FIELD + '"' + """,
+            "actor": """ + '"' + STORY_SPEAK_ACTOR_FIELD + '"' + """
         }}
     ]
-
-    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. There is no voiceover field. ``speaking`` holds every line. ``<N>`` is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
-    ** One person and the host: add ``讲员：{narrator}`` after the story person. The host's lines stay inside ``speaking`` with that person's ``<N>``.
-    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. The host's lines are in ``speaking``, marked ``<1>``.
 
 --------------------------------------------------
 INPUT
@@ -2013,6 +2038,8 @@ COUNSELING_SERIES_STORY_SPEAK = COUNSELING_SERIES_STORY_ONLY
 COUNSELING_SERIES_STORY_ACT = _with_source_scene_rules(COUNSELING_SERIES_STORY_ACT)
 # 旧标签 → 新标签（存过的 scene_prompt_label）
 STORY_PROMPT_LABEL_RENAMES = {"Series · Story Only": "Series · Story Speak", "Series . Story Only": "Series · Story Speak"}
+# 图片分解 (Step Image) 和场景总图 (Scene Summary Image) 已从预览下拉里移走；
+# 旧项目存的这两个 label 不在下拉里，scene_editor 会自动回到频道下拉的第一项（默认项）。
 COMIC_STRIP_SCENES = _with_source_scene_rules(COMIC_STRIP_SCENES)
 
 

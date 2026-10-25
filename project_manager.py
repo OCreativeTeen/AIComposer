@@ -227,6 +227,23 @@ def save_list_row_summary_for_config(cfg: dict, summary: str) -> tuple[bool, str
 PENDING_PROJECT_TITLE_KEY = "project_title"
 
 
+def save_list_row_fields_for_config(cfg: dict, updates: dict) -> tuple[bool, str, str]:
+    """t99u: 把 ``updates`` 写进当前项目在频道列表里的那一行(和 summary 同一条路径)。返回 ``(ok, list_path, error)``。"""
+    lp, ix, _row = find_project_topic_list_row(cfg)
+    if ix < 0:
+        return False, lp, "未找到列表里的这一项"
+    try:
+        with open(lp, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+        if not (isinstance(arr, list) and 0 <= ix < len(arr) and isinstance(arr[ix], dict)):
+            return False, lp, "列表行不存在"
+        arr[ix].update(updates or {})
+        config.write_channel_list_json(lp, arr)
+    except (OSError, ValueError) as exc:
+        return False, lp, str(exc)
+    return True, lp, ""
+
+
 def apply_project_name_to_row(row: dict, name: str) -> None:
     """项目改名写进列表行：外层 ``title``（STORY 窗名称栏用的那个）；有 ``project_profile`` 时也写它的 ``video_title``，
     还没有项目时记在 ``project_title``，以后新建项目时用作成片名。"""

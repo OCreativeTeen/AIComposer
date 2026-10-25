@@ -160,7 +160,7 @@ def _patch_list_row(item: dict, updates: dict) -> None:
 
 
 def publish_current_story(
-    *, source_key: str | None = None, progress_cb=None, cancel_event=None
+    *, source_key: str | None = None, progress_cb=None, cancel_event=None, send_telegram: bool = True
 ) -> dict:
     """立即 unlisted 上传当前成片。返回 ``watch_url`` / ``video_id`` 等。
 
@@ -206,6 +206,11 @@ def publish_current_story(
     updates = {"publish": pub_str}
     if watch:
         updates["url"] = watch
+        updates.update({  # t99u: same fields as the GUI publish, used by 发布 Telegram
+            "published_youtube_url": watch, "published_youtube_video_id": vid_s,
+            "published_youtube_title": disp_name, "published_youtube_description": summary,
+            "published_youtube_at": pub_str,
+        })
     from gui.downloader import _apply_publish_create_date
 
     vd = dict(ctx["video_detail"])
@@ -219,7 +224,14 @@ def publish_current_story(
     try:
         from utility.telegram_notify import notify_youtube_publish_extras
 
-        tg_lines = notify_youtube_publish_extras(
+        from utility.telegram_notify import telegram_publish_enabled
+
+        if not send_telegram:
+            tg_lines = []
+        elif not telegram_publish_enabled():
+            tg_lines = ["Telegram 未发送：未配置 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS（逗号分隔）（D:\\AIComposer\\.env）。"]
+        else:
+          tg_lines = notify_youtube_publish_extras(
             mp4_path=mp4_path,
             watch_url=watch,
             title_line=disp_name,

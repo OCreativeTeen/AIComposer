@@ -240,6 +240,51 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         except Exception as exc:  # noqa: BLE001
             print(f"节目生成：内容来源没有记下：{exc}")
 
+    def _add_infographic_cover(path: str) -> None:
+        """信息图回来：追加成这一条的封面（cover_image 列表，不覆盖已有的）。
+        和封面导入同一流程：加水印 → gen_video/<名>.webp；没有水印配置就原图拷进 gen_video。"""
+        import shutil
+        from datetime import datetime
+
+        from gui.dl.cover_title import save_cover_image_as_gen_video_webp
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        src = os.path.join(os.path.dirname(path), f"Infographic_{stamp}{os.path.splitext(path)[1]}")
+        try:
+            shutil.copy2(path, src)  # 名字带时间，gen_video 里不会覆盖上一张信息图封面
+        except OSError:
+            src = path
+        try:
+            ok, dest, err = save_cover_image_as_gen_video_webp(
+                src, video_detail, channel=gui._channel_config_key(), cleanup_source=(src != path)
+            )
+            if not ok:
+                gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+                if not gen_dir:
+                    raise OSError(err or "没有 gen_video 目录")
+                os.makedirs(gen_dir, exist_ok=True)
+                dest = os.path.join(gen_dir, os.path.basename(src))
+                shutil.copy2(src, dest)
+                if src != path:
+                    try:
+                        os.remove(src)
+                    except OSError:
+                        pass
+                project_manager.append_cover_image(video_detail, os.path.abspath(dest))
+            gui._persist_video_detail_story(video_detail, parent=dlg)
+            ctx = getattr(dlg, "_summary_drop_ctx", None)
+            refresh = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+            if callable(refresh):
+                try:
+                    refresh()
+                except Exception:  # noqa: BLE001
+                    pass
+            n = len(project_manager.get_cover_images(video_detail))
+            print(f"节目生成：信息图已加为封面（共 {n} 张）：{dest}")
+            show_auto_close_popup(dlg, "信息图", f"信息图已加为这一条的封面（共 {n} 张）：\n{os.path.basename(dest)}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showwarning("信息图", f"信息图没能加为封面：{exc}\n{path}", parent=dlg)
+
     def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
                     actor_pdf: str = "", _cross: bool = False, extra_sources=None) -> None:
         def _open_file(path: str) -> None:
@@ -256,10 +301,37 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             except OSError as exc:
                 print(f"⚠️ 节目生成：移动到 working 失败，用原位置：{exc}")
             print(f"节目生成：已保存 {path}")
+            if kind == "infographic" and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                if not cover_state["added"]:
+                    cover_state["added"] = True
+                    _add_infographic_cover(path)
             try:
                 os.startfile(path)
             except OSError as exc:
                 messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=dlg)
+
+        cover_state = {"added": False}  # 这一次手动窗口：文件和粘贴的图只加一次封面
+
+        def _on_pasted_image(img) -> str | None:
+            """返回的图里手动粘贴的信息图：存成 png 再按 _add_infographic_cover 加为封面。"""
+            if cover_state["added"]:
+                print("节目生成：这次的信息图已加为封面，粘贴的图不再重复添加")
+                return None
+            from datetime import datetime
+
+            try:
+                os.makedirs(working, exist_ok=True)
+                path = os.path.join(working, f"Infographic_pasted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+                im = img
+                if getattr(im, "mode", "RGB") not in ("RGB", "RGBA"):
+                    im = im.convert("RGBA")
+                im.save(path, "PNG")
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showwarning("信息图", f"粘贴的信息图存不下来：{exc}", parent=dlg)
+                return None
+            cover_state["added"] = True
+            _add_infographic_cover(path)
+            return path
 
         extra = {"output": kind}
         # 画面比例：STORY 窗口第 1 行的选择 → NotebookLM 视频概览 / 信息图的比例（演示文稿写进提示词）。
@@ -275,7 +347,23 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         gui.llm_api.show_manual_window(
             prompt, "", auto_cli=True, cli_kind=kind or "slides",
             file_dest_dir=working, on_file_response=_open_file, extra=extra,
+            on_image_response=_on_pasted_image if kind == "infographic" else None,
         )
+
+    # 节目生成的叙事方式跟着预览里选的 Series 选项走（Podcast/Counselor  旁白，Story Speak/Act  故事）
+    _series_label = ""
+    try:
+        _var = scene_ui.get("prompt_combo_var") if isinstance(scene_ui, dict) else None
+        _series_label = ((_var.get() if _var is not None else "") or "").strip()
+    except tk.TclError:
+        _series_label = ""
+    _series_label = _series_label or (video_detail.get("scene_prompt_label") or "").strip()
+    _series_key = config_prompt.normalize_story_style(_series_label) if "series" in _series_label.lower() else ""
+    if not _series_key and config_channel.is_step_story_label(_series_label):
+        _series_key = "story_speak"  # Step Story 和 Story Speak 同一种讲法：人物对话
+    if _series_key:
+        saved = dict(saved) if isinstance(saved, dict) else {}
+        saved["narrative"] = config_prompt.story_style_narrative(_series_key)
 
     open_slide_prompt_dialog(
         dlg,
@@ -421,6 +509,16 @@ class SceneEditorImpl:
                         _saved_prompt_label, _saved_prompt_label
                     )
                     break
+            if config_channel.is_series_direct_label(_saved_prompt_label):
+                # 直接生成系列节目已去掉：按这一条的叙事风格回到对应的 Series 选项（没有就 Series · Podcast）
+                _want = config_prompt.normalize_story_style(
+                    video_detail.get("story_style") or project_manager.LAST_STORY_STYLE or "podcast"
+                ) or "podcast"
+                _saved_prompt_label = next(
+                    (opt[0] for opt in nb_prompt_choices
+                     if config_prompt.normalize_story_style(opt[0]) == _want),
+                    _saved_prompt_label,
+                )
             if _saved_prompt_label in [opt[0] for opt in nb_prompt_choices]:
                 default_prompt_label = _saved_prompt_label
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
@@ -448,7 +546,7 @@ class SceneEditorImpl:
                 width=3,
             )
             step_count_combo.pack(side=tk.LEFT)
-            series_total_var = tk.StringVar(value=str(config_channel.SERIES_DIRECT_DEFAULT_EPISODES))
+            series_total_var = tk.StringVar(value="1")  # Series：共 1 集 = 整套节目（原行为）
             series_ep_var = tk.StringVar(value="1")
             series_frm = ttk.Frame(gen_host)
             ttk.Label(series_frm, text="共").pack(side=tk.LEFT, padx=(0, 2))
@@ -507,7 +605,7 @@ class SceneEditorImpl:
                         text="第几步" if config_channel.is_step_image_label(sel) else "步数"
                     )
                     step_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
-                elif config_channel.is_series_direct_label(sel):
+                elif config_channel.is_series_direct_label(sel) or config_channel.is_series_label(sel):
                     series_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
 
             prompt_combo_var.trace_add("write", _sync_dynamic_prompt_widgets)
@@ -1227,6 +1325,55 @@ class SceneEditorImpl:
                 persist(video_detail, parent=dlg)
                 _sync_material_widgets()
 
+            def _material_delete(entry: dict) -> None:
+                """素材里删一项：图片 = 从封面列表移除；PDF / 音频 / 视频 = 清掉这一条的字段。文件都保留。"""
+                kind = entry.get("kind") or ""
+                path = entry.get("path") or ""
+                if entry.get("placeholder") or not path or kind not in ("image", "pdf", "audio", "video"):
+                    return
+                what = {"image": "这张封面图", "pdf": "这份 PDF", "audio": "这个音频", "video": "这个视频"}[kind]
+                if not messagebox.askyesno(
+                    "删除素材",
+                    f"从这一条里删除{what}？\n{os.path.basename(path)}\n\n只从列表里去掉，文件留在磁盘上。",
+                    parent=dlg,
+                ):
+                    return
+                if kind == "image":
+                    key = os.path.normcase(os.path.abspath(path))
+                    _set_cover_list([p for p in _material_images() if os.path.normcase(os.path.abspath(p)) != key])
+                    return
+                if kind == "pdf":
+                    video_detail.pop(GEN_VIDEO_SLIDE_KEY, None)
+                    # gen_video/<id>.pdf 会按名字被自动找回：改名让它不再算这一条的 PDF（文件还在）
+                    gen_dir = os.path.abspath(getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or "")
+                    still = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                    if still and gen_dir and os.path.normcase(os.path.dirname(os.path.abspath(still))) == os.path.normcase(gen_dir):
+                        from datetime import datetime
+
+                        stem = os.path.splitext(still)[0]
+                        try:
+                            os.replace(still, f"{stem}.removed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                        except OSError as exc:
+                            messagebox.showwarning("删除素材", f"PDF 改名失败，下次还会被找到：{exc}", parent=dlg)
+                    pdf_source_cache.update({"path": "", "text": "", "pages": 0, "has_text": False})
+                    if material_var.get() == "pdf":
+                        material_var.set("analyzed")
+                else:
+                    video_detail.pop(STORY_MEDIA_KEY, None)
+                    video_detail.pop(STORY_TRANSCRIPT_KEY, None)
+                    materials_panel.player.stop()
+                    if material_var.get() == "media":
+                        material_var.set("analyzed")
+                drop_ctx4 = getattr(dlg, "_summary_drop_ctx", None)
+                refresh_media = drop_ctx4.get("refresh_feature_media_row") if isinstance(drop_ctx4, dict) else None
+                if callable(refresh_media):
+                    try:
+                        refresh_media()
+                    except Exception:
+                        pass
+                persist(video_detail, parent=dlg)
+                _sync_material_widgets()
+
             def _material_menu(menu, entry: dict) -> None:
                 kind = entry.get("kind") or ""
                 path = entry.get("path") or ""
@@ -1240,6 +1387,8 @@ class SceneEditorImpl:
                             label="播放 / 停止", command=lambda: materials_panel.player.toggle(path, kind)
                         )
                     menu.add_command(label="打开", command=lambda: _open_path(path))
+                    if kind in ("image", "pdf", "audio", "video"):
+                        menu.add_command(label="删除…", command=lambda: _material_delete(entry))
                     menu.add_separator()
                 if real and entry.get("analyze"):
                     menu.add_command(label="分析（只用这一项）…", command=lambda: _material_analyze(entry))
@@ -1400,6 +1549,7 @@ class SceneEditorImpl:
                 build_menu=_material_menu,
                 on_rebuilt=_walk_materials_drop,
                 on_analyze=_material_analyze,
+                on_delete=_material_delete,
             )
             scene_ui["materials_panel"] = materials_panel
 
@@ -1425,7 +1575,31 @@ class SceneEditorImpl:
                 material_var.set(_last_material[0] or _default_material_mode())
                 return "break"
 
+            def _sync_scene_json_height(*_args):
+                """分析报告页：scene_content JSON 框 25 行；PDF / 图片 / 媒体页：原来的 5 行。"""
+                box = scene_ui.get("tx")
+                if box is None:
+                    return
+                want = 25 if material_var.get() == "analyzed" else 5
+                try:
+                    if int(box.cget("height")) == want:
+                        return
+                    box.configure(height=want)
+                    if want > 5 and not embedded:
+                        # 独立窗口：放不下就把窗口拉高（不超过屏幕），JSON 框自己有滚动条
+                        dlg.update_idletasks()
+                        need = frm.winfo_reqheight() + 8
+                        cur = dlg.winfo_height()
+                        cap = dlg.winfo_screenheight() - 80
+                        if need > cur and cur < cap:
+                            dlg.geometry(f"{dlg.winfo_width()}x{min(need, cap)}")
+                except (tk.TclError, ValueError):
+                    pass
+
+            scene_ui["sync_scene_json_height"] = _sync_scene_json_height
+
             def _sync_material_widgets(*_args):
+                _sync_scene_json_height()
                 # PDF 一律一页一个场景，不再让人选。
                 pdf_layout_combo.pack_forget()
                 _paint_material_buttons()
@@ -1733,15 +1907,15 @@ class SceneEditorImpl:
                 return {
                     "steps": _int_of(step_count_var, config_channel.STEP_STORY_DEFAULT),
                     "episode": _int_of(series_ep_var, 1),
-                    "episodes": _int_of(
-                        series_total_var, config_channel.SERIES_DIRECT_DEFAULT_EPISODES
-                    ),
+                    "episodes": _int_of(series_total_var, 1),
                     "visual_style": (visual_style_var.get() or "").strip(),
                 }
 
             def _pdf_instruction_for(label: str, pages: int) -> str:
-                if config_channel.is_series_direct_label(label):
-                    p = _scene_prompt_params()
+                p = _scene_prompt_params()
+                if config_channel.is_series_direct_label(label) or (
+                    config_channel.is_series_label(label) and p["episodes"] > 1
+                ):
                     return (
                         f"The PDF has {int(pages)} pages and describes the whole series. "
                         f"Read it all, then use only the part for episode {p['episode']} of {p['episodes']}. "
@@ -2222,6 +2396,8 @@ class SceneEditorImpl:
             tx.pack(fill=tk.X, expand=False, pady=(0, 8))
             _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
             scene_ui["tx"] = tx
+            if callable(scene_ui.get("sync_scene_json_height")):
+                scene_ui["sync_scene_json_height"]()  # 打开时就在分析报告页：直接 25 行
 
             def _fill_scene_editor_rest():
                 _SCENE_JSON_CHUNK = 1024
@@ -2351,6 +2527,9 @@ class SceneEditorImpl:
                         """场景生成成功并保存之后：照旧 on_saved，再自动打开项目名称建议。"""
                         if callable(on_saved):
                             on_saved()
+                        sync_cast = scene_ui.get("sync_cast_from_scenes")
+                        if callable(sync_cast):
+                            dlg.after(100, sync_cast)  # 场景生成后：演员栏 = 场景里出现的人
                         offer = scene_ui.get("offer_title_suggest")
                         if callable(offer):
                             dlg.after(300, offer)
@@ -2461,6 +2640,7 @@ class SceneEditorImpl:
                                 host_narrator=_project_look_from_row(video_detail)[2],
                                 narrative=video_narrative,
                                 text=video_text,
+                                use_actor=bool(saved_video.get("actor")) if isinstance(saved_video, dict) else False,
                             )
 
                             def _on_workflow_image(step_idx, step_title, pil_img):
@@ -2580,11 +2760,14 @@ class SceneEditorImpl:
                         result_holder[0] = parsed
                         if not persist(video_detail, parent=dlg):
                             return False, "写入频道列表失败"
-                        if callable(on_saved):
-                            try:
-                                on_saved()
-                            except Exception:
-                                pass
+                            if callable(on_saved):
+                                try:
+                                    on_saved()
+                                except Exception:
+                                    pass
+                        sync_cast = scene_ui.get("sync_cast_from_scenes")
+                        if callable(sync_cast):
+                            sync_cast()  # 手改 JSON 保存后：演员栏按场景重排
                         return True, (
                             f"saved {len(parsed or [])} scene(s) to channel list "
                             "(window kept open)"
@@ -2852,6 +3035,184 @@ class SceneEditorImpl:
                     if not isinstance(_saved_cast, str):
                         _saved_cast = f"讲员：{_narr_named}" if _narr_named else ""
 
+                    def _cast_key(row: dict) -> tuple:
+                        """同一个人：讲员按角色（每场最多一个）；人物按 性别/年龄段/族裔/名字（括号前）。"""
+                        if row.get("role") == "host":
+                            return ("host", "")
+                        base = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+                        return ("person", base.strip().lower())
+
+                    def _cast_from_scenes() -> str:
+                        """所有场景 actor 里出现过的人（去掉括号里的表现），讲员在前，最多 4 个。"""
+                        host, people, seen = None, [], set()
+                        for sc in _story_scene_list(video_detail, scene_ui):
+                            for row in project_manager.actor_entries(str(sc.get("actor") or "")):
+                                base = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+                                if not base or project_manager.actor_is_absent(base):
+                                    continue
+                                key = _cast_key(row)
+                                if key in seen:
+                                    continue
+                                seen.add(key)
+                                clean = dict(row, body=base)
+                                if row.get("role") == "host":
+                                    host = clean
+                                else:
+                                    people.append(clean)
+                        rows = ([host] if host else []) + people
+                        if len(rows) > 4:
+                            print(f"演员栏：场景里有 {len(rows)} 个不同的人，只放前 4 个")
+                        return project_manager.format_actor_entries(rows[:4])
+
+                    def _prune_silent_cast() -> None:
+                        """讲话里没有的人（讲员或人物）自动从所有场景删掉，<N> 往前挪。
+                        Story Act（无声）或所有场景都没有 <N> 时不动。"""
+                        label = ""
+                        try:
+                            label = (scene_ui["prompt_combo_var"].get() or "").strip()
+                        except (tk.TclError, KeyError):
+                            pass
+                        style = config_prompt.normalize_story_style(label) if "series" in label.lower() else ""
+                        if style == "story_act" or (not style and "story act" in label.lower()):
+                            return
+                        scenes = _story_scene_list(video_detail, scene_ui)
+                        if not scenes:
+                            return
+                        mark_re = project_manager._SPEAKER_MARK_SPLIT_RE
+                        any_mark = False
+                        present, spoken = {}, set()
+                        for sc in scenes:
+                            rows = project_manager.actor_entries(str(sc.get("actor") or ""))
+                            for r in rows:
+                                present.setdefault(_cast_key(r), r)
+                            parts = mark_re.split(str(sc.get("speaking") or ""))
+                            nums = {int(parts[i + 1]) for i in range(1, len(parts) - 2, 4)}
+                            if nums:
+                                any_mark = True
+                            if parts and parts[0].strip():
+                                nums.add(1)  # 没标号、但有内容的开头 = 第 1 个人说的
+                            for n in nums:
+                                if 1 <= n <= len(rows):
+                                    spoken.add(_cast_key(rows[n - 1]))
+                        if not any_mark:
+                            return
+                        for key, row in present.items():
+                            if key not in spoken:
+                                print(f"演员栏：{row.get('label')} {row.get('body')} 在所有场景里都没说话，自动删掉")
+                                _cast_rewrite_scenes("delete", row, None)
+
+                    def _sync_cast_from_scenes() -> None:
+                        try:
+                            _prune_silent_cast()
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"演员栏：自动删不说话的人失败 {exc}")
+                        try:
+                            text = _cast_from_scenes()
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"演员栏：读场景演员失败 {exc}")
+                            return
+                        panel = scene_ui.get("actor_panel")
+                        if text and panel is not None and text != panel.get_text():
+                            panel.set_text(text)
+
+                    def _drop_speaker(speaking: str, pos: int) -> str:
+                        """删掉 <pos> 说的话；后面的 <N> 往前挪一位（<N> = actor 里的第 N 个人）。"""
+                        parts = project_manager._SPEAKER_MARK_SPLIT_RE.split(speaking or "")
+                        out = [] if pos == 1 else [parts[0]]  # 没标号的开头属于第 1 个人
+                        i = 1
+                        while i + 3 <= len(parts):
+                            opener, num, closer, body = parts[i], parts[i + 1], parts[i + 2], parts[i + 3]
+                            n = int(num)
+                            if n != pos:
+                                out.append(f"{opener}{n - 1 if n > pos else n}{closer}{body}")
+                            i += 4
+                        return "".join(out).strip()
+
+                    def _cast_rewrite_scenes(what: str, old_row: dict, new_row) -> None:
+                        """演员栏改 / 删一个人：同步改每一场的 actor（括号里的表现不动）和 speaking，再保存。"""
+                        scenes = _story_scene_list(video_detail, scene_ui)
+                        if not scenes:
+                            return
+                        key = _cast_key(old_row) if old_row else None
+                        rank = {}
+                        if what == "order":
+                            rank = {_cast_key(r): n for n, r in enumerate(new_row or [])}
+                        old_base = project_manager.split_actor_motion((old_row.get("body") or "").strip())[0]
+                        new_base = (
+                            project_manager.split_actor_motion((new_row.get("body") or "").strip())[0]
+                            if isinstance(new_row, dict) else ""
+                        )
+                        import re as _re
+
+                        tail_re = _re.compile(r"\s*[（(][^（()）]*[）)]\s*$")
+                        changed = 0
+                        for sc in scenes:
+                            # 按原文逐段处理，括号里的表现原样保留
+                            segs = []
+                            for seg in [x.strip() for x in str(sc.get("actor") or "").split("|") if x.strip()]:
+                                parsed = project_manager.actor_entries(seg)
+                                if not parsed:
+                                    continue
+                                m = tail_re.search(seg)
+                                segs.append({"row": parsed[0], "tail": m.group(0) if m else ""})
+                            if what == "order":
+                                # 按演员栏顺序排本场的人（不在栏里的保持原相对顺序排在后面），<N> 跟着人走
+                                order = sorted(
+                                    range(len(segs)),
+                                    key=lambda n: (rank.get(_cast_key(segs[n]["row"]), 100), n),
+                                )
+                                if order == list(range(len(segs))):
+                                    continue
+                                mapping = {old + 1: new + 1 for new, old in enumerate(order)}
+                                segs = [segs[n] for n in order]
+                                speaking = str(sc.get("speaking") or "")
+                                if speaking.strip():
+                                    new_sp = project_manager.remap_speaker_marks(speaking, mapping)
+                                    if new_sp != speaking:
+                                        sc["speaking"] = new_sp
+                                        sc.pop("speaking_timing", None)
+                                hit = -1
+                            else:
+                                hit = next((n for n, g in enumerate(segs) if _cast_key(g["row"]) == key), None)
+                            if hit is None:
+                                continue
+                            if what == "order":
+                                pass
+                            elif what == "edit":
+                                segs[hit]["row"] = dict(segs[hit]["row"], role=new_row.get("role") or "person", body=new_base)
+                            else:
+                                pos = hit + 1  # <N> = actor 里的第 N 个人
+                                segs.pop(hit)
+                                speaking = str(sc.get("speaking") or "")
+                                if speaking.strip():
+                                    new_sp = _drop_speaker(speaking, pos)
+                                    if new_sp != speaking:
+                                        sc["speaking"] = new_sp
+                                        sc.pop("speaking_timing", None)  # 时间轴对不上了，重新算
+                            out, person_n = [], 0
+                            for g in segs:
+                                r = g["row"]
+                                if r.get("role") == "host":
+                                    out.append(f"讲员：{r.get('body')}{g['tail']}")
+                                else:
+                                    person_n += 1
+                                    out.append(f"人物{person_n}：{r.get('body')}{g['tail']}")
+                            sc["actor"] = " | ".join(out)
+                            changed += 1
+                        if not changed:
+                            return
+                        video_detail["scene_content"] = scenes
+                        try:
+                            tx_box = scene_ui.get("tx")
+                            if tx_box is not None:
+                                tx_box.delete("1.0", tk.END)
+                                tx_box.insert("1.0", json.dumps(scenes, ensure_ascii=False, indent=2))
+                        except tk.TclError:
+                            pass
+                        self._persist_video_detail_story(video_detail, parent=dlg)
+                        verb = {"edit": "改", "delete": "删除", "order": "重排"}.get(what, what)
+                        print(f"演员栏：{verb} {old_base or '讲员'}，同步了 {changed} 场")
+
                     def _story_person_dir() -> str:
                         d = _story_avatar_dir(video_detail)
                         return d or os.path.join(config.AVATAR_PATH, "story")
@@ -2878,6 +3239,9 @@ class SceneEditorImpl:
                         on_change=_on_cast_change,
                         person_dir=_story_person_dir,
                         style=lambda: (visual_style_var.get() or ""),
+                        on_row_edit=lambda old, new: _cast_rewrite_scenes("edit", old, new),
+                        on_row_delete=lambda old: _cast_rewrite_scenes("delete", old, None),
+                        on_reorder=lambda rows: _cast_rewrite_scenes("order", {}, rows),
                     )
                     _title_entry = scene_ui.get("title_entry")
                     if _title_entry is not None and _title_entry.master is actor_panel.master:
@@ -2886,6 +3250,23 @@ class SceneEditorImpl:
                         actor_panel.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
                     video_detail["story_actors"] = actor_panel.get_text()
                     scene_ui["actor_panel"] = actor_panel
+                    scene_ui["sync_cast_from_scenes"] = _sync_cast_from_scenes
+                    def _sync_cast_when_ready(tries: int = 0) -> None:
+                        """打开时：等 JSON 框分块填完（能解析）再同步，免得和分块写入打架。"""
+                        box = scene_ui.get("tx")
+                        raw = ""
+                        try:
+                            raw = (box.get("1.0", tk.END) or "").strip() if box is not None else ""
+                        except tk.TclError:
+                            return
+                        has_saved = bool(video_detail.get("scene_content"))
+                        ready = (not has_saved) or (raw and _parse_scene_json_list(raw))
+                        if not ready and tries < 40:
+                            dlg.after(250, lambda: _sync_cast_when_ready(tries + 1))
+                            return
+                        _sync_cast_from_scenes()
+
+                    dlg.after(300, _sync_cast_when_ready)  # 打开时：按场景里的人重排演员栏
                     if callable(on_open_project):
                         open_host = scene_ui["prompt_row"]
                         open_style = "StoryOpenProject.TButton"

@@ -400,6 +400,8 @@ class TracksMixin:
         dialog_title,
         failure_verb,
         apply_overlay,
+        on_scene_ok=None,
+        on_done=None,
     ):
         """对多个场景的 clip 依次调用 FFmpeg 叠加顶标/水印；在后台线程执行，避免界面假死。"""
 
@@ -435,6 +437,8 @@ class TracksMixin:
                         continue
                     os.replace(temp_out, newv)
                     moved = True
+                    if on_scene_ok is not None:
+                        on_scene_ok(scene, oldv_ref, newv)
                 except Exception as e:
                     scene["clip"] = oldv_ref
                     if prior_back:
@@ -466,6 +470,8 @@ class TracksMixin:
                         "部分场景未处理：\n" + "\n".join(failed[:12]),
                         parent=self.root,
                     )
+                if on_done is not None:
+                    on_done(failed)
 
             try:
                 self.root.after(0, done)
