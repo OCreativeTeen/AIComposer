@@ -117,7 +117,8 @@ def build_publish_metadata(ctx: dict, source_key: str | None = None) -> dict:
     scenes = scene_content_list_for_publish(language=lang, video_detail=vd)
     review = project_manager.publish_description_source_text(vd)
     key = (source_key or "").strip() or default_publish_source_key(ctx)
-    title = resolve_publish_default_title(language=lang, video_detail=vd)
+    # t110u: 发布时选定过的 publish_title 优先;否则项目名
+    title = (vd.get("publish_title") or "").strip() or resolve_publish_default_title(language=lang, video_detail=vd)
     if not title:
         title = (vd.get("title") or vd.get("video_title") or "").strip()
     if not title:

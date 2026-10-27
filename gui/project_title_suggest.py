@@ -155,13 +155,19 @@ def ask_project_title(
     main = ttk.Frame(dlg, padding=12)
     main.pack(fill=tk.BOTH, expand=True)
     ttk.Label(main, text="选一个项目名称，或者直接改写：").pack(anchor=tk.W)
-    listbox = tk.Listbox(main, height=4, width=56, activestyle="dotbox", exportselection=False)
+    # t105u: 列表和输入框字体放大约 1/3(从默认字体派生,跟随 DPI)
+    import tkinter.font as tkfont
+
+    _base = tkfont.nametofont("TkDefaultFont").actual()
+    _size = int(_base.get("size") or 9)
+    _big = tkfont.Font(dlg, family=_base.get("family"), size=(round(abs(_size) * 4 / 3) * (1 if _size > 0 else -1)))
+    listbox = tk.Listbox(main, height=5, width=56, activestyle="dotbox", exportselection=False, font=_big)
     listbox.pack(fill=tk.X, pady=(6, 6))
     choices = [current or "（当前没有名称）"]
     listbox.insert(tk.END, f"{choices[0]}  （当前）")
     listbox.selection_set(0)
     name_var = tk.StringVar(value=current)
-    entry = ttk.Entry(main, textvariable=name_var, width=58)
+    entry = ttk.Entry(main, textvariable=name_var, width=58, font=_big)
     entry.pack(fill=tk.X)
     _from_report = bool((source_text or "").strip())
     status = tk.Label(

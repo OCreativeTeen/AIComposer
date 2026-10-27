@@ -15,6 +15,12 @@ from utility.voicebox_speech_service import VoiceboxService, _VB_SPEAKER_MARK_RE
 from gui.choice_dialog import askchoice
 
 
+# t116u: 人物编辑可选值（与 project_manager._ACTOR_AGE / config_prompt.ACTOR_VOICE_NAMES 一致）
+_ACTOR_GENDERS = ("man", "woman")
+_ACTOR_AGES = ("kids", "teenager", "youth", "mature", "senior")
+_ACTOR_RACES = ("chinese", "english")
+
+
 class ActorsMixin:
     def _narrator_button_text(self, name: str = "") -> str:
         """按钮上只写讲员本人，例如 woman/qin/chinese。"""
@@ -676,6 +682,23 @@ class ActorsMixin:
         voice_box.pack(side=tk.LEFT)
         hear_btn = ttk.Button(voice_row, text="听声音")
         hear_btn.pack(side=tk.LEFT, padx=(8, 0))
+        # t116u: 人物可编辑：性别 / 年龄段 / 民族 / 名字（只在人物模式显示）
+        edit_row = ttk.Frame(dlg)
+        edit_row.pack(pady=(0, 8), before=voice_row)
+        edit_g = tk.StringVar()
+        edit_a = tk.StringVar()
+        edit_r = tk.StringVar()
+        edit_n = tk.StringVar()
+        _edit_guard = {"on": False}
+        for lab, var, vals, w in (
+            ("性别", edit_g, _ACTOR_GENDERS, 7),
+            ("年龄", edit_a, _ACTOR_AGES, 9),
+            ("民族", edit_r, _ACTOR_RACES, 8),
+        ):
+            ttk.Label(edit_row, text=lab).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Combobox(edit_row, textvariable=var, values=vals, state="readonly", width=w).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(edit_row, text="名字").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(edit_row, textvariable=edit_n, width=14).pack(side=tk.LEFT)
         hint_var = tk.StringVar(value=hint)
         ttk.Label(dlg, textvariable=hint_var, wraplength=640).pack(pady=(0, 8))
         holder = {
@@ -690,6 +713,45 @@ class ActorsMixin:
         }
         host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。场景里写了讲员就出镜，没写就是画外旁白。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。全改讲员把选定范围内每一场的讲员换成当前这一位，讲稿收成只在开头标〈1〉。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
         person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时不拷贝。Ctrl+V 可以贴上形象。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。"
+
+        def _fill_edit(name: str) -> None:
+            bits = [x.strip() for x in (name or "").split("/")]
+            _edit_guard["on"] = True
+            try:
+                g = (bits[0].lower() if bits else "")
+                g = {"girl": "woman", "female": "woman", "boy": "man", "male": "man"}.get(g, g)
+                edit_g.set(g if g in _ACTOR_GENDERS else "woman")
+                a = project_manager._ACTOR_AGE.get(bits[1].lower(), "") if len(bits) > 1 else ""
+                edit_a.set(a if a in _ACTOR_AGES else "mature")
+                r = bits[2].lower() if len(bits) > 2 else ""
+                edit_r.set(r if r in _ACTOR_RACES else "chinese")
+                edit_n.set("/".join(bits[3:]) if len(bits) > 3 else "")
+            finally:
+                _edit_guard["on"] = False
+
+        def _on_edit_change(*_a) -> None:
+            if _edit_guard["on"] or holder.get("mode") != "person" or not holder["names"]:
+                return
+            nm = (edit_n.get() or "").strip().replace("/", "")
+            body = "/".join(x for x in (edit_g.get(), edit_a.get(), edit_r.get()) if x) + (f"/{nm}" if nm else "")
+            if body == holder["names"][holder["index"]]:
+                holder["override_name"] = ""
+            else:
+                holder["override_name"] = body
+            name_var.set(body)
+            # 属性一改就换成这一档的默认声音（和提示词用的同一张表：这一档的第一个）；之后还可以再选
+            options = list(config_prompt.voice_choices_for_actor(body))
+            voice_box.configure(values=options)
+            if options:
+                voice_box.state(["!disabled"])
+                voice_var.set(options[0])
+                holder["voice_ready"] = True
+            else:
+                voice_var.set("")
+                voice_box.state(["disabled"])
+
+        for _v in (edit_g, edit_a, edit_r, edit_n):
+            _v.trace_add("write", _on_edit_change)
 
         def remember_voice(name: str, voice: str) -> None:
             pc = project_manager.PROJECT_CONFIG
@@ -735,6 +797,8 @@ class ActorsMixin:
             names_now = holder["names"]
             if not names_now:
                 return
+            if holder.get("override_name") and holder.get("mode") == "person":
+                return  # t116u: 改了属性的新人物，确认时再记声音
             name = names_now[holder["index"]]
             remember_voice(name, voice_var.get().strip())
 
@@ -803,6 +867,8 @@ class ActorsMixin:
                 return
             name_var.set(name)
             show_voice(name)
+            if holder.get("mode") == "person":
+                _fill_edit(name)
             path = holder["path_for"](name)
             if not path:
                 holder["photo"] = None
@@ -898,7 +964,7 @@ class ActorsMixin:
                 motion = kept_motion
             if not name or project_manager.actor_is_absent(name):
                 portrait = ""
-            elif holder.get("override_name"):
+            elif holder.get("override_name") and holder.get("mode") == "host":
                 portrait = self._narrator_portrait_path(name) or ""
             else:
                 portrait = holder["path_for"](name) or ""
@@ -922,8 +988,27 @@ class ActorsMixin:
             kept_motion = ""
             if actor_entry:
                 _b, kept_motion = project_manager.split_actor_motion((actor_entry.get("body") or "").strip())
+            if holder.get("override_name") and holder.get("mode") == "person":
+                _commit_edited_person(name)
             apply_choice(name, kept_motion)
             dlg.destroy()
+
+        def _commit_edited_person(new_body: str) -> None:
+            """t116u: 改过属性的人物：记下声音；原来的头像拷一份给新名字（新名字还没有头像时）。"""
+            remember_voice(new_body, voice_var.get().strip())
+            old = holder["names"][holder["index"]] if holder["names"] else ""
+            try:
+                src = holder["path_for"](old) if old else ""
+                if src and not holder["path_for"](new_body):
+                    dest = holder["dest_for"](new_body)
+                    if dest:
+                        import shutil
+
+                        dest = os.path.splitext(dest)[0] + os.path.splitext(src)[1]
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        shutil.copy2(src, dest)
+            except OSError as exc:
+                print(f"⚠️ 人物头像没有拷到新名字：{exc}")
 
         def add_person() -> None:
             dlg.grab_release()
@@ -970,6 +1055,10 @@ class ActorsMixin:
             self._force_speaking_to_host(picked[1], narrator)
 
         def apply_domain_chrome() -> None:
+            if holder["mode"] == "host":
+                edit_row.pack_forget()
+            elif not edit_row.winfo_ismapped():
+                edit_row.pack(pady=(0, 8), before=voice_row)
             if holder["mode"] == "host":
                 dlg.title("讲员")
                 hint_var.set(host_hint)

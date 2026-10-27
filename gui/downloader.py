@@ -1350,6 +1350,14 @@ class MediaGUIManager:
         prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
         return prof if isinstance(prof, dict) else {}
 
+    def _story_summary_prompts(self, *args, **kwargs):
+        from gui.dl.story_summary import StorySummaryImpl as _impl
+        return _impl._story_summary_prompts(self, *args, **kwargs)
+
+    def _auto_summarize_story(self, *args, **kwargs):
+        from gui.dl.story_summary import StorySummaryImpl as _impl
+        return _impl._auto_summarize_story(self, *args, **kwargs)
+
     def _summarize_scene_list(self, *args, **kwargs):
         from gui.dl.story_summary import StorySummaryImpl as _impl
         return _impl._summarize_scene_list(self, *args, **kwargs)

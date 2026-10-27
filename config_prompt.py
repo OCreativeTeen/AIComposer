@@ -524,7 +524,7 @@ def narrative_mode_text(narrative: str, actor_checked: bool) -> str:
     """叙事风格 + 「人物」勾选 → 一句话，提示窗里显示。讲员有没有要看场景里的 actor，所以写成「若…否则…」。"""
     if narrative == "step":
         return ("提取第 N 步：把封面 / 信息图里第 N 步那一格单独画成一张新的场景图，其他格、编号、箭头都去掉；"
-                "N = 当前场景序号。只看画风改变，说明文字和写进提示词的选项不用。")
+                "N = 当前场景序号。只看画风改变和说明文字（只管这一步的字），写进提示词的选项不用。")
     if narrative == "story":
         if actor_checked:
             return ("故事：人物在场景中表演对话（套用 actor 形象）。若人物中有讲员，讲员为辅，"
@@ -3070,6 +3070,12 @@ def speaking_voice_lines(scenes: list) -> str:
     import project_manager
 
     scenes = [item for item in (scenes or []) if isinstance(item, dict)]
+    if any(_SPEAKER_MARK.search(str(sc.get("speaking") or "")) for sc in scenes):
+        # t111u: speaking 里有 <N>:第 N 个人说 <N> 后面的话(不是「第 1 个说 speaking」)
+        tagged = _speaker_voice_line(scenes)
+        if tagged:
+            return ("** Use the voice written here for each speaker. Do not substitute another voice.\n** "
+                    + tagged.replace("\n  ", "\n** "))
 
     def voice_for(body: str, role: str) -> str:
         return chosen_actor_voice(body, role)
@@ -3242,7 +3248,7 @@ def project_story_style() -> str:
     return STORY_STYLE_CHOICES[0][0]
 
 
-_SPEAKER_MARK = re.compile(r"<\s*(\d+)\s*>")
+_SPEAKER_MARK = re.compile(r"[<＜]\s*(\d+)\s*[>＞]")
 _PAUSE_MARK = re.compile(r"<\s*\d+\.\d+\s*>")
 
 
@@ -3331,6 +3337,44 @@ def _scene_speakers(scene: dict) -> list:
     return project_manager.active_actor_entries(text)
 
 
+GENDER_LOCK_LINE = (
+    "Gender lock: every line is spoken only in its own speaker's voice: a MALE speaker's lines in a male voice, "
+    "a FEMALE speaker's lines in a female voice, at that speaker's age. Never swap, even when a line says "
+    "\"she\" / \"he\" or talks about the other person."
+)
+
+
+def _speaker_sex_word(row: dict) -> str:
+    _name, _ident, tone = _speaker_identity(row)
+    return "MALE" if " male voice" in tone else "FEMALE" if "female voice" in tone else ""
+
+
+def _speaker_place_hint(scene: dict, name: str) -> str:
+    """visual 里写这个人的第一句(到逗号为止),帮模型把声音对到画面里的人。"""
+    vis = str((scene or {}).get("visual") or "") if isinstance(scene, dict) else ""
+    if not name or name not in vis:
+        return ""
+    frag = re.split(r"[，。；,;.!?！？]", vis[vis.index(name):], maxsplit=1)[0].strip()
+    return frag[:24]
+
+
+def speaker_tag(row: dict, n: int, scene: dict | None = None) -> str:
+    """'Speaker 1 = 陳偉: MALE, middle-aged man, 40s-50s, voice Sal (in picture: 陳偉坐駕駛座)'。"""
+    import project_manager
+
+    name, ident, tone = _speaker_identity(row)
+    body, _m = project_manager.split_actor_motion(row.get("body") or "")
+    voice = chosen_actor_voice(body, row.get("role") or "person")
+    sex = _speaker_sex_word(row) or "gender as seen in the picture"
+    bits = [sex, ident, tone.split(", ")[-1] if ", " in tone else ""]
+    out = f"Speaker {n} = {name}: " + ", ".join(b for b in bits if b)
+    out += f", {tone.split(',')[0]}" + (f" (voice {voice})" if voice else "")
+    hint = _speaker_place_hint(scene or {}, name)
+    if hint:
+        out += f"; in the picture: {hint}"
+    return out
+
+
 def dialogue_script(scene: dict) -> list:
     """speaking 的 <N> → 逐句台词：'1. 阿明 (young man): "…"'。同一人连着说的合并成一句。"""
     if not isinstance(scene, dict):
@@ -3360,15 +3404,16 @@ def dialogue_script(scene: dict) -> list:
     out = []
     for i, (n, chunk) in enumerate(merged, start=1):
         if 1 <= n <= len(rows):
-            name, ident, _tone = _speaker_identity(rows[n - 1])
-            out.append(f'{i}. {name} ({ident}): "{chunk}"')
+            name, _ident, _tone = _speaker_identity(rows[n - 1])
+            sex = _speaker_sex_word(rows[n - 1])
+            out.append(f'[Speaker {n} {name}' + (f', {sex} voice' if sex else '') + f']: "{chunk}"')
         else:
-            out.append(f'{i}. speaker {n}: "{chunk}"')
+            out.append(f'[Speaker {n}]: "{chunk}"')
     return out
 
 
 def _speaker_voice_line(scenes: list) -> str:
-    """'Voices: 阿明 (young man) = voice Leo, a young male voice, 20s; …'（只列真的说话的人）。"""
+    """t111u: 每个真的说话的人一行 Speaker N = 名字: 性别(大写)、年龄、声音、画面位置;再加性别锁。"""
     import project_manager
 
     seen, bits = set(), []
@@ -3385,10 +3430,11 @@ def _speaker_voice_line(scenes: list) -> str:
             if key in seen:
                 continue
             seen.add(key)
-            name, ident, tone = _speaker_identity(row)
-            voice = chosen_actor_voice(body, row.get("role") or "person")
-            bits.append(f"{name} ({ident}) = " + (f"voice {voice}, {tone}" if voice else tone))
-    return ("Voices: " + "; ".join(bits) + ". Each person keeps this one voice, on or off screen.") if bits else ""
+            bits.append(speaker_tag(row, n, sc))
+    if not bits:
+        return ""
+    return ("Speakers (``<N>`` / Speaker N = the Nth person in ``actor``):\n  " + "\n  ".join(bits)
+            + "\nEach person keeps this one voice, on or off screen. " + GENDER_LOCK_LINE)
 
 
 def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
@@ -3504,10 +3550,7 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
             voice_bits.append(f"<{n}> {_who(row)}" + (f" = voice {name}" if name else ""))
     if voice_bits:
         lines.append("Voices: " + "; ".join(voice_bits) + ". Use exactly these voices.")
-    lines.append(
-        "Each voice matches that person's gender and age band (woman = female, man = male), on or off screen; "
-        "lip-sync uses the same voice."
-    )
+    lines.append(GENDER_LOCK_LINE + " Lip-sync uses the same voice.")
     return lines, "speaking"
 
 
@@ -4007,6 +4050,17 @@ def build_direct_video_clipbody(
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
+# t109u: 提取第 N 步时「说明文字」怎么处理这一步自己的字(其他步的字照样去掉)。
+_STEP_CAPTION_LINES = {
+    "keep": "** Text: keep step {k}'s short title as one caption line; no other text.",
+    "erase": "** Text: remove step {k}'s text too (title, labels); no letters, and no blank board or panel left behind.",
+    "keywords": "** Text: drop step {k}'s title and labels; blend ONE short keyword from them (Chinese max 8 characters, "
+                "English max 3 words) into the scene itself, e.g. on a wall, sign or paper, small, never a text box or banner.",
+    "express": "** Text: no letters at all; show what step {k}'s text says through the people, action and setting; "
+               "no text box, panel or caption area.",
+}
+
+
 def build_step_image_clipbody(
     step: int = 1,
     *,
@@ -4015,12 +4069,34 @@ def build_step_image_clipbody(
     keep_style: bool = False,
     scene_caption: str = "",
     scene_visual: str = "",
+    caption: str = "keep",
+    extract_only: bool = False,
+    fyi: str = "",
 ) -> str:
     """图片修改 · 提取第 N 步：输入是多步骤的信息图 / 封面，输出这一步的一张新场景图（图片编辑，不是视频）。"""
     try:
         k = max(1, int(step))
     except (TypeError, ValueError):
         k = 1
+    if extract_only:
+        # t114u: 图片修改·提取第 N 步:只从原图里原样取出这一格。不加 visual / speaking / actor / 背景。
+        lines = []
+        if (fyi or "").strip():
+            lines.append(f"Note: {fyi.strip()}")
+        lines += [
+            f"Image edit: extract step {k} from the input image as its own picture.",
+            "** The input image is an infographic or cover made of several numbered steps (panels).",
+            f"** Take panel {k} as it is: the same people, setting, action, composition and details. Do not add, remove "
+            "or change anything in it; only extend its edges naturally to fill the output frame stated above.",
+            "** Drop the other panels, step numbers, arrows, grid and layout. Output one single scene image.",
+            _STEP_CAPTION_LINES.get(caption, _STEP_CAPTION_LINES["keep"]).format(k=k),
+        ]
+        vs = (visual_style or "").strip()
+        if keep_style or not vs:
+            lines.append("** Style: keep the input's art style.")
+        else:
+            lines.append(f"** Visual_Style: {vs}. Redraw panel {k} in this style, content unchanged.")
+        return "\n".join(lines)
     lines = [
         f"Image edit: extract step {k} as its own picture.",
         "** The input image is an infographic or cover made of several numbered steps (panels).",
@@ -4028,7 +4104,7 @@ def build_step_image_clipbody(
         "full-frame scene (its characters, setting, action and mood), recomposed to fill the output frame stated above. "
         "The input's layout and orientation do not carry over.",
         "** Do not return the input image. Drop the other panels, step numbers, arrows, grid and layout.",
-        "** Keep that step's short title as one caption line; no other text.",
+        _STEP_CAPTION_LINES.get(caption, _STEP_CAPTION_LINES["keep"]).format(k=k),
         "** Keep every character's look (face, hair, clothing) as in the input.",
     ]
     vs = (visual_style or "").strip()
@@ -4236,8 +4312,9 @@ def build_slide_analysis_clipbody(
 NOTEBOOKLM_VOICE_MATCH = """
 ** Voice rule, read first. The person who speaks uses the gender in their own name.
 ** woman = female voice. man = male voice. Lip-sync uses this same voice.
-** On screen or off screen, a woman is never given a male voice.
+** On screen or off screen, a man is never given a female voice and a woman is never given a male voice.
 ** Age band is kids, youth, teenager, mature, or senior, the word after woman or man. Otherwise adult. Ethnicity is chinese or english, the word after the age band. A name, when present, is last and is not the voice.
+** ``<N>`` in speaking is the Nth person in actor; each line after ``<N>`` is spoken by that person in their own voice.
 ** When a voice name is written for speaking or voiceover, that line uses that commercial voice. Do not substitute another.
 """
 
@@ -4505,6 +4582,66 @@ SPEAKING_SUMMARY_SYSTEM_PROMPT = """
 You are a professional expert who is good at generating the Summary (in {language}) from a list of speaking content (in json format) given in 'user-prompt'.
 This summary is used as youtube program description, so, at beginning, please give some youtube video tags (like #pychology #心理咨询 etc).
 """
+
+
+# t112u: 故事摘要(YouTube 描述)。不只描述视频,要讲出背后的问题和启发。
+STORY_SUMMARY_SYSTEM_PROMPT = """
+You write the summary (YouTube description) for one story video of the channel "{channel_name}" ({channel_topic}). Write it in {language}.
+The user prompt gives Channel_Soul (the channel's values and viewpoint), Analysis_Report (the channel's analysis of this material) and Scenes (the story as told in the video). Draw on all three; never quote or name them.
+
+First line: 3-6 YouTube hashtags (like #心理咨询 #情绪). Then a blank line, then the text in this order, each point once, no headings, no bullet lists:
+1. The story: retell the situation in 2-3 sentences: who, what happens, the turning moment.
+2. Underneath: the deeper problem behind it, seen from this channel's viewpoint (for a counseling channel: the psychological pattern, its root cause, how it formed and keeps itself going). Specific to this story, not generic.
+3. Why we tell it: what the story reveals and the one insight the viewer can take into their own life. Tone: {tone}. Lead toward {direction}.
+4. Optional: end with one short question to the viewer that makes them look at their own life.
+
+Do not just describe the video's scenes, do not preach, no list of tips. Length: about 200-300 Chinese characters, or 120-200 English words.
+"""
+
+
+def build_story_summary_prompts(video_detail: dict, scenes: list, analysis: str, language_label: str,
+                                channel: str = "") -> tuple:
+    """t112u: (system, user)。channel 的 soul(根本层 + 主题分类/子类)、分析报告、场景一起嗂进去。"""
+    import config
+    import project_manager
+
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    ch = (channel or "").strip()
+    try:
+        cfg = config.get_channel_config(ch) if ch else {}
+    except Exception:
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    style = project_manager._soul_channel_style(ch)
+    system = STORY_SUMMARY_SYSTEM_PROMPT.format(
+        channel_name=cfg.get("channel_name") or ch or "this channel",
+        channel_topic=cfg.get("topic") or "stories",
+        language=language_label,
+        tone=style.get("tone") or "the channel's own voice",
+        direction=style.get("direction") or "where the story naturally leads",
+    )
+    soul = ""
+    if ch:
+        try:
+            soul, _, _, _ = project_manager.build_soul(
+                ch, (vd.get("topic_category") or "").strip(), (vd.get("topic_subtype") or "").strip()
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 摘要:频道 soul 没取到:{exc}")
+    slim = []
+    for sc in scenes or []:
+        if not isinstance(sc, dict):
+            continue
+        row = {k: sc.get(k) for k in ("caption", "speaking", "voiceover", "story_content") if str(sc.get(k) or "").strip()}
+        if row:
+            slim.append(row)
+    parts = []
+    if (soul or "").strip():
+        parts.append("Channel_Soul:\n" + soul.strip())
+    if (analysis or "").strip():
+        parts.append("Analysis_Report:\n" + analysis.strip()[:6000])
+    parts.append("Scenes:\n" + json.dumps(slim, ensure_ascii=False, indent=1))
+    return system, "\n\n".join(parts)
 
 
 # 内容总结相关Prompt

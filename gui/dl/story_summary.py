@@ -14,6 +14,87 @@ from gui.dl.list_store import _video_detail_project_pid
 
 
 class StorySummaryImpl:
+    def _story_summary_prompts(self, video_detail: dict, scenes: list, analysis: str = "") -> tuple:
+        """t112u: 摘要提示词(频道 soul + 分析报告 + 场景)。"""
+        import os
+
+        prof = self._story_profile(video_detail)
+        lang_code = (
+            (prof.get("language") or "").strip()
+            or (getattr(self, "language", "") or "").strip()
+            or "tw"
+        )
+        channel = (prof.get("channel") or "").strip() or os.path.basename(
+            os.path.normpath(getattr(self, "channel_path", "") or "")
+        )
+        if not (analysis or "").strip():
+            raw = video_detail.get("analyzed_content") if isinstance(video_detail, dict) else ""
+            analysis = raw if isinstance(raw, str) else str(raw or "")
+        return config_prompt.build_story_summary_prompts(
+            video_detail, scenes, analysis, config.llm_language_label(lang_code), channel
+        )
+
+    def _auto_summarize_story(self, parent, video_detail: dict, scenes: list, analysis: str = "", *, view=None) -> None:
+        """t112u: 场景生成后自动生成摘要(后台),直接写进这一条的 summary。失败只打日志。"""
+        if not scenes:
+            return
+        try:
+            system_prompt, user_prompt = self._story_summary_prompts(video_detail, scenes, analysis)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 自动摘要:提示词没做出来:{exc}")
+            return
+        # t113u: view = STORY 窗的摘要框 {"start"(), "done"(text)->bool 是否已显示, "fail"(msg)}
+        view = view if isinstance(view, dict) else {}
+
+        def _call(key, *a):
+            fn = view.get(key)
+            if callable(fn):
+                try:
+                    return fn(*a)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 摘要框更新失败:{exc}")
+            return None
+
+        _call("start")
+
+        def _fail(msg: str) -> None:
+            print(f"⚠️ 自动摘要失败:{msg}")
+            try:
+                parent.after(0, lambda: _call("fail", msg))
+            except (tk.TclError, RuntimeError):
+                pass
+
+        def work() -> None:
+            try:
+                out = (self.llm_api.generate_text(system_prompt, user_prompt) or "").strip()
+            except Exception as exc:  # noqa: BLE001
+                _fail(str(exc))
+                return
+            if not out:
+                _fail("LLM 没有返回内容。")
+                return
+
+            def done() -> None:
+                try:
+                    shown = _call("done", out)
+                    if shown is False:
+                        print("ℹ️ 自动摘要生成好了,但摘要框正在被编辑,没有覆盖。")
+                        return
+                    video_detail["summary"] = out
+                    if self._persist_video_detail_story(video_detail, parent=parent):
+                        print(f"✅ 自动摘要已写入 summary({len(out)} 字)")
+                        if shown is None:  # 没有摘要框时才弹提示
+                            show_auto_close_popup(parent, "摘要", "已自动生成摘要，写入这一条的 summary。")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 自动摘要没有保存:{exc}")
+
+            try:
+                parent.after(0, done)
+            except (tk.TclError, RuntimeError):
+                pass
+
+        threading.Thread(target=work, daemon=True, name="story-summary").start()
+
     def _summarize_scene_list(self, parent, video_detail: dict, scenes: list, *, on_done=None) -> None:
         """用这一条的场景文字生成摘要，拷到剪贴板，并可写回列表的 summary。"""
         if not scenes:
@@ -21,15 +102,7 @@ class StorySummaryImpl:
             if callable(on_done):
                 on_done()
             return
-        prof = self._story_profile(video_detail)
-        lang_code = (
-            (prof.get("language") or "").strip()
-            or (getattr(self, "language", "") or "").strip()
-            or "tw"
-        )
-        lang_name = config.llm_language_label(lang_code)
-        system_prompt = config_prompt.SPEAKING_SUMMARY_SYSTEM_PROMPT.format(language=lang_name)
-        user_prompt = json.dumps(scenes, ensure_ascii=False)
+        system_prompt, user_prompt = self._story_summary_prompts(video_detail, scenes)
 
         def work() -> None:
             err = ""

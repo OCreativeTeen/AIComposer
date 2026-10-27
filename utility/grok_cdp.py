@@ -128,6 +128,7 @@ FETCH_AS_B64_JS = """async (src) => {
 IMAGINE_TIMEOUT_S = 6 * 60
 IMAGINE_DONE_TIMEOUT_S = 180
 IMAGINE_SUBMIT_CONFIRM_S = 15
+IMAGINE_SUBMIT_ENABLE_S = 30  # t117u: wait this long for a disabled send arrow (upload processing)
 
 # Real DOM (grok.com/imagine, Oct 2026; dump in %TEMP%\\mpp\\grok_imagine_dom.json):
 # - editor: [data-testid="chat-input"] div.ProseMirror[contenteditable], placeholder
@@ -181,11 +182,16 @@ IMAGINE_FIND_SUBMIT_JS = """(labels) => {
   const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   let scope = input;
   for (let i = 0; i < 4 && scope.parentElement; i++) scope = scope.parentElement;
-  const cands = [...scope.querySelectorAll('button')].filter(vis).filter((b) => {
-    const a = (b.getAttribute('aria-label') || '').trim();
-    return labels.includes(a) || b.type === 'submit';
-  }).map((b) => ({b, r: b.getBoundingClientRect()}))
-    .filter(({r}) => r.left >= er.left + er.width * 0.5 && Math.abs((r.top + r.height / 2) - (er.top + er.height / 2)) < 80)
+  // t117u: a long prompt makes the editor tall (scrolls at ~160px), so the send arrow sits BELOW the
+  // editor's middle; the old "within 80px of the editor centre" test dropped it. Prefer the real
+  // form submit (aria-label 提交, type=submit), then any labelled button right of / below the editor.
+  const all = [...scope.querySelectorAll('button')].filter(vis);
+  const labelled = (b) => labels.includes((b.getAttribute('aria-label') || '').trim());
+  let cands = all.filter((b) => b.type === 'submit' && labelled(b));
+  if (!cands.length) cands = all.filter((b) => labelled(b) || b.type === 'submit');
+  cands = cands.map((b) => ({b, r: b.getBoundingClientRect()}))
+    .filter(({r}) => r.left >= er.left + er.width * 0.5 && r.top + r.height / 2 >= er.top - 40
+                     && r.top <= er.bottom + 160)
     .sort((x, y) => y.r.left - x.r.left);
   if (!cands.length) return null;
   const {b, r} = cands[0];
@@ -704,25 +710,79 @@ def _imagine_submitted(st: dict, before: dict) -> bool:
     return bool(before.get("editorText")) and not st.get("editorText")
 
 
-def _imagine_submit(page, status: Status) -> None:
-    before = _imagine_state(page)
-    pt = None
+def _find_submit(page):
     try:
-        pt = page.evaluate(IMAGINE_FIND_SUBMIT_JS, list(IMAGINE_SUBMIT_LABELS))
+        return page.evaluate(IMAGINE_FIND_SUBMIT_JS, list(IMAGINE_SUBMIT_LABELS))
     except Exception as exc:
         print(f"[grok_cdp] submit probe failed: {exc}")
+        return None
+
+
+def _wait_submit_enabled(page, status: Status, timeout_s: float = IMAGINE_SUBMIT_ENABLE_S):
+    """Find the send arrow and wait while it is disabled (image upload still processing)."""
+    deadline = time.monotonic() + timeout_s
+    pt = _find_submit(page)
+    told = False
+    while time.monotonic() < deadline:
+        if pt and not pt.get("disabled"):
+            return pt
+        if pt and not told:
+            _say(status, "提交按钮还不能点（图片可能还在上传）, 等一下 …")
+            told = True
+        time.sleep(0.5)
+        pt = _find_submit(page)
+    return pt
+
+
+def _click_submit(page, pt: dict) -> None:
+    loc = page.locator('button[data-grok-cdp-submit="1"]').first
+    try:
+        loc.scroll_into_view_if_needed(timeout=2000)
+        box = loc.bounding_box()
+        if box:
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)  # real mouse click
+            return
+    except Exception as exc:
+        print(f"[grok_cdp] submit mouse click via locator failed: {exc}")
+    try:
+        loc.click(timeout=5000)
+    except Exception:
+        page.mouse.click(pt["x"], pt["y"])
+
+
+def _wait_submitted(page, before: dict, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _imagine_submitted(_imagine_state(page), before):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _imagine_submit(page, status: Status) -> None:
+    """t117u: find the send arrow (aria-label 提交 / type=submit), wait until enabled, real mouse click,
+    verify the page started generating; one retry only if the prompt is verifiably still unsent."""
+    before = _imagine_state(page)
+    pt = _wait_submit_enabled(page, status)
     if pt and not pt.get("disabled"):
-        _say(status, f"提交生成（{pt.get('aria') or 'submit'}）…")
-        try:
-            page.locator('button[data-grok-cdp-submit="1"]').first.click(timeout=5000)
-        except Exception:
-            page.mouse.click(pt["x"], pt["y"])
+        for attempt in (1, 2):
+            _say(status, f"提交生成（{pt.get('aria') or 'submit'}）…" + ("（重试）" if attempt == 2 else ""))
+            _click_submit(page, pt)
+            if _wait_submitted(page, before, IMAGINE_SUBMIT_CONFIRM_S if attempt == 1 else 10):
+                return
+            st = _imagine_state(page)
+            if not (before.get("editorText") and st.get("editorText")):
+                break  # cannot prove it is unsent -> do not risk a double submit
+            print("[grok_cdp] submit click had no effect (prompt still in editor); retrying once")
+            pt = _wait_submit_enabled(page, status, 5) or pt
+        raise RuntimeError("Grok Imagine 点了提交按钮但没开始生成（提示词还在输入框里），已停止等待")
+    if pt and pt.get("disabled"):
+        raise RuntimeError(f"Grok Imagine 提交按钮 {IMAGINE_SUBMIT_ENABLE_S} 秒内一直不能点（图片可能没上传完），没有提交")
     else:
         # Fallback: the old multi-strategy helper. It raises when it cannot *see* generation start,
         # which is not proof that nothing was submitted, so check the page before giving up.
         try:
             _bt()._grok_click_generate_cdp(page, deep_image=False)
-            return
         except Exception as exc:
             if _imagine_submitted(_imagine_state(page), before):
                 print(f"[grok_cdp] submit helper said {exc!r}, but the page shows it was submitted")
@@ -921,10 +981,8 @@ def run_imagine(prompt: str, status: Status = None):
         page.bring_to_front()
         _say(status, "粘贴提示词 …")
         bt._grok_paste_prompt_cdp(page, prompt, append=True)
-        try:
-            bt._grok_click_image_mode_cdp(page)
-        except Exception as exc:
-            print(f"[grok_cdp] image mode click skipped: {exc}")
+        # t115u: 必须确认是「图片」模式才提交;确认不了就抛错(调用方转手动),绝不生成视频
+        _ensure_image_mode(page, status)
         # Everything visible now (the input image, older results) is "old".
         before_st = _imagine_state(page)
         old = set(page.evaluate(IMAGINE_OUTPUT_IMAGES_JS) or [])
@@ -974,6 +1032,69 @@ def _menu_pick(page, trigger_labels, item_text: str, status: Status = None) -> b
         except Exception:
             pass
         return False
+
+
+# t115u: Imagine 输入框的模式单选 button[role=radio][aria-label=图片|视频],选中的 aria-checked="true";
+# 视频模式还会出现 视频分辨率 / 视频时长 按钮(720p / 10s)。
+IMAGINE_IMAGE_MODE_LABELS = ("图片", "Image")
+IMAGINE_MODE_STATE_JS = """([imgLabels, vidLabels]) => {
+  const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
+  const radios = [...document.querySelectorAll('button[role="radio"]')].filter(vis);
+  const pick = (labs) => radios.find((b) => labs.includes((b.getAttribute('aria-label') || '').trim()));
+  const img = pick(imgLabels), vid = pick(vidLabels);
+  let videoCtl = false;
+  for (const b of document.querySelectorAll('button')) {
+    if (!vis(b)) continue;
+    const a = (b.getAttribute('aria-label') || '').trim();
+    const t = (b.innerText || '').trim();
+    if (/^(视频分辨率|视频时长|Video resolution|Video duration)$/i.test(a) || /^(480p|720p|1080p|6s|10s|15s)$/i.test(t)) { videoCtl = true; break; }
+  }
+  return {
+    hasImage: !!img, hasVideo: !!vid,
+    image: img ? img.getAttribute('aria-checked') === 'true' : null,
+    video: vid ? vid.getAttribute('aria-checked') === 'true' : null,
+    videoCtl,
+  };
+}"""
+
+
+def _imagine_mode_state(page) -> dict:
+    try:
+        return page.evaluate(IMAGINE_MODE_STATE_JS, [list(IMAGINE_IMAGE_MODE_LABELS), list(IMAGINE_VIDEO_MODE_LABELS)]) or {}
+    except Exception as exc:
+        print(f"[grok_cdp] mode probe failed: {exc}")
+        return {}
+
+
+def _is_image_mode(st: dict) -> bool:
+    return bool(st) and st.get("image") is True and not st.get("video") and not st.get("videoCtl")
+
+
+def _ensure_image_mode(page, status: Status = None) -> None:
+    """切到「图片」模式并确认;已经是就不点(避免切换成视频)。确认不了就抛 RuntimeError,不提交。"""
+    st = _imagine_mode_state(page)
+    if _is_image_mode(st):
+        return
+    for attempt in range(2):
+        clicked = False
+        for lab in IMAGINE_IMAGE_MODE_LABELS:
+            loc = page.locator(f'button[role="radio"][aria-label="{lab}"]')
+            try:
+                if loc.count() and loc.first.is_visible():
+                    loc.first.click(timeout=5000)  # 真实鼠标点击(pointer 事件),不用 el.click()
+                    clicked = True
+                    break
+            except Exception as exc:
+                print(f"[grok_cdp] image mode click failed: {exc}")
+        time.sleep(0.8)
+        st = _imagine_mode_state(page)
+        if _is_image_mode(st):
+            _say(status, "已切到「图片」模式")
+            return
+        if not clicked:
+            break
+    print(f"[grok_cdp] image mode not confirmed: {st}")
+    raise RuntimeError("Grok Imagine 没能确认在「图片」模式（可能还是视频模式），没有提交")
 
 
 def _set_video_mode(page, resolution: str, duration: str, status: Status = None) -> None:

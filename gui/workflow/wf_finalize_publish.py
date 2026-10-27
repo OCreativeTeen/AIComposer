@@ -193,6 +193,39 @@ class FinalizePublishMixin:
         ch_name = config.get_channel_config(self.workflow.channel)["channel_name"]
         default_title = ch_name + "：" + (gui_title or wf_title)
 
+        # t110u: 发布标题默认 = 项目名;同时让 LLM 出 3 个建议,有一次机会选/改。
+        # 选了新名只记为 publish_title(不改项目名 / PID);取消或不改就用项目名。
+        project_name = (pc.get("video_title") or gui_title or wf_title or "").strip()
+        chosen_title = [project_name]
+        try:
+            from gui.project_title_suggest import ask_project_title
+
+            _tdlg = ask_project_title(
+                self.root,
+                current=project_name,
+                scenes=[x for x in scenes if isinstance(x, dict)],
+                on_chosen=lambda name: chosen_title.__setitem__(0, name),
+                title="发布标题建议",
+            )
+            try:
+                _tdlg.grab_set()
+            except tk.TclError:
+                pass
+            self.root.wait_window(_tdlg)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 发布标题建议没有打开：{exc}")
+        publish_title = (chosen_title[0] or project_name).strip()
+        if publish_title != (pc.get("publish_title") or project_name).strip():
+            pc["publish_title"] = publish_title
+            try:
+                ok_pt, _lp, err_pt = project_manager.save_list_row_fields_for_config(
+                    pc, {"publish_title": publish_title}
+                )
+                if not ok_pt:
+                    print(f"⚠️ 发布标题没有写回列表：{err_pt}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 发布标题没有写回列表：{exc}")
+
         list_row = project_manager.load_video_detail_row_for_config(pc) or {}
         item_summary = (list_row.get("summary") or pc.get("summary") or "")
         analyzed = pc.get("analyzed_content") or list_row.get("analyzed_content") or ""
@@ -236,6 +269,7 @@ class FinalizePublishMixin:
             schedule_dialog_fn=lambda *_a, **_k: ("unlisted", None),
             caption_scenes=scenes,
             metadata_dialog_title="上传视频 — 标题与描述",
+            preferred_title=publish_title,
         )
         if flow is None:
             return

@@ -312,48 +312,6 @@ def _raw_story_preview_text(story_result) -> str:
     return ""
 
 
-def _raw_content_preview_body(story_result) -> str:
-    """创建项目对话框 RAW 预览区：展示完整 analyzed_content 文本。"""
-    if not isinstance(story_result, dict):
-        return ""
-    ac = story_result.get("analyzed_content")
-    if _story_value_nonempty(ac):
-        return ac.strip()
-    for key in ("content",):
-        val = story_result.get(key)
-        if _story_value_nonempty(val):
-            if isinstance(val, str):
-                return val.strip()
-            return _jsonish_preview_fragment(val, max_len=8000)
-    return ""
-
-
-def _scene_content_preview_body(story_result) -> str:
-    """创建项目对话框 scene_content 预览区：格式化 JSON。"""
-    if not isinstance(story_result, dict):
-        return ""
-    sc = story_result.get("scene_content")
-    if not _story_value_nonempty(sc):
-        return ""
-    if isinstance(sc, list):
-        return json.dumps(sc, ensure_ascii=False, indent=2)
-    if isinstance(sc, dict):
-        return json.dumps(sc, ensure_ascii=False, indent=2)
-    if isinstance(sc, str):
-        return sc.strip()
-    return str(sc)
-
-
-def _set_readonly_preview_text(tx, body: str, *, empty_placeholder: str) -> None:
-    tx.config(state=tk.NORMAL)
-    tx.delete("1.0", tk.END)
-    if (body or "").strip():
-        tx.insert("1.0", body.strip())
-    else:
-        tx.insert("1.0", empty_placeholder)
-    tx.config(state=tk.DISABLED)
-
-
 def caption_from_scene_content_item(item: dict) -> str:
     """场景 dict 标题行：``caption``。"""
     if not isinstance(item, dict):
@@ -2030,9 +1988,10 @@ class ProjectSelectionDialog:
                  initial_dialogue_mode=None,
                  initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None,
                  initial_video_size=None, initial_setting_region=None, initial_setting_era=None,
-                 initial_scene_style=None):
+                 initial_scene_style=None, initial_title=None):
 
         self.parent = parent
+        self.initial_title = (initial_title or "").strip()
         self.config_manager = config_manager
         self.youtube_gui = youtube_gui
         self.selected_config = None
@@ -2251,553 +2210,83 @@ class ProjectSelectionDialog:
                 messagebox.showinfo("成功", "项目配置已删除")
 
     def create_new_project(self):
-        """创建新项目"""
-        # 创建新项目配置对话框；create_only 时父窗口须为可见的 parent，否则会白屏
-        form_parent = getattr(self, '_form_parent', self.dialog)
-        new_project_dialog = tk.Toplevel(form_parent)
-        new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("920x780")
-        new_project_dialog.minsize(760, 640)
-        new_project_dialog.transient(form_parent)
-        new_project_dialog.grab_set()
-        
-        # 居中显示
-        new_project_dialog.update_idletasks()
-        x = (new_project_dialog.winfo_screenwidth() - 920) // 2
-        y = (new_project_dialog.winfo_screenheight() - 780) // 2
-        new_project_dialog.geometry(f"920x780+{x}+{y}")
-        
-        main_frame = ttk.Frame(new_project_dialog, padding=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        main_frame.columnconfigure(0, weight=0)
-        main_frame.columnconfigure(1, weight=1)
+        """t107u: 不再弹「创建新项目」审核窗,直接用 STORY 编辑器传来的值创建。
+        成功时 story_result['action'] = 'new',self.selected_config = story_result。"""
+        global LAST_VIDEO_SIZE, LAST_NARRATOR, LAST_VISUAL_STYLE
+        form_parent = getattr(self, '_form_parent', None) or self.parent
+        sr = self.story_result
 
-        row = 0
-
-        # PID、标题、视频分辨率：同一行横向排列
-        top_fields_row = ttk.Frame(main_frame)
-        top_fields_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
-        ttk.Label(top_fields_row, text="PID:").pack(side=tk.LEFT, padx=(0, 4))
-        pid_entry = ttk.Entry(top_fields_row, width=18)
-        pid_entry.pack(side=tk.LEFT, padx=(0, 16))
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        auto_pid = f"p{stamp}"
+        pid = f"p{stamp}"
         n = 0
-        while config.project_dir_exists(auto_pid):
+        while config.project_dir_exists(pid):
             n += 1
-            auto_pid = f"p{stamp}_{n}"
-        pid_entry.insert(0, auto_pid)
+            pid = f"p{stamp}_{n}"
 
-        ttk.Label(top_fields_row, text="标题:").pack(side=tk.LEFT, padx=(0, 4))
-        title_entry = ttk.Entry(top_fields_row, width=28)
-        title_entry.pack(side=tk.LEFT, padx=(0, 16))
+        sc = sr.get('scene_content')
+        if not sc:
+            messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目", parent=form_parent)
+            return
+        if not sr.get('analyzed_content'):
+            sr['analyzed_content'] = ""
+        title = getattr(self, "initial_title", "") or title_from_scene_content(sc)
+        if not (title or "").strip():
+            messagebox.showerror("错误", "scene_content 首场景须含 caption（用作标题）。", parent=form_parent)
+            return
 
-        title_manual_touch = [False]
-        prog_title_sync = {"on": False}
+        resolution = getattr(self, "initial_video_size", "") or LAST_VIDEO_SIZE
+        if resolution == "1920x1080":
+            video_width, video_height = "1920", "1080"
+        elif resolution == "1080x1920":
+            video_width, video_height = "1080", "1920"
+        else:
+            dw, dh = video_size_pair()
+            video_width, video_height = str(dw), str(dh)
+        if resolution in _VIDEO_SIZE_CHOICES:
+            LAST_VIDEO_SIZE = resolution
+            config.save_yt_tools_prefs({"video_size": resolution})
 
-        def _apply_title_programmatic(text: str):
-            prog_title_sync["on"] = True
-            title_entry.delete(0, tk.END)
-            title_entry.insert(0, text)
-
-            def _clear_prog_flag():
-                prog_title_sync["on"] = False
-
-            try:
-                new_project_dialog.after(1, _clear_prog_flag)
-            except tk.TclError:
-                prog_title_sync["on"] = False
-
-        def _on_title_keyrelease(_evt=None):
-            if prog_title_sync["on"]:
-                return
-            title_manual_touch[0] = True
-
-        title_entry.bind("<KeyRelease>", _on_title_keyrelease, add="+")
-
-        def refresh_title_entry_from_scene():
-            nt = title_from_scene_content(
-                self.story_result.get("scene_content"),
-            )
-            if not nt:
-                return
-            if title_manual_touch[0]:
-                return
-            _apply_title_programmatic(nt)
-
-        _dt = title_from_scene_content(
-            self.story_result.get("scene_content"),
-        )
-        _apply_title_programmatic(_dt or self.default_project_config["default_title"])
-
-        ttk.Label(top_fields_row, text="视频:").pack(side=tk.LEFT, padx=(0, 4))
-        resolution_frame = ttk.Frame(top_fields_row)
-        resolution_frame.pack(side=tk.LEFT, padx=(0, 0))
-        resolution_var = tk.StringVar(value=getattr(self, "initial_video_size", "") or LAST_VIDEO_SIZE)
-        ttk.Radiobutton(resolution_frame, text="1920x1080 (横向)", variable=resolution_var, value="1920x1080").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
-        row += 1
-
-        # 频道、语言只读；画面风格 / 旁白 与欢迎屏一致，此处用 Combobox 可改，创建时从控件写入 story_result
-        welcome_info_row = ttk.Frame(main_frame)
-        welcome_info_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
-        _np_styles = list(config.VISUAL_STYLE_OPTIONS)
-        _vs_cur = config.match_visual_style(self.story_result.get("visual_style") or "") or (
+        _vs = config.match_visual_style(sr.get("visual_style") or "") or (
             config.VISUAL_STYLE_OPTIONS[0] if config.VISUAL_STYLE_OPTIONS else ""
         )
         _nar_opts = list(config.CHARACTER_PERSON_OPTIONS)
-        _nar_init = (self.story_result.get('narrator') or "").strip()
-        if _nar_init not in _nar_opts:
-            _fallback = (LAST_NARRATOR or "").strip()
-            if _fallback in _nar_opts:
-                _nar_init = _fallback
+        _nar = (sr.get('narrator') or "").strip()
+        if _nar not in _nar_opts:
+            _fb = (LAST_NARRATOR or "").strip()
+            if _fb in _nar_opts:
+                _nar = _fb
             else:
                 _named = [x for x in _nar_opts if (x or "").strip()]
-                _nar_init = _named[0] if _named else ""
-        new_project_visual_style_var = tk.StringVar(value=_vs_cur)
-        new_project_narrator_var = tk.StringVar(value=_nar_init)
+                _nar = _named[0] if _named else ""
 
-        ttk.Label(welcome_info_row, text="频道:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(welcome_info_row, text=str(self.story_result.get('channel', '')), foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
-        ttk.Label(welcome_info_row, text="语言:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(welcome_info_row, text=str(self.story_result.get('language', '')), foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
-        ttk.Label(welcome_info_row, text="画面风格:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Combobox(
-            welcome_info_row,
-            textvariable=new_project_visual_style_var,
-            values=_np_styles,
-            state="readonly",
-            width=28,
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(welcome_info_row, text="旁白:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Combobox(
-            welcome_info_row,
-            textvariable=new_project_narrator_var,
-            values=_nar_opts,
-            state="readonly",
-            width=18,
-        ).pack(side=tk.LEFT, padx=(0, 8))
-        row += 1
-
-        def sync_channel_prompt(*args):
-            """频道变更时同步完整 ``channel_prompt`` 快照到项目配置。"""
-            self.story_result["channel_prompt"] = config.get_channel_prompt_snapshot(
-                self.story_result["channel"]
-            )
-            self.story_result.pop("prompts", None)
-            self.story_result.pop("channel_template", None)
-
-        sync_channel_prompt()
-
-        # 主题分类、主题子类型：同一行横向排列
-        topic_row = ttk.Frame(main_frame)
-        topic_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
-        ttk.Label(topic_row, text="主题分类:").pack(side=tk.LEFT)
-        topic_category_combo = ttk.Combobox(topic_row, values=[], state="readonly", width=32)
-        topic_category_combo.pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Label(topic_row, text="主题子类:").pack(side=tk.LEFT)
-        topic_subtype_combo = ttk.Combobox(topic_row, values=[], state="readonly", width=32)
-        topic_subtype_combo.pack(side=tk.LEFT, padx=(0, 20))
-        row += 1
-
-        # 主题标签显示（可编辑，支持 a,b, GENRE=Jazz 格式，单选变更会同步至此）
-        ttk.Label(main_frame, text="主题标签:").grid(row=row, column=0, sticky='nw', padx=(0, 8), pady=5)
-        _tags_initial = self.story_result.get('tags')
-        _tags_str = ', '.join(_tags_initial) if isinstance(_tags_initial, list) else (str(_tags_initial) if _tags_initial else '')
-        tags_var = tk.StringVar(value=_tags_str)
-        tags_row = ttk.Frame(main_frame)
-        tags_row.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='ew')
-        tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=72)
-        tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        row += 1
-        
-        # 显示说明文本的标签（支持多行）
-        topic_explanation_label = ttk.Label(main_frame, text="", foreground="gray", wraplength=700, justify='left')
-        topic_explanation_label.grid(row=row, column=1, columnspan=2, padx=(10, 0), pady=5, sticky='nw')
-        row += 1
-        
-        def _tags_analysis_part(tags):
-            """从 tags 中提取分析得来的部分（不含 '=' 的项，含旧版纯文本标签）"""
-            if not tags:
-                return []
-            lst = tags if isinstance(tags, list) else parse_tags_list(str(tags))
-            lst = [t.strip() for t in lst if t and isinstance(t, str)]
-            return [t for t in lst if "=" not in t]
-
-        def _tags_manual_part(tags):
-            """从 tags 中提取手动选择的 KEY=value 部分"""
-            if not tags:
-                return []
-            lst = tags if isinstance(tags, list) else parse_tags_list(str(tags))
-            lst = [t.strip() for t in lst if t and isinstance(t, str)]
-            return [t for t in lst if "=" in t]
-
-        def _on_tags_entry_change(*args):
-            """用户手动编辑 tags 时同步到 story_result"""
-            combined = parse_tags_list(tags_var.get() or "")
-            self.story_result["tags"] = combined if combined else None
-
-        tags_var.trace_add('write', _on_tags_entry_change)
-
-        # 更新主题子类型选项的函数（根据选择的 category）
-        def update_topic_subtype(*args):
-            selected_category = topic_category_combo.get()
-            self.story_result['topic_category'] = selected_category.strip() if selected_category else None
-            self.story_result['topic_subtype'] = None
-            # 保留全部标签：KEY=value 与旧版纯文本（切换分类时不再只保留含「=」项）
-            tags_var.set(", ".join(self.story_result.get("tags") or []))
-            self.story_result['soul'] = None
-            topic_subtype_combo.set('')
-            topic_subtype_combo['values'] = []
-            topic_explanation_label.config(text="")
-            
-            if selected_category and self.topics_data:
-                subtypes = []
-                for topic in self.topics_data:
-                    if topic.get('topic_category') == selected_category:
-                        for subtype_item in topic.get('topic_subtypes', []):
-                            if isinstance(subtype_item, dict):
-                                subtype_name = subtype_item.get('topic_subtype', '')
-                                if subtype_name and subtype_name not in subtypes:
-                                    subtypes.append(subtype_name)
-                topic_subtype_combo['values'] = sorted(subtypes)
-        
-        # 更新说明文本的函数（显示 soul 和 sample_topic），并更新 self.topic_category/subtype/soul
-        def update_explanation(*args):
-            selected_category = topic_category_combo.get()
-            selected_subtype = topic_subtype_combo.get()
-            self.story_result['topic_category'] = selected_category.strip() if selected_category else None
-            self.story_result['topic_subtype'] = selected_subtype.strip() if selected_subtype else None
-            self.story_result['soul'], choices, categories, features = build_soul(self.story_result['channel'], self.story_result['topic_category'], self.story_result['topic_subtype'])
-            
-            if selected_category and choices:
-                for topic in choices:
-                    if topic.get('topic_category') == selected_category:
-                        sample = topic.get('sample_topic', '')
-                        display_parts = []
-                        if self.story_result['soul']:
-                            first_line = (self.story_result['soul'].split('\n')[0] or self.story_result['soul']).strip()
-                            display_soul = (first_line[:64] + '…') if len(first_line) > 64 else first_line
-                            display_parts.append(f"灵魂: {display_soul}")
-                        if sample:
-                            display_parts.append(f"示例: {sample}")
-                        if display_parts:
-                            topic_explanation_label.config(text="\n".join(display_parts), foreground="gray")
-                        else:
-                            topic_explanation_label.config(text="")
-                        break
-                else:
-                    topic_explanation_label.config(text="")
-            else:
-                topic_explanation_label.config(text="")
-        
-        # 绑定事件在下方内容区域统一设置（含 update_buttons_state）
-
-        # 加载主题分类选项的函数（从 topics.json）；channel/language 已从首层传入，不再从 UI 同步
-        def update_topic_choices(*args):
-            self.topics_data.clear()
-            self.tag_features_map.clear()
-            topic_category_combo.set('')
-            topic_category_combo['values'] = []
-            topic_subtype_combo.set('')
-            topic_subtype_combo['values'] = []
-            topic_explanation_label.config(text="")
-
-            if self.story_result['channel']:
-                loaded_choices, loaded_categories, loaded_tag_map = config.load_topics(
-                    self.story_result['channel']
-                )
-                self.topics_data.extend(loaded_choices)
-                if isinstance(loaded_tag_map, dict):
-                    self.tag_features_map.update(loaded_tag_map)
-                topic_category_combo['values'] = sorted(loaded_categories)
-
-            _tg = self.story_result.get('tags')
-            if isinstance(_tg, list) and _tg:
-                tags_var.set(', '.join(_tg))
-            elif _tg:
-                tags_var.set(str(_tg).strip())
-            else:
-                tags_var.set('')
-
+        if sr.get('topic_category') and sr.get('topic_subtype') and not sr.get('soul'):
             try:
-                update_buttons_state()
-            except NameError:
-                pass  # 初次加载时 update_buttons_state 尚未定义
+                sr['soul'], _, _, _ = build_soul(sr['channel'], sr['topic_category'], sr['topic_subtype'])
+            except Exception:
+                sr['soul'] = None
 
-        # 频道/语言已从首层传入，无需绑定变更事件；初始化加载主题分类与模板
-        update_topic_choices()
-        sync_channel_prompt()
+        sr['pid'] = pid
+        sr['video_title'] = title
+        sr['video_width'] = video_width
+        sr['video_height'] = video_height
+        sr['visual_style'] = _vs
+        sr['narrator'] = _nar
+        sr['dialogue_mode'] = config.normalize_dialogue_mode(sr.get('dialogue_mode'))
 
-        # 内容预览区域：固定高度、全宽，避免 Label wraplength 把文字挤成过高一列
-        content_panels_frame = ttk.Frame(main_frame)
-        content_panels_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=10)
-        content_panels_frame.columnconfigure(0, weight=1)
-        row += 1
+        LAST_VISUAL_STYLE = _vs
+        LAST_NARRATOR = _nar
 
-        raw_label_frame = ttk.LabelFrame(content_panels_frame, text="RAW内容", padding=10)
-        raw_label_frame.grid(row=0, column=0, sticky='ew', padx=(5, 5), pady=(0, 8))
-        raw_label_frame.columnconfigure(0, weight=1)
-        raw_preview = scrolledtext.ScrolledText(
-            raw_label_frame,
-            wrap=tk.WORD,
-            height=5,
-            font=("Consolas", 9),
-            relief=tk.FLAT,
-            borderwidth=1,
-        )
-        raw_preview.grid(row=0, column=0, sticky='ew')
-        raw_preview.config(state=tk.DISABLED)
-
-        scene_story_frame = ttk.LabelFrame(
-            content_panels_frame, text="scene_content (JSON)", padding=10
-        )
-        scene_story_frame.grid(row=1, column=0, sticky='ew', padx=(5, 5), pady=(0, 0))
-        scene_story_frame.columnconfigure(0, weight=1)
-        scene_preview = scrolledtext.ScrolledText(
-            scene_story_frame,
-            wrap=tk.NONE,
-            height=8,
-            font=("Consolas", 9),
-            relief=tk.FLAT,
-            borderwidth=1,
-        )
-        scene_preview.grid(row=0, column=0, sticky='ew')
-        scene_preview.config(state=tk.DISABLED)
-        edit_scene_story_btn = ttk.Button(
-            scene_story_frame, text="编辑分镜", command=lambda: None
-        )
-        edit_scene_story_btn.grid(row=1, column=0, sticky='w', pady=(8, 0))
-
-
-        def update_previews():
-            """根据 story_result 更新 RAW / scene_content 预览（固定高度、可滚动）。"""
-            _set_readonly_preview_text(
-                raw_preview,
-                _raw_content_preview_body(self.story_result),
-                empty_placeholder="(未生成)",
-            )
-            _set_readonly_preview_text(
-                scene_preview,
-                _scene_content_preview_body(self.story_result),
-                empty_placeholder="(未填写)",
-            )
-
-        # 根据 topic 启用/禁用 RAW 编辑按钮
-        def update_buttons_state(*args):
-            has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
-            st = 'normal' if has_topic else 'disabled'
-            edit_scene_story_btn.config(state=st)
-
-
-        def apply_initial_topic_selection():
-            """把 __init__/YT 写入的 topic_category、topic_subtype 同步到下拉框（须在 update_buttons_state 之后）。"""
-            cat = (self.story_result.get('topic_category') or '').strip()
-            if not cat:
-                return
-            cats = list(topic_category_combo['values'])
-            if cat not in cats:
-                return
-            topic_category_combo.set(cat)
-            update_topic_subtype()
-            sub = (self.story_result.get('topic_subtype') or '').strip()
-            if sub:
-                subs = list(topic_subtype_combo['values'])
-                if sub in subs:
-                    topic_subtype_combo.set(sub)
-            update_explanation()
-            update_buttons_state()
-
-        apply_initial_topic_selection()
-
-
-        def on_topic_category_selected(e):
-            update_topic_subtype()
-            update_explanation()
-            update_buttons_state()
-
-        def on_topic_subtype_selected(e):
-            update_explanation()
-            update_buttons_state()
-
-        topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
-        topic_subtype_combo.bind('<<ComboboxSelected>>', on_topic_subtype_selected)
-
-
-        def open_scene_story_editor(initial_text=None):
-            """粘贴 / 编辑 ``scene_content`` JSON；确认后刷新预览并按需同步标题输入框。"""
-            if initial_text is None:
-                initial_text = self.story_result.get('scene_content')
-            if isinstance(initial_text, list):
-                _scf = json.dumps(initial_text, ensure_ascii=False, indent=2)
-            elif isinstance(initial_text, dict):
-                _scf = json.dumps(initial_text, ensure_ascii=False, indent=2)
-            elif isinstance(initial_text, str) and initial_text.strip():
-                _scf = initial_text.strip()
-            else:
-                _scf = None
-            dlg = tk.Toplevel(new_project_dialog)
-            dlg.title("Story / scene_content 输入")
-            dlg.geometry("820x620")
-            dlg.transient(new_project_dialog)
-            dlg.grab_set()
-            dlg.update_idletasks()
-            x = (dlg.winfo_screenwidth() - 820) // 2
-            y = (dlg.winfo_screenheight() - 620) // 2
-            dlg.geometry(f"820x620+{x}+{y}")
-            frame = ttk.Frame(dlg, padding=20)
-            frame.pack(fill=tk.BOTH, expand=True)
-            ttk.Label(
-                frame,
-                text="请输入 scene_content JSON（NotebookLM 输出为场景 array，语言由项目语种决定）：",
-                font=('TkDefaultFont', 10, 'bold'),
-            ).pack(anchor='w', pady=(0, 5))
-            text_w = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=94, height=28)
-            text_w.pack(fill=tk.BOTH, expand=True)
-            if _scf:
-                text_w.insert(tk.END, _scf)
-
-            def paste_sc(e=None):
-                try:
-                    s = safe_clipboard_json_copy(dlg.clipboard_get())
-                    if s:
-                        text_w.delete(1.0, tk.END)
-                        text_w.insert(tk.END, s)
-                except tk.TclError:
-                    pass
-
-            text_w.bind('<Double-1>', paste_sc)
-
-            holder = [None]
-
-            def ok_sc():
-                try:
-                    holder[0] = text_w.get('1.0', tk.END).strip()
-                except tk.TclError:
-                    holder[0] = ""
-                dlg.destroy()
-
-            bf = ttk.Frame(frame)
-            bf.pack(fill=tk.X, pady=(10, 0))
-            ttk.Button(bf, text="确认", command=ok_sc).pack(side=tk.LEFT, padx=5)
-
-            dlg.wait_window()
-
-            raw_txt = (holder[0] or "").strip()
-            if not raw_txt:
-                return
-            try:
-                parsed_sc = json.loads(safe_clipboard_json_copy(raw_txt))
-            except json.JSONDecodeError:
-                return
-            parsed_sc = parsed_sc if isinstance(parsed_sc, list) else []
-            if not parsed_sc:
-                return
-            self.story_result['scene_content'] = parsed_sc
-            update_buttons_state()
-            update_previews()
-            refresh_title_entry_from_scene()
-
-
-        edit_scene_story_btn.config(command=open_scene_story_editor)
-
-        update_previews()
-
-        # 初始状态：按钮禁用（topic 未选时）
-        update_buttons_state()
-        
-        # 按钮（固定在预览区下方，不参与垂直扩展）
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=row, column=0, columnspan=2, sticky='ew', pady=(12, 0))
-
-        def on_create():
-            pid = pid_entry.get().strip()
-            title = title_entry.get().strip()
-            resolution = resolution_var.get()
-            if resolution in _VIDEO_SIZE_CHOICES:
-                global LAST_VIDEO_SIZE
-                LAST_VIDEO_SIZE = resolution
-                config.save_yt_tools_prefs({"video_size": resolution})
-            
-            if not pid:
-                messagebox.showerror("错误", "请输入项目ID")
-                return
-            if not title:
-                messagebox.showerror("错误", "请输入标题")
-                return
-            
-            ac = self.story_result.get('analyzed_content')
-            sc = self.story_result.get('scene_content')
-            if not sc:
-                messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目")
-                return
-            if not ac:
-                ac = ""
-                self.story_result['analyzed_content'] = ac
-
-            _sc_title = title_from_scene_content(sc)
-            if _sc_title:
-                title = _sc_title
-            elif not (title or "").strip() or (title or "").strip() in ("新项目", "未命名"):
-                messagebox.showerror(
-                    "错误",
-                    "请填写标题，或确保 scene_content 首场景含 caption。",
-                    parent=new_project_dialog,
-                )
-                return
-
-            # 解析分辨率
-            if resolution == "1920x1080":
-                video_width = "1920"
-                video_height = "1080"
-            elif resolution == "1080x1920":
-                video_width = "1080"
-                video_height = "1920"
-            else:
-                dw, dh = video_size_pair()
-                video_width = str(dw)
-                video_height = str(dh)
-
-            # self.story_result
-            self.story_result['pid'] = pid
-            self.story_result['video_title'] = title
-            self.story_result['video_width'] = video_width
-            self.story_result['video_height'] = video_height
-            self.story_result['visual_style'] = new_project_visual_style_var.get()
-            self.story_result['narrator'] = new_project_narrator_var.get()
-            self.story_result['dialogue_mode'] = config.normalize_dialogue_mode(
-                self.story_result.get('dialogue_mode')
-            )
-
-            global LAST_NARRATOR, LAST_VISUAL_STYLE
-            LAST_VISUAL_STYLE = self.story_result['visual_style']
-            LAST_NARRATOR = self.story_result['narrator']
-
-            self.story_result['action'] = 'new'
-            # 保存 channel_id（多个 config key 可对应同一 channel_id）
-            ch_id = config.get_channel_id(self.story_result['channel'])
-            self.story_result['channel'] = ch_id
-            _ch_cfg = config.get_channel_config(ch_id)
-            self.story_result['channel_prompt'] = config.get_channel_prompt_snapshot(ch_id)
-            self.story_result.pop('prompts', None)
-            self.story_result.pop('channel_template', None)
-            self.story_result['scene_min_length'] = _ch_cfg.get('scene_min_length', 9)
-            self.story_result['watermark'] = dict(_ch_cfg.get('watermark') or {})
-            self.story_result['headmark'] = dict(_ch_cfg.get('headmark') or {})
-            self.selected_config = self.story_result
-
-            new_project_dialog.destroy()
-            self.dialog.destroy()
-        
-        def on_cancel():
-            new_project_dialog.destroy()
-        
-        ttk.Button(button_frame, text="创建", command=on_create).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
-
-        # 等待对话框关闭
-        new_project_dialog.wait_window()
-    
+        ch_id = config.get_channel_id(sr['channel'])
+        sr['channel'] = ch_id
+        _ch_cfg = config.get_channel_config(ch_id)
+        sr['channel_prompt'] = config.get_channel_prompt_snapshot(ch_id)
+        sr.pop('prompts', None)
+        sr.pop('channel_template', None)
+        sr['scene_min_length'] = _ch_cfg.get('scene_min_length', 9)
+        sr['watermark'] = dict(_ch_cfg.get('watermark') or {})
+        sr['headmark'] = dict(_ch_cfg.get('headmark') or {})
+        sr['action'] = 'new'
+        self.selected_config = sr
 
     def open_selected(self):
         """打开选中的项目"""
@@ -3240,7 +2729,7 @@ def create_project_dialog(parent, youtube_gui=None):
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags,
                                     dialogue_mode=None, video_size=None,
-                                    setting_region=None, setting_era=None, scene_style=None):
+                                    setting_region=None, setting_era=None, scene_style=None, title=None):
     """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。
     ``video_size``："1920x1080" / "1080x1920"，新建窗口里画面比例的初始值（STORY 窗口的选择）。
     ``setting_region`` / ``setting_era``：STORY 窗口选的地域和时代，写进新项目。
@@ -3280,6 +2769,7 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         initial_setting_region=setting_region,
         initial_setting_era=setting_era,
         initial_scene_style=scene_style,
+        initial_title=title,
     )
 
     result = dialog.story_result.get('action', 'cancel')

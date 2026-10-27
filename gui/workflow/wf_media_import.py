@@ -419,6 +419,9 @@ class MediaImportMixin:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene or not isinstance(pick, dict):
             return
+        if ((pick.get("dest") or "clip").strip() or "clip") == "clip":
+            # t108u: 换片前记下旧声音长度,刷新进度条时按 新/旧 缩放讲话分段。
+            self._stamp_timing_duration(scene)
         mp4 = pick.get("mp4") or ""
         wav = pick.get("wav") or ""
         audio = pick.get("audio")
