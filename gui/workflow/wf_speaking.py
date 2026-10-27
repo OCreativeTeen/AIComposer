@@ -36,6 +36,65 @@ class SpeakingMixin:
         stamp = scene.get("speaking") if text is None else text
         scene["speaking_timing"] = {"text": (stamp or "").strip(), "sections": sections}
 
+    def _stamp_timing_duration(self, scene, duration: float | None = None) -> None:
+        """t108u: 记下这份 speaking_timing 是按多长的声音标的(已有就不改)。"""
+        record = scene.get("speaking_timing") if isinstance(scene, dict) else None
+        if not isinstance(record, dict) or not isinstance(record.get("sections"), list):
+            return
+        try:
+            if float(record.get("duration") or 0.0) > 0:
+                return
+        except (TypeError, ValueError):
+            pass
+        if duration is None:
+            duration = self._clip_duration(scene)
+        if duration and duration > 0:
+            record["duration"] = round(float(duration), 3)
+
+    def _rescale_timing_to_duration(self, scene, duration: float) -> bool:
+        """t108u: 声音变长/变短后,把每段起止按 新长/旧长 等比例缩放。
+        没记旧长度(老数据)就只补记当前长度,不缩放。返回是否改了。"""
+        record = scene.get("speaking_timing") if isinstance(scene, dict) else None
+        if not isinstance(record, dict) or not isinstance(record.get("sections"), list):
+            return False
+        try:
+            new_len = float(duration or 0.0)
+        except (TypeError, ValueError):
+            return False
+        if new_len <= 0:
+            return False
+        try:
+            old_len = float(record.get("duration") or 0.0)
+        except (TypeError, ValueError):
+            old_len = 0.0
+        if old_len <= 0:
+            record["duration"] = round(new_len, 3)
+            return True
+        if abs(new_len - old_len) <= 0.02:
+            return False
+        ratio = new_len / old_len
+        scaled = []
+        for item in record["sections"]:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            for key in ("start", "end"):
+                try:
+                    row[key] = round(max(0.0, min(new_len, float(item.get(key)) * ratio)), 2)
+                except (TypeError, ValueError):
+                    pass
+            scaled.append(row)
+        if scaled:
+            try:
+                if float(scaled[-1].get("end")) > new_len:
+                    scaled[-1]["end"] = round(new_len, 2)
+            except (TypeError, ValueError):
+                pass
+        record["sections"] = scaled
+        record["duration"] = round(new_len, 3)
+        print(f"📏 讲话分段按声音长度缩放 {old_len:.2f}s → {new_len:.2f}s (x{ratio:.3f})")
+        return True
+
     def _speech_media_path(self, scene: dict | None) -> str:
         if not scene:
             return ""

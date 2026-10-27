@@ -1074,6 +1074,7 @@ class ChannelVideosDialogImpl:
                 setting_region=None,
                 setting_era=None,
                 scene_style=None,
+                title=None,
             ):
                 if not _scene_content_nonempty(
                     {"scene_content": scene_content}
@@ -1104,6 +1105,8 @@ class ChannelVideosDialogImpl:
                     setting_region=setting_region,
                     setting_era=setting_era,
                     scene_style=scene_style,
+                    # t110u: 项目名 = 选定/手改的名称;没有才用首场 caption
+                    title=(title or vd.get(project_manager.PENDING_PROJECT_TITLE_KEY) or "").strip() or None,
                 )
                 if result == "new" and selected_config:
                     _after_new_project_created(
@@ -1196,6 +1199,7 @@ class ChannelVideosDialogImpl:
                                 topic_tags_kw=_topic_tags_val(cfg),
                                 superseded_pid=cfg_pid,
                                 dialogue_mode=_look_talk,
+                                title=(cfg.get("video_title") or "").strip() or None,
                             )
                             return
                 else:
@@ -1244,6 +1248,7 @@ class ChannelVideosDialogImpl:
                 f"这条里的文案和场景内容会保留，用来填写新项目。\n\n"
                 f"确定删除并重新生成吗？",
                 parent=parent,
+                default=messagebox.NO,
             )
             if not ok:
                 return
@@ -1251,6 +1256,11 @@ class ChannelVideosDialogImpl:
             if os.path.isdir(folder):
                 # 尽量删。被别的进程占用删不掉的文件就留在原地，以后手工删，不阻止重新生成。
                 shutil.rmtree(folder, ignore_errors=True)
+            _old_prof = vd.get(project_manager.PROJECT_PROFILE_KEY)
+            _old_name = (_old_prof.get("video_title") or "").strip() if isinstance(_old_prof, dict) else ""
+            if _old_name:
+                # t110u: 重建沿用原项目名
+                vd[project_manager.PENDING_PROJECT_TITLE_KEY] = _old_name
             vd.pop(project_manager.PROJECT_PROFILE_KEY, None)
             vd.pop("project_id", None)
             vd.pop("project_pid", None)
@@ -1482,6 +1492,14 @@ class ChannelVideosDialogImpl:
                                 video_detail["analyzed_content"] = text
                             else:
                                 video_detail.pop("analyzed_content", None)
+                _typed = (source_title_var.get() or "").strip()
+                if (
+                    _typed
+                    and _typed != _youtube_row_source_title(video_detail)
+                    and not project_manager.list_json_row_has_project_profile(video_detail)
+                ):
+                    # t110u: 还没项目时手改了名称栏,创建项目时用它作项目名
+                    video_detail[project_manager.PENDING_PROJECT_TITLE_KEY] = _typed
                 _apply_video_detail_titles_from_ui(
                     video_detail,
                     source_title=source_title_var.get(),
@@ -1764,6 +1782,50 @@ class ChannelVideosDialogImpl:
                     scene_style=_story_scene_style(),
                 )
 
+            def _project_menu_from_summary():
+                """t107u: 一个「打开项目」按钮 → 小窗选「打开已有项目」/「重建项目」(或「创建新项目」)。"""
+                has_pid = bool((_video_detail_project_pid(video_detail) or "").strip())
+                win = tk.Toplevel(summary_window)
+                win.title("打开项目")
+                win.transient(summary_window)
+                win.resizable(False, False)
+                frm = ttk.Frame(win, padding=16)
+                frm.pack(fill=tk.BOTH, expand=True)
+                ttk.Label(
+                    frm,
+                    text=("这个故事已有项目。" if has_pid else "这个故事还没有项目。"),
+                ).pack(anchor="w", pady=(0, 10))
+                row = ttk.Frame(frm)
+                row.pack(fill=tk.X)
+
+                def _go(fn):
+                    try:
+                        win.destroy()
+                    except tk.TclError:
+                        pass
+                    fn()
+
+                b_open = ttk.Button(row, text="打开已有项目", width=14,
+                                    command=lambda: _go(_open_project_from_summary))
+                b_open.pack(side=tk.LEFT, padx=(0, 8))
+                if not has_pid:
+                    b_open.state(["disabled"])
+                ttk.Button(
+                    row, text=("重建项目" if has_pid else "创建新项目"), width=14,
+                    command=lambda: _go(_regen_project_from_summary if has_pid else _open_project_from_summary),
+                ).pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Button(row, text="取消", width=8, command=win.destroy).pack(side=tk.LEFT)
+                win.bind("<Escape>", lambda _e: win.destroy())
+                win.update_idletasks()
+                try:
+                    x = summary_window.winfo_rootx() + (summary_window.winfo_width() - win.winfo_width()) // 2
+                    y = summary_window.winfo_rooty() + (summary_window.winfo_height() - win.winfo_height()) // 3
+                    win.geometry(f"+{max(0, x)}+{max(0, y)}")
+                except tk.TclError:
+                    pass
+                win.grab_set()
+                win.focus_set()
+
             def _resummarize_from_summary(**kw):
                 _resummarize_one_video_detail(video_detail, summary_window, **kw)
 
@@ -1779,8 +1841,8 @@ class ChannelVideosDialogImpl:
                 main_character=(story_narrator_var.get() or "").strip(),
                 channel_path=self.channel_path or "",
                 embed_in=scene_host,
-                on_open_project=_open_project_from_summary,
-                on_regen_project=_regen_project_from_summary,
+                on_open_project=_project_menu_from_summary,
+                on_regen_project=None,  # t107u: 重生项目并入「打开项目」小窗
                 on_save_story=save_story_info,
                 on_resummarize=_resummarize_from_summary,
             )

@@ -1582,6 +1582,15 @@ class SceneEditorImpl:
                     return
                 want = 25 if material_var.get() == "analyzed" else 5
                 try:
+                    # t105u: 分析报告的 JSON 框字体大约 1/3(仍 25 行,所以更高);素材模式维持原字号 5 行
+                    fonts = scene_ui.get("scene_json_fonts")
+                    if fonts is None:
+                        import tkinter.font as tkfont
+
+                        small = tkfont.Font(box, family="Consolas", size=10)
+                        fonts = (small, tkfont.Font(box, family="Consolas", size=round(10 * 4 / 3)))
+                        scene_ui["scene_json_fonts"] = fonts
+                    box.configure(font=fonts[1] if want == 25 else fonts[0])
                     if int(box.cget("height")) == want:
                         return
                     box.configure(height=want)
@@ -1590,9 +1599,11 @@ class SceneEditorImpl:
                         dlg.update_idletasks()
                         need = frm.winfo_reqheight() + 8
                         cur = dlg.winfo_height()
-                        cap = dlg.winfo_screenheight() - 80
+                        cap = dlg.winfo_screenheight() - 60
                         if need > cur and cur < cap:
-                            dlg.geometry(f"{dlg.winfo_width()}x{min(need, cap)}")
+                            h = min(need, cap)
+                            y = max(0, min(dlg.winfo_y(), dlg.winfo_screenheight() - h - 50))
+                            dlg.geometry(f"{dlg.winfo_width()}x{h}+{dlg.winfo_x()}+{y}")
                 except (tk.TclError, ValueError):
                     pass
 
@@ -2396,6 +2407,77 @@ class SceneEditorImpl:
             tx.pack(fill=tk.X, expand=False, pady=(0, 8))
             _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
             scene_ui["tx"] = tx
+
+            # t113u: 摘要框(列表行 summary),可编辑;自动摘要完成后刷新
+            sum_label = ttk.Label(frm, text="摘要（summary）：")
+            sum_label.pack(anchor=tk.W, pady=(0, 2))
+            sum_tx = scrolledtext.ScrolledText(frm, wrap=tk.WORD, width=100, height=7, font=("Consolas", 11))
+            sum_tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+            _sum_state = {"edited": False, "dirty": False}
+
+            def _sum_text() -> str:
+                try:
+                    return sum_tx.get("1.0", tk.END).strip()
+                except tk.TclError:
+                    return ""
+
+            def _sum_show(text: str) -> None:
+                try:
+                    sum_tx.delete("1.0", tk.END)
+                    sum_tx.insert("1.0", text or "")
+                    sum_tx.edit_modified(False)
+                except tk.TclError:
+                    pass
+
+            def _sum_status(extra: str = "", color: str = "") -> None:
+                try:
+                    sum_label.config(text="摘要（summary）：" + extra, foreground=color)
+                except tk.TclError:
+                    pass
+
+            _s0 = video_detail.get("summary") if isinstance(video_detail, dict) else ""
+            _sum_show(_s0 if isinstance(_s0, str) else str(_s0 or ""))
+
+            def _sum_on_key(_e=None):
+                _sum_state["edited"] = True
+                _sum_state["dirty"] = True
+                video_detail["summary"] = _sum_text()  # 「保存」写列表时带上
+
+            def _sum_on_focus_out(_e=None):
+                if not _sum_state["dirty"]:
+                    return
+                _sum_state["dirty"] = False
+                video_detail["summary"] = _sum_text()
+                try:
+                    if self._persist_video_detail_story(video_detail, parent=dlg):
+                        print("✅ 摘要已保存")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 摘要没有保存:{exc}")
+
+            sum_tx.bind("<KeyRelease>", _sum_on_key, add="+")
+            sum_tx.bind("<<Paste>>", lambda e: dlg.after(10, _sum_on_key), add="+")
+            sum_tx.bind("<FocusOut>", _sum_on_focus_out, add="+")
+
+            def _sum_view_start():
+                _sum_state["edited"] = False
+                _sum_status("生成中…", "#1a4fa0")
+                if not _sum_text():
+                    _sum_show("生成中…")
+
+            def _sum_view_done(text: str):
+                if _sum_state["edited"]:
+                    _sum_status("新摘要已生成，但你正在编辑，没有覆盖。", "#b06000")
+                    return False
+                _sum_show(text)
+                _sum_status("已自动生成并保存。", "#0a6b0a")
+                return True
+
+            def _sum_view_fail(msg: str):
+                if _sum_text() == "生成中…":
+                    _sum_show("")
+                _sum_status(f"生成失败：{msg}"[:120], "#b00020")
+
+            scene_ui["summary_view"] = {"start": _sum_view_start, "done": _sum_view_done, "fail": _sum_view_fail}
             if callable(scene_ui.get("sync_scene_json_height")):
                 scene_ui["sync_scene_json_height"]()  # 打开时就在分析报告页：直接 25 行
 
@@ -2533,6 +2615,15 @@ class SceneEditorImpl:
                         offer = scene_ui.get("offer_title_suggest")
                         if callable(offer):
                             dlg.after(300, offer)
+                        # t112u: 同时在后台另调一次 LLM 生成摘要,写进 summary(不挡名称建议窗)
+                        try:
+                            self._auto_summarize_story(
+                                dlg, video_detail, _story_scene_list(video_detail, scene_ui),
+                                _story_analysis_text(video_detail, scene_ui),
+                                view=scene_ui.get("summary_view"),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"⚠️ 自动摘要没有启动:{exc}")
 
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
@@ -2840,31 +2931,7 @@ class SceneEditorImpl:
                     program_btn.pack(side=tk.LEFT, padx=(0, 6), after=_smart_sep)
                     smart_btn.pack(side=tk.LEFT, padx=(0, 6), after=program_btn)
 
-                    if embedded:
-                        def _summary_scenes() -> list:
-                            parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
-                            if parsed:
-                                return parsed
-                            sc = video_detail.get("scene_content")
-                            return [item for item in sc if isinstance(item, dict)] if isinstance(sc, list) else []
-
-                        sum_btn = ttk.Button(scene_ui["smart_slot"], text="生成摘要", width=8, style="StoryMidAction.TButton")
-
-                        def _on_summarize() -> None:
-                            sum_btn.config(state=tk.DISABLED)
-
-                            def _enable() -> None:
-                                try:
-                                    sum_btn.config(state=tk.NORMAL)
-                                except tk.TclError:
-                                    pass
-
-                            self._summarize_scene_list(
-                                dlg, video_detail, _summary_scenes(), on_done=_enable
-                            )
-
-                        sum_btn.config(command=_on_summarize)
-                        sum_btn.pack(side=tk.LEFT, padx=(0, 8))
+                    # t112u: 「生成摘要」按钮去掉,场景生成后自动生成(见 _on_smart_saved)。
                     if callable(on_save_story):
                         title_host = scene_ui["prompt_row"]
                         title_var = None
@@ -2895,9 +2962,8 @@ class SceneEditorImpl:
 
                             def _chosen(name: str) -> None:
                                 # 名称栏 → 外层 title；有项目时也改 project_profile.video_title（标题栏显示的就是它）
-                                prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
-                                if isinstance(prof, dict) and prof:
-                                    prof["video_title"] = name
+                                # t110u: 记下选定的名称(没项目时存 project_title,创建项目时就用它)
+                                project_manager.apply_project_name_to_row(video_detail, name)
                                 _var.set(name)
                                 on_save_story()
                                 cfg = project_manager.PROJECT_CONFIG
@@ -2913,13 +2979,8 @@ class SceneEditorImpl:
 
                         scene_ui["offer_title_suggest"] = _offer_title_suggestions
                     # 第 3 行：生成摘要 → 空一段 → 重新生成项目 → 保存（保存放最后）。
-                    if callable(on_regen_project) or callable(on_save_story):
+                    if callable(on_save_story):
                         ttk.Frame(scene_ui["smart_slot"], width=28).pack(side=tk.LEFT)
-                    if callable(on_regen_project):
-                        regen_host = scene_ui["prompt_row"] if callable(on_save_story) else scene_ui["smart_slot"]
-                        ttk.Button(
-                            scene_ui["smart_slot"], text="重生项目", command=on_regen_project
-                        ).pack(side=tk.LEFT, padx=(0, 6))
                     if callable(on_save_story):
                         ttk.Button(
                             scene_ui.get("size_frm") or scene_ui["smart_slot"], text="保存", width=8, command=on_save_story

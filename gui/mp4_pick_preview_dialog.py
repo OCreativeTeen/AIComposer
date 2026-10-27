@@ -730,12 +730,15 @@ def ask_mp4_pick_with_trim_preview(
         _apply_ui()
 
     def _set_speed(c, new_speed: float) -> None:
-        # 改速度时从起点重算终点：锁定时让输出 = 本场长度；没锁时保持原来的输出时长。
-        old = max(0.01, c.speed)
-        out_dur = target_len if _lock_on() else (c.end - c.start) / old
+        """t106u: 区间(源视频上的起止)是用户定的,变速只改输出时长(= 区间 / 速度)。
+        只有「锁定为本场长度」勾上时,才按 本场长度 x 速度 重算终点。
+        速度离开 1.0 且声音是「配声」时,自动改成「原声」。"""
+        if abs(new_speed - 1.0) > 0.001 and radio_holder[0] and radio_var.get() == "replace_speed":
+            radio_var.set("keep")
         c.speed = new_speed
-        end = c.start + out_dur * max(0.01, new_speed)
-        c.end = _snap_time(min(c.duration, max(c.start + _PREVIEW_MIN_CLIP_SEC, end)), c)
+        if _lock_on():
+            end = c.start + target_len * max(0.01, new_speed)
+            c.end = _snap_time(min(c.duration, max(c.start + _PREVIEW_MIN_CLIP_SEC, end)), c)
         _apply_ui()
 
     def _fit_speed_to_target() -> None:

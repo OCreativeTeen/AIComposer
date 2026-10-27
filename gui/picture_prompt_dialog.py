@@ -198,6 +198,7 @@ def open_picture_prompt_dialog(
             "image": image_to_save(),
             "fyi_history": get_fyi_history(),
             "background": bool(bg_include_var.get()),
+            **{k: v for k, v in _step_saved.items()},  # t114u: 提取模式下记用户原来的勾选
         }
 
     def remember() -> None:
@@ -208,15 +209,42 @@ def open_picture_prompt_dialog(
         except Exception as exc:  # noqa: BLE001
             print(f"图片修改：选择没有记下：{exc}")
 
+    _step_saved: dict = {}
+
+    def _set_state_tree(widget, state: str) -> None:
+        for child in widget.winfo_children():
+            try:
+                child.configure(state=state)
+            except tk.TclError:
+                pass
+            _set_state_tree(child, state)
+
+    def _sync_step_mode_widgets(step_mode: bool) -> None:
+        """t114u: 提取第 N 步时取消并灰掉「写进提示词的内容」和「背景」;离开时还原。"""
+        pairs = (("visual", visual_var), ("speaking", speaking_var), ("actor", actor_var), ("background", bg_include_var))
+        if step_mode and not _step_saved:
+            for key, var in pairs:
+                _step_saved[key] = bool(var.get())
+                var.set(False)
+            _set_state_tree(_bg_box, "disabled")
+        elif not step_mode and _step_saved:
+            for key, var in pairs:
+                var.set(_step_saved.get(key, var.get()))
+            _step_saved.clear()
+            _set_state_tree(_bg_box, "normal")
+
     def refresh(*_args) -> None:
         extract = task_var.get() == "extract"
         step_mode = narrative_var.get() == "step"
+        _sync_step_mode_widgets(step_mode)
         for btn in story_buttons:
             btn.configure(state=("disabled" if extract else "normal"))
-        for btn in text_buttons + field_buttons:
+        for btn in text_buttons:
+            btn.configure(state=("disabled" if extract else "normal"))
+        for btn in field_buttons:
             btn.configure(state=("disabled" if extract or step_mode else "normal"))
         if step_mode:
-            hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格），其他选项不进提示词。")
+            hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格）和说明文字（只管这一步的字），其他选项不进提示词。")
             return
         edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
         hint.config(foreground=("#1f5fbf" if edit_only else ""))
@@ -242,13 +270,14 @@ def open_picture_prompt_dialog(
                 messagebox.showwarning("图片修改", "当前场景没有可用的图，提取不了第几步。", parent=dlg)
                 return
             style = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
+            # t114u: 只写「原样取出第 N 格」+ 画风改变 + 说明文字 + FYI;不带 visual/speaking/actor/讲员/背景
             prompt = config_prompt.build_step_image_clipbody(
                 step_no,
                 visual_style=style,
-                main_character=main_character or "",
                 keep_style=task_var.get() != "restyle",
-                scene_caption=str(scene.get("caption") or ""),
-                scene_visual=str(scene.get("visual") or ""),
+                caption=text_var.get(),
+                extract_only=True,
+                fyi=(get_fyi_text() or "").strip() if fyi_include_var.get() else "",
             )
             aspect = config_prompt.output_aspect_line(_project_video_size())
             if aspect:

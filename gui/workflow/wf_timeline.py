@@ -141,6 +141,8 @@ class TimelineMixin:
         self._speech_sections = []
         if scene and duration > 0:
             text = (scene.get("speaking") or "").strip()
+            if self._timing_sections(scene) is not None and self._rescale_timing_to_duration(scene, duration):
+                self.workflow.save_scenes_to_json()  # t108u: 声音长度变了,分段等比例缩放
             stored = self._timing_sections(scene)
             if stored is not None:
                 self._speech_sections = self._sections_from_stored(stored, text)

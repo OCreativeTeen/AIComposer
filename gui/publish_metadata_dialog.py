@@ -295,6 +295,7 @@ def ask_publish_metadata_then_schedule(
     metadata_dialog_title: str = "上传视频 — 标题与描述",
     metadata_confirm_label: str = "确定",
     schedule_dialog_title: str = "上传至 YouTube",
+    preferred_title: str = "",
 ) -> dict | None:
     """先标题/描述，再发布时间（与 ``GUI_wf.publish_video`` 顺序一致）。
 
@@ -311,6 +312,7 @@ def ask_publish_metadata_then_schedule(
 
     meta = ask_publish_title_and_description(
         parent,
+        preferred_title=preferred_title,
         language=language,
         default_title=default_title,
         caption_labels=cap_labels,
@@ -382,6 +384,7 @@ def ask_publish_title_and_description(
     on_summary_regenerated: Callable[[str], None] | None = None,
     dialog_title: str = "上传视频 — 标题与描述",
     confirm_label: str = "确定",
+    preferred_title: str = "",
 ) -> dict | None:
     """返回 ``{"title": str, "description": str}``；取消返回 ``None``。
 
@@ -410,6 +413,9 @@ def ask_publish_title_and_description(
         default_title=default_title,
         video_detail=video_detail,
     )
+    if (preferred_title or "").strip():
+        # t110u: 发布前已选定的标题(默认 = 项目名)
+        resolved_title = config.chinese_convert(preferred_title.strip(), lang)
 
     if caption_labels is None:
         cap_labels, cap_payloads = build_caption_choices_from_scenes(
