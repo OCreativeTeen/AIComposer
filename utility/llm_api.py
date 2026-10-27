@@ -154,11 +154,11 @@ class LLMApi:
 
 
     # { "topic_category": "心智成长与存在焦虑", "topic_subtype": "觉醒期与意义崩塌", "tags": "我开始怀疑以前相信的一切, 努力好像不一定 有回报, 我看清规则却更迷茫" }
-    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True, *, images=None, attachment=None) -> Union[Dict, List]:
+    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True, *, images=None, attachment=None, extra=None) -> Union[Dict, List]:
         max_retries = 1
         for attempt in range(max_retries):
             try:
-                content = self.generate_text(system_prompt, user_prompt, images=images, attachment=attachment)
+                content = self.generate_text(system_prompt, user_prompt, images=images, attachment=attachment, extra=extra)
                 if not isinstance(content, str) or not content.strip():
                     return [] if expect_list else {}
 
@@ -478,7 +478,7 @@ class LLMApi:
         return kept
 
 
-    def generate_text(self, system_prompt, user_prompt, *, images=None, attachment=None, _force_model=None):
+    def generate_text(self, system_prompt, user_prompt, *, images=None, attachment=None, _force_model=None, extra=None):
         """生成文字。
 
         - 指定了模型（不是 None、不是 MANUAL）：直接用它。
@@ -503,7 +503,7 @@ class LLMApi:
         if base_model == MANUAL:
             # 手动窗口（也可以在窗口里点选一个模型）
             model, manual_response = self._show_model_dialog(
-                system_prompt, user_prompt, image_paths=images, attachment=attachment
+                system_prompt, user_prompt, image_paths=images, attachment=attachment, extra=extra
             )
             if model == MANUAL:
                 self._last_source = MANUAL
@@ -1505,11 +1505,18 @@ class LLMApi:
         # ``extra``：不进提示词的参数（如 {"duration": "10s", "resolution": "720p"}），交给 CLI自动；只读显示。
         extra_params = dict(extra) if isinstance(extra, dict) else {}
         shown_params = {k: v for k, v in extra_params.items()
-                        if k not in ("image_backend", "video_backend", "orientation") and v not in (None, "")}
+                        if k not in ("image_backend", "video_backend", "orientation", "text_backend") and v not in (None, "")}
         if shown_params:
             ttk.Label(
                 model_frame,
                 text="参数: " + " · ".join(str(v) for v in shown_params.values()),
+                font=("TkDefaultFont", 9),
+                foreground="gray35",
+            ).pack(anchor=tk.W, pady=(2, 0))
+        if str(extra_params.get("text_backend") or "").strip():
+            ttk.Label(
+                model_frame,
+                text="文字生成：" + ("Gemini" if str(extra_params.get("text_backend")).strip().lower() == "gemini" else "Grok"),
                 font=("TkDefaultFont", 9),
                 foreground="gray35",
             ).pack(anchor=tk.W, pady=(2, 0))
@@ -1659,9 +1666,18 @@ class LLMApi:
 
                         _cli_ui(_apply_image)
                     else:
-                        text = grok_cdp.ask_text(prompt, status=_cli_set_status)
+                        # t119u: 文字可选 Gemini 网页（extra["text_backend"] == "gemini"），默认 Grok
+                        if str(extra_params.get("text_backend") or "").strip().lower() == "gemini":
+                            from . import gemini_cdp
+
+                            _cli_set_status("CLI自动：Gemini 生成文字 …")
+                            text = gemini_cdp.ask_text(prompt, status=_cli_set_status)
+                            who_text = "Gemini"
+                        else:
+                            text = grok_cdp.ask_text(prompt, status=_cli_set_status)
+                            who_text = "Grok"
                         if not (text or "").strip():
-                            raise RuntimeError("Grok 返回了空回答")
+                            raise RuntimeError(f"{who_text} 返回了空回答")
 
                         def _apply_text():
                             _cli_done_ui()

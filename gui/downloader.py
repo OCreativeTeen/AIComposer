@@ -1198,6 +1198,7 @@ class MediaGUIManager:
         dialogue_mode: str = "",
         attachment: str = "",
         prompt_params: dict | None = None,
+        text_backend: str = "",
     ) -> list | None:
         """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
         has_override = content_override is not None and str(content_override).strip()
@@ -1213,8 +1214,10 @@ class MediaGUIManager:
         )
         if not (prompt or "").strip():
             return None
+        backend = (text_backend or "").strip().lower()
         parsed = self.llm_api_manual.generate_json(
-            prompt, "", expect_list=True, attachment=(attachment or "").strip() or None
+            prompt, "", expect_list=True, attachment=(attachment or "").strip() or None,
+            extra=({"text_backend": backend} if backend in ("grok", "gemini") else None),
         )
         if isinstance(parsed, dict):
             one = _normalize_scene_dict_entry(parsed)
@@ -1245,8 +1248,9 @@ class MediaGUIManager:
         dialogue_mode: str = "",
         attachment: str = "",
         prompt_params: dict | None = None,
+        text_backend: str = "",
     ) -> bool:
-        """智能生成 scene_content：替换现有内容并自动保存。"""
+        """智能生成 scene_content：替换现有内容并自动保存。text_backend: "grok" / "gemini"（CLI自动 用哪个网页）。"""
         channel_key = self._channel_config_key()
         if not prompt_label:
             prompt_label = _prompt_choice_entries(channel_key)[0][0]
@@ -1281,6 +1285,7 @@ class MediaGUIManager:
                     dialogue_mode=dialogue_mode,
                     attachment=attachment,
                     prompt_params=prompt_params,
+                    text_backend=text_backend,
                 )
             except Exception as ex:
                 err_msg = str(ex)

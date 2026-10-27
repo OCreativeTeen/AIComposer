@@ -2625,6 +2625,55 @@ class SceneEditorImpl:
                         except Exception as exc:  # noqa: BLE001
                             print(f"⚠️ 自动摘要没有启动:{exc}")
 
+                    def _ask_scene_text_backend(parent) -> str:
+                        """t119u: 场景生成前选 Grok / Gemini（记住上次）。取消 / Esc 返回空串。"""
+                        pref_key = "scene_gen_text_backend"
+                        try:
+                            last = str(config.load_yt_tools_prefs().get(pref_key) or "grok").lower()
+                        except Exception:
+                            last = "grok"
+                        if last not in ("grok", "gemini"):
+                            last = "grok"
+                        box = tk.Toplevel(parent)
+                        box.title("场景生成")
+                        box.transient(parent)
+                        box.resizable(False, False)
+                        res = {"v": ""}
+                        ttk.Label(box, text="用哪个生成场景文字？", font=("Microsoft YaHei UI", 11)).pack(padx=20, pady=(14, 8))
+                        row = ttk.Frame(box)
+                        row.pack(padx=20, pady=(0, 14))
+
+                        def pick(v):
+                            res["v"] = v
+                            try:
+                                config.save_yt_tools_prefs({pref_key: v})
+                            except Exception as exc:
+                                print(f"⚠️ 场景生成选择没有记下：{exc}")
+                            box.destroy()
+
+                        btns = {}
+                        for v, txt in (("grok", "Grok"), ("gemini", "Gemini")):
+                            btns[v] = ttk.Button(row, text=txt, width=10, command=lambda v=v: pick(v))
+                            btns[v].pack(side=tk.LEFT, padx=6)
+                        ttk.Button(row, text="取消", width=8, command=box.destroy).pack(side=tk.LEFT, padx=6)
+                        box.bind("<Escape>", lambda _e: box.destroy())
+                        box.bind("<Return>", lambda _e: pick(last))
+                        btns[last].focus_set()
+                        try:
+                            btns[last].configure(default="active")
+                        except tk.TclError:
+                            pass
+                        box.update_idletasks()
+                        try:
+                            x = parent.winfo_rootx() + (parent.winfo_width() - box.winfo_width()) // 2
+                            y = parent.winfo_rooty() + (parent.winfo_height() - box.winfo_height()) // 3
+                            box.geometry(f"+{max(0, x)}+{max(0, y)}")
+                        except tk.TclError:
+                            pass
+                        box.grab_set()
+                        parent.wait_window(box)
+                        return res["v"]
+
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
@@ -2824,6 +2873,9 @@ class SceneEditorImpl:
                         elif material_var.get() == "media" and kind != "transcript":
                             # 有文字稿就直接用文字稿，不再附媒体；没有再附媒体本身。
                             attachment = _find_item_media_file(video_detail)
+                        backend = _ask_scene_text_backend(dlg)
+                        if not backend:
+                            return  # 取消 / Esc
                         self._run_scene_smart_generate_async(
                             dlg,
                             video_detail,
@@ -2839,6 +2891,7 @@ class SceneEditorImpl:
                             dialogue_mode=(dialogue_mode_var.get() or "").strip(),
                             attachment=attachment,
                             prompt_params=_scene_prompt_params(),
+                            text_backend=backend,
                         )
 
                     def on_persist_keep_open():

@@ -999,6 +999,19 @@ class GeminiSession:
             self._lock = None
 
 
+SCENE_TEXT_TIMEOUT_S = 600.0
+
+
+def ask_text(prompt: str, status: Status = None, timeout_s: float = SCENE_TEXT_TIMEOUT_S) -> str:
+    """t119u: Gemini 网页（同一个 Chrome, CDP）文字问答：新对话 → 贴提示词 → 发送 → 等回复文字。
+    和 grok_cdp.ask_text 对应；在工作线程里调用。"""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise RuntimeError("提示词是空的")
+    with GeminiSession(status=status, model=gemini_model()) as gs:
+        return gs.send_text(prompt, timeout_s=timeout_s)
+
+
 def make_image(prompt: str, image_path, status: Status = None):
     """贴基础图和人物参考图，再贴提示词。返回生成结果的 PIL Image。"""
     prompt = (prompt or "").strip()
