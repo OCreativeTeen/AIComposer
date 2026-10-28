@@ -1215,10 +1215,26 @@ class MediaGUIManager:
         if not (prompt or "").strip():
             return None
         backend = (text_backend or "").strip().lower()
-        parsed = self.llm_api_manual.generate_json(
-            prompt, "", expect_list=True, attachment=(attachment or "").strip() or None,
-            extra=({"text_backend": backend} if backend in ("grok", "gemini") else None),
-        )
+        if backend in ("deepseek", "strata"):
+            # t121u/t122u: DeepSeek API / 本机 Strata 直接调用，不开手动窗口；失败直接报错（不转手动）。只收文字。
+            who = "DeepSeek" if backend == "deepseek" else "Strata"
+            kind = llm_api.LLMApi._attachment_kind((attachment or "").strip())
+            if kind in ("pdf", "audio", "video"):
+                raise RuntimeError(f"素材是 PDF/音视频，{who} 不支持（只收文字），请选 Grok 或 Gemini。")
+            if backend == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
+                raise RuntimeError("没有找到 DeepSeek 密钥：请在 .env 里加一行 DEEPSEEK_API_KEY=你的密钥。")
+            ds = llm_api.LLMApi(llm_api.DEEPSEEK if backend == "deepseek" else llm_api.STRATA)
+            ds.manual_fallback = False
+            if backend == "strata":
+                ds.strata_client = ds.strata_client.with_options(timeout=llm_api.STRATA_SCENE_TIMEOUT_S)
+            parsed = ds.generate_json(prompt, "", expect_list=True)
+            if not parsed and ds.last_error:
+                raise RuntimeError(f"{who} 调用失败：{ds.last_error}")
+        else:
+            parsed = self.llm_api_manual.generate_json(
+                prompt, "", expect_list=True, attachment=(attachment or "").strip() or None,
+                extra=({"text_backend": backend} if backend in ("grok", "gemini") else None),
+            )
         if isinstance(parsed, dict):
             one = _normalize_scene_dict_entry(parsed)
             return [one] if one else None

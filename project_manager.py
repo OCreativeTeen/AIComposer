@@ -1511,8 +1511,35 @@ def set_cover_images(item: dict, paths: list[str]) -> None:
         item.pop("cover_image", None)
 
 
+# t128u: cover_image 数组「最新在前」（第一张 = 封面）。旧数据按文件修改时间一次性排成最新在前，
+# 之后打上这个标记，不再自动排序（保留「设为第一张（封面）」之类的手动顺序）。
+COVER_ORDER_KEY = "cover_image_newest_first"
+
+
+def ensure_cover_newest_first(item: dict) -> bool:
+    """旧的 cover_image（按添加先后、最新在后）一次性改成最新在前。返回是否改动了 item。"""
+    if not isinstance(item, dict) or item.get(COVER_ORDER_KEY):
+        return False
+    raw = item.get("cover_image")
+    if not isinstance(raw, list) or not raw:
+        return False
+    paths = [p.strip() for p in raw if isinstance(p, str) and p.strip()]
+
+    def _mtime(p: str) -> float:
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0.0
+
+    # 稳定排序：时间相同（或文件不在）的保持原来先后的反序 = 后加的在前
+    ordered = sorted(reversed(paths), key=_mtime, reverse=True)
+    item["cover_image"] = ordered
+    item[COVER_ORDER_KEY] = True
+    return True
+
+
 def append_cover_image(item: dict, path: str) -> bool:
-    """追加一张封面到 cover_image 数组末尾。返回是否成功添加（已存在则跳过）。"""
+    """t128u: 新封面放到 cover_image 数组最前面（成为第一张 / 封面）。返回是否成功添加（已存在则跳过）。"""
     if not isinstance(item, dict):
         return False
     p = (path or "").strip()
@@ -1523,8 +1550,11 @@ def append_cover_image(item: dict, path: str) -> bool:
     for e in existing:
         if os.path.normcase(os.path.normpath(e)) == key:
             return False
-    existing.append(p)
+    ensure_cover_newest_first(item)
+    existing = get_cover_images(item)
+    existing.insert(0, p)
     set_cover_images(item, existing)
+    item[COVER_ORDER_KEY] = True
     return True
 
 

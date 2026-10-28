@@ -23,6 +23,12 @@ STRATA = "qwen3.8-flash-next-iq3_xxs"
 
 GEMINI = "gemini-3.5-flash-lite"
 
+# t121u: DeepSeek API（OpenAI 兼容），场景生成可直接调用，不开手动窗口。.env: DEEPSEEK_API_KEY（DEEPSEEK_MODEL 可改）
+DEEPSEEK = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_MAX_TOKENS = 8192
+DEEPSEEK_TIMEOUT_S = 600.0
+
 MANUAL = "manual"
 
 # 纯文字、不是手动窗口的调用都走这一台本机 Strata。带图片或附件的仍然先开手动窗口。
@@ -34,6 +40,7 @@ MODEL_HARD = MANUAL  # 不再用 DeepSeek，难任务也走手动窗口
 MODEL_MANUAL = MANUAL
 # 生成长度上限。模型总窗口是 65536，提示词也算在里面，所以回答不要占满。
 STRATA_MAX_TOKENS = 32768
+STRATA_SCENE_TIMEOUT_S = 900.0  # t122u: 场景生成直接调本机 Strata，长回答慢，给足时间
 
 MODELS = {
     STRATA : {
@@ -41,6 +48,9 @@ MODELS = {
     },
     GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
+    },
+    DEEPSEEK : {
+        "url": DEEPSEEK_BASE_URL
     },
 }
 
@@ -87,6 +97,7 @@ class LLMApi:
         # 调用方自己有手动兜底时（如 media_transcript 的 ManualBridge）设成 False，避免开两次。
         self.manual_fallback = True
         self._last_source = ""
+        self.last_error = ""
 
         self.strata_client = OpenAI(
             api_key = os.getenv("STRATA_API_KEY", ""),
@@ -345,6 +356,25 @@ class LLMApi:
                 "stream": False,
             }
             return self.google_client.chat.completions.create(**request_params)
+        if model == DEEPSEEK:
+            key = os.getenv("DEEPSEEK_API_KEY", "")
+            if not key:
+                raise RuntimeError("没有找到 DeepSeek 密钥：请在 .env 里加一行 DEEPSEEK_API_KEY=你的密钥。")
+            client = getattr(self, "_deepseek_client", None)
+            if client is None:
+                client = OpenAI(
+                    api_key=key,
+                    base_url=DEEPSEEK_BASE_URL,
+                    http_client=httpx.Client(timeout=httpx.Timeout(DEEPSEEK_TIMEOUT_S)),
+                )
+                self._deepseek_client = client
+            return client.chat.completions.create(
+                model=(os.getenv("DEEPSEEK_MODEL") or DEEPSEEK).strip(),
+                messages=messages,
+                temperature=0.7,
+                max_tokens=DEEPSEEK_MAX_TOKENS,
+                stream=False,
+            )
         raise ValueError(f"没有这个模型：{model}")
 
 
@@ -495,6 +525,7 @@ class LLMApi:
         ]
         base_model = _force_model or self.model
         self._last_source = ""
+        self.last_error = ""
 
         if base_model is None:
             has_media = bool(self._normalize_image_paths(images)) or bool(attachment)
@@ -515,6 +546,7 @@ class LLMApi:
         try:
             answer = self.parse_response(self._chat_completions(model, messages))
         except Exception as e:
+            self.last_error = f"{model}: {type(e).__name__}: {e}"
             print(f"❌ LLM API 调用失败（{model}）: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
@@ -801,16 +833,35 @@ class LLMApi:
             ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
         model_btn_row = ttk.Frame(model_frame)
         model_btn_row.pack(fill=tk.X)
-        for mid, btn_title in ([] if manual_only else [
+        # t132u: 窗口用途：text（文字）/ image（图生图）/ video（视频）/ notebook（NotebookLM 产物）/ file（带 PDF·音视频附件）
+        win_mode = (
+            "notebook" if cli_kind in STUDIO_CLI_KINDS
+            else "video" if cli_kind == "video"
+            else "file" if file_kind
+            else "image" if image_paths
+            else "text"
+        )
+        model_btns = []
+        # 文字：上面的模型按钮就是「换个模型重试」：API 模型（Strata / Gemini API / DeepSeek）点了直接用它跑；
+        # 网页（Grok / Gemini 网页）点了用 CLI自动 在那个网页重跑；Manual 照旧切到手动。
+        _model_list = [] if manual_only else [
             (STRATA, "Strata"),
             (GEMINI, "Gemini"),
+            (DEEPSEEK, "DeepSeek"),
+            ("web:grok", "Grok网页"),
+            ("web:gemini", "Gemini网页"),
             (MANUAL, "Manual"),
-        ]):
-            ttk.Button(
+        ]
+        if win_mode != "text":
+            _model_list = [m for m in _model_list if not m[0].startswith("web:") and m[0] != DEEPSEEK]
+        for mid, btn_title in _model_list:
+            _b = ttk.Button(
                 model_btn_row,
                 text=btn_title,
-                command=lambda m=mid: selected_model.set(m),
-            ).pack(side=tk.LEFT, padx=(0, 6), pady=2)
+                command=lambda m=mid: _on_model_btn(m),
+            )
+            _b.pack(side=tk.LEFT, padx=(0, 6), pady=2)
+            model_btns.append((mid, _b))
         model_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="gray30")
         model_status.pack(anchor=tk.W, pady=(6, 0))
 
@@ -1505,7 +1556,7 @@ class LLMApi:
         # ``extra``：不进提示词的参数（如 {"duration": "10s", "resolution": "720p"}），交给 CLI自动；只读显示。
         extra_params = dict(extra) if isinstance(extra, dict) else {}
         shown_params = {k: v for k, v in extra_params.items()
-                        if k not in ("image_backend", "video_backend", "orientation", "text_backend") and v not in (None, "")}
+                        if k not in ("image_backend", "video_backend", "orientation", "text_backend", "portrait_refs", "chrome_account") and v not in (None, "")}
         if shown_params:
             ttk.Label(
                 model_frame,
@@ -1520,18 +1571,29 @@ class LLMApi:
                 font=("TkDefaultFont", 9),
                 foreground="gray35",
             ).pack(anchor=tk.W, pady=(2, 0))
-        # 视频：选 Grok / Gemini 生成（默认来自生场视频窗口按的按钮），并显示画面方向。
+        # t132u: 图片 / 视频：下面这一行选 Grok / Gemini（重试时用它）；文字 / NotebookLM：这一行灰掉。
+        _bk_key = "image_backend" if win_mode == "image" else "video_backend"
         video_backend_var = tk.StringVar(
             master=dialog,
-            value=("gemini" if str(extra_params.get("video_backend") or "").strip().lower() == "gemini" else "grok"),
+            value=("gemini" if str(extra_params.get(_bk_key) or "").strip().lower() == "gemini" else "grok"),
         )
-        if cli_kind == "video":
+        backend_radios = []
+        if not manual_only:
             vb_row = ttk.Frame(model_frame)
             vb_row.pack(anchor=tk.W, pady=(2, 0))
-            ttk.Label(vb_row, text="视频生成：").pack(side=tk.LEFT)
-            ttk.Radiobutton(vb_row, text="Grok", value="grok", variable=video_backend_var).pack(side=tk.LEFT)
-            ttk.Radiobutton(vb_row, text="Gemini", value="gemini", variable=video_backend_var).pack(side=tk.LEFT, padx=(4, 0))
-            _orient = str(extra_params.get("orientation") or "").strip().lower()
+            ttk.Label(vb_row, text=("图片生成：" if win_mode == "image" else "视频生成：")).pack(side=tk.LEFT)
+            for _v, _t in (("grok", "Grok"), ("gemini", "Gemini")):
+                _rb = ttk.Radiobutton(vb_row, text=_t, value=_v, variable=video_backend_var)
+                _rb.pack(side=tk.LEFT, padx=(0, 4))
+                backend_radios.append(_rb)
+            if win_mode not in ("image", "video"):
+                for _rb in backend_radios:
+                    _rb.state(["disabled"])
+            if win_mode in ("image", "video", "notebook", "file"):
+                for _mid, _b in model_btns:
+                    if _mid != MANUAL or win_mode == "notebook":
+                        _b.state(["disabled"])
+            _orient = str(extra_params.get("orientation") or "").strip().lower() if cli_kind == "video" else ""
             if _orient:
                 ttk.Label(
                     vb_row, text="  方向：" + ("纵向 9:16" if _orient == "portrait" else "横向 16:9"),
@@ -1540,6 +1602,7 @@ class LLMApi:
         cli_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="#1f5fbf")
         cli_status.pack(anchor=tk.W, pady=(2, 0))
         cli_busy = [False]
+        retry_btn_ref = [None]
         cli_btn_ref = [None]
 
         cli_queue: queue.Queue = queue.Queue()
@@ -1578,10 +1641,40 @@ class LLMApi:
 
         def _cli_done_ui():
             cli_busy[0] = False
-            if cli_btn_ref[0] is not None:
-                cli_btn_ref[0].state(["!disabled"])
+            _busy_widgets(False)
 
-        def on_cli_auto():
+        def _busy_widgets(busy: bool) -> None:
+            """跑的时候：CLI自动 / 重试 / 能用的模型按钮 / 后端选择都灰掉；跑完恢复（按窗口用途）。"""
+            flag = ["disabled"] if busy else ["!disabled"]
+            for b in (cli_btn_ref[0], retry_btn_ref[0]):
+                if b is not None:
+                    b.state(flag)
+            if win_mode in ("image", "video"):
+                for rb in backend_radios:
+                    rb.state(flag)
+            if win_mode == "text":
+                for _mid, mb in model_btns:
+                    mb.state(flag)
+
+        def _on_model_btn(mid: str) -> None:
+            """t132u: 文字窗口里点模型 = 用这个模型重试；其他用途时模型按钮是灰的（Manual 除外）。"""
+            if cli_busy[0]:
+                return
+            cli_status.config(text="", foreground="#1f5fbf")
+            if mid == MANUAL:
+                selected_model.set(MANUAL)
+                return
+            if mid.startswith("web:"):
+                if win_mode != "text":
+                    return
+                on_cli_auto(mid.split(":", 1)[1])
+                return
+            if win_mode != "text":
+                return
+            selected_model.set(mid)
+            on_ok()  # 交回调用方，用这个 API 模型生成（和原来先点模型再点确定一样）
+
+        def on_cli_auto(text_backend_override: str = ""):
             """有图：Grok Imagine 以图生图，结果进「返回的图」。没图：grok.com 对话，结果进「响应」。然后点完成。
             失败时只显示错误，窗口照旧可以手动粘贴。"""
             if cli_busy[0]:
@@ -1593,11 +1686,11 @@ class LLMApi:
             image_path = image_paths[0] if image_paths else ""
             selected_model.set(MANUAL)
             cli_busy[0] = True
-            if cli_btn_ref[0] is not None:
-                cli_btn_ref[0].state(["disabled"])
+            _busy_widgets(True)
             cli_status.config(text="CLI自动 开始 …", foreground="#1f5fbf")
             manual_since[0] = time.time()
             video_backend = video_backend_var.get()  # 主线程里取，后台线程不碰 Tk 变量
+            text_backend_now = (text_backend_override or str(extra_params.get("text_backend") or "")).strip().lower()
 
             def _work():
                 try:
@@ -1629,8 +1722,11 @@ class LLMApi:
                                 orientation=str(extra_params.get("orientation") or "landscape"),
                             )
                         else:
+                            # t123u: 有人物形象图时：场景图 + 形象图（按说话人顺序）一起贴进 Grok
+                            n_refs = int(extra_params.get("portrait_refs") or 0)
+                            grok_imgs = list(image_paths[: 1 + n_refs]) if n_refs > 0 else image_path
                             mp4 = grok_cdp.make_video(
-                                prompt, image_path, dest_dir=file_dest_dir or "", status=_cli_set_status,
+                                prompt, grok_imgs, dest_dir=file_dest_dir or "", status=_cli_set_status,
                                 resolution=str(extra_params.get("resolution") or "720p"),
                                 duration=str(extra_params.get("duration") or "15s"),
                             )
@@ -1643,16 +1739,20 @@ class LLMApi:
                         _cli_ui(_apply_file)
                     elif image_path:
                         # 全部输入图按顺序贴（第一张基础图，后面是人物参考图）。
-                        use_gemini = str(extra_params.get("image_backend") or "").strip().lower() == "gemini"
+                        use_gemini = video_backend == "gemini"  # t132u: 下面一行选的后端（初值来自 image_backend）
                         who = "Gemini" if use_gemini else "Grok Imagine"
                         _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…")
                         print(f"[CLI自动] 发给 {who} 的图（{len(image_paths)} 张）: " + " | ".join(
                             f"{k}={os.path.basename(str(p))}" for k, p in enumerate(image_paths, 1)))
-                        if use_gemini:
-                            from . import gemini_cdp
-                            img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
-                        else:
-                            img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                        from . import chrome_account
+
+                        acct = str(extra_params.get("chrome_account") or "")  # t129u: Chrome 账户（profile）
+                        with chrome_account.use(acct):
+                            if use_gemini:
+                                from . import gemini_cdp
+                                img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                            else:
+                                img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
 
                         def _apply_image():
                             _cli_done_ui()
@@ -1667,7 +1767,7 @@ class LLMApi:
                         _cli_ui(_apply_image)
                     else:
                         # t119u: 文字可选 Gemini 网页（extra["text_backend"] == "gemini"），默认 Grok
-                        if str(extra_params.get("text_backend") or "").strip().lower() == "gemini":
+                        if text_backend_now == "gemini":
                             from . import gemini_cdp
 
                             _cli_set_status("CLI自动：Gemini 生成文字 …")
@@ -1700,7 +1800,15 @@ class LLMApi:
 
                     _cli_ui(_fail)
 
-            threading.Thread(target=_work, name="grok-cli-auto", daemon=True).start()
+            acct_now = str(extra_params.get("chrome_account") or "")
+
+            def _work_in_account():
+                from . import chrome_account
+
+                with chrome_account.use(acct_now):  # t131u: 视频 / 文字也用选的 Chrome 账户
+                    _work()
+
+            threading.Thread(target=_work_in_account, name="grok-cli-auto", daemon=True).start()
 
         def _finish_with_file(path: str) -> None:
             """文件结果：关窗，返回 FileResult(path)。"""
@@ -1744,6 +1852,21 @@ class LLMApi:
         cli_btn = ttk.Button(action_box, text="CLI自动", command=on_cli_auto)
         cli_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=2)
         cli_btn_ref[0] = cli_btn
+
+        def on_retry():
+            """t131u/t132u: 重试（图片 / 视频 / NotebookLM）：同一个窗口、同一个账户。图片 / 视频用下面一行选的
+            Grok / Gemini；NotebookLM 重做同一种产物。重新找或开页面、重新贴图和提示词、提交并等结果。
+            还在跑就不动（不会重复提交）。"""
+            if cli_busy[0]:
+                return
+            cli_status.config(text="", foreground="#1f5fbf")
+            auto_state["failed"] = False
+            on_cli_auto()
+
+        if win_mode in ("image", "video", "notebook"):  # 文字用上面的模型按钮重试
+            retry_btn = ttk.Button(action_box, text="重试", command=on_retry)
+            retry_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=2)
+            retry_btn_ref[0] = retry_btn
         auto_var = tk.BooleanVar(
             master=dialog, value=llm_auto_cli_enabled() if auto_cli is None else bool(auto_cli)
         )

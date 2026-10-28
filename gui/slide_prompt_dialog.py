@@ -601,6 +601,7 @@ def open_slide_prompt_dialog(
                     f"按页序排列（第 1 页在最前）。\n"
                     f"The source PDF has {pages} pages. Treat each page as one scene. Make one single infographic with "
                     f"exactly {pages} sections, one per page, in page order (page 1 first). Do not merge, skip, or add sections."
+                    + "\n" + config_prompt.INFOGRAPHIC_NO_INDEX_RULE
                 )
         try:
             copy_text(prompt)

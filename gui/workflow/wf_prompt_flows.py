@@ -85,11 +85,13 @@ class PromptFlowsMixin:
             cfg["picture_prompt"] = choice
             save_project_config(parent=self.root)
 
-        def open_manual(prompt: str, images: list[str], backend: str = "grok") -> None:
+        def open_manual(prompt: str, images: list[str], backend: str = "grok", account: str = "") -> None:
             def _on_image_response(pil_img):
                 self._replace_current_clip_image_from_pil(pil_img)
 
             extra = {"image_backend": "gemini"} if str(backend or "").strip().lower() == "gemini" else {}
+            if account:
+                extra["chrome_account"] = account
             self.llm_api.show_manual_window(
                 prompt, "", images=images, on_image_response=_on_image_response,
                 auto_cli=True, extra=extra,
@@ -121,7 +123,7 @@ class PromptFlowsMixin:
             actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
         )
 
-    def _run_picture_batch(self, jobs: list, backend: str, skipped: list) -> None:
+    def _run_picture_batch(self, jobs: list, backend: str, skipped: list, account: str = "") -> None:
         """图片修改 · 本集所有场景：每一场单独走 CLI自动（Grok / Gemini 网页图生图），结果写回那一场。
 
         手动窗口只能一场一场贴，所以批量直接调 CLI自动 用的同一个 make_image。
@@ -331,11 +333,14 @@ class PromptFlowsMixin:
                 failed.append(f"开新的 Gemini 对话（连接 / 登录 / 新对话）失败：{exc}")
 
         def worker():
+            from utility import chrome_account
+
             try:
-                if use_gemini:
-                    gemini_session_worker()
-                else:
-                    per_call_worker()
+                with chrome_account.use(account):  # t129u: 选的 Chrome 账户
+                    if use_gemini:
+                        gemini_session_worker()
+                    else:
+                        per_call_worker()
             finally:
                 # 经 UI 线程排在最后一个 apply 之后：图都写回、clip 队列清空后才 finish
                 ui(lambda: clip_q.put(None))
@@ -572,6 +577,7 @@ class PromptFlowsMixin:
             saved_choice=(project_manager.PROJECT_CONFIG or {}).get("video_prompt"),
             save_choice=save_video_choice,
             on_story_style=on_story_style,
+            get_actor_portraits=lambda sc: config_prompt.scene_speaker_portraits(sc, self._actor_entry_portrait),
             simple_actions=[
                 ("仅当前场景", lambda: self._run_clip_video("still", "single")),
                 ("本集从这一场起", lambda: self._run_clip_video("still", "story")),

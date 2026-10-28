@@ -144,9 +144,12 @@ def _gemini_tab(browser, status: Status, want: str = "app"):
     """每次重新扫一遍标签，找能用的 Gemini 标签；没有就在同一个 Chrome 窗口里新开，再切到前台。
     want="app"：图片 / 文字用普通对话。/videos 标签不直接用，导航到 /app（或另开）。
     want="videos"：视频用 /videos（导航由 _fresh_videos_page 做）。"""
+    from utility import chrome_account
+
     ctx, _grok_page = _context_with_grok(browser)
+    chrome_account.ensure_known(browser, GEMINI_URL if want != "videos" else GEMINI_VIDEOS_URL, status)
     gem = []
-    for pg in list(ctx.pages):
+    for pg in chrome_account.filter_pages(list(ctx.pages)):  # t129u: 只用当前账户的标签
         if not _page_ok(pg):
             continue
         try:
@@ -168,8 +171,12 @@ def _gemini_tab(browser, status: Status, want: str = "app"):
             page.goto(GEMINI_URL, wait_until="domcontentloaded", timeout=60_000)
     else:
         _say(status, "没有可用的 Gemini 标签，新开一个 …")
-        page = ctx.new_page()
-        page.goto(GEMINI_URL if want != "videos" else GEMINI_VIDEOS_URL, wait_until="domcontentloaded", timeout=60_000)
+        target = GEMINI_URL if want != "videos" else GEMINI_VIDEOS_URL
+        page = chrome_account.new_page(browser, target, status)
+        if page is None:
+            page = ctx.new_page()
+        if "gemini.google.com" not in (page.url or ""):
+            page.goto(target, wait_until="domcontentloaded", timeout=60_000)
     try:
         page.bring_to_front()
     except Exception as exc:  # noqa: BLE001
@@ -1134,14 +1141,82 @@ def _open_videos_page(browser, status: Status):
     return _gemini_tab(browser, status, "videos")
 
 
-def _video_chip_on(page) -> bool:
+_VIDEO_PLACEHOLDER_JS = """() => {
+    const re = /描述视频|描述你的视频|Describe (your )?video/i;
+    const ed = document.querySelector('input-area-v2 [contenteditable], rich-textarea [contenteditable]');
+    if (!ed) return false;
+    const bits = [ed.getAttribute('data-placeholder'), ed.getAttribute('aria-label'), ed.getAttribute('placeholder')];
+    for (const el of ed.querySelectorAll('[data-placeholder]')) bits.push(el.getAttribute('data-placeholder'));
+    const wrap = ed.closest('rich-textarea') || ed.parentElement;
+    if (wrap) bits.push(wrap.getAttribute('data-placeholder'), wrap.getAttribute('aria-label'));
+    return bits.some((t) => re.test(t || ''));
+}"""
+
+
+def _video_placeholder_on(page) -> bool:
+    """t131u: 输入框占位是「描述视频 / Describe your video」= 已经在视频模式。"""
     try:
-        return page.locator(
-            'gem-button[data-test-id="deselect-drawer-item-gem-button"] button[aria-label*="视频"], '
-            'gem-button[data-test-id="deselect-drawer-item-gem-button"] button[aria-label*="Video" i]'
-        ).count() > 0
+        return bool(page.evaluate(_VIDEO_PLACEHOLDER_JS))
     except Exception:
         return False
+
+
+def _video_chip_on(page) -> bool:
+    try:
+        if page.locator(
+            'gem-button[data-test-id="deselect-drawer-item-gem-button"] button[aria-label*="视频"], '
+            'gem-button[data-test-id="deselect-drawer-item-gem-button"] button[aria-label*="Video" i], '
+            'button[aria-label*="取消选择"][aria-label*="视频"], button[aria-label*="Deselect" i][aria-label*="Video" i]'
+        ).count() > 0:
+            return True
+    except Exception:
+        pass
+    return _video_placeholder_on(page)
+
+
+def classify_gemini_url(url: str) -> str:
+    """t136u: 'videos'（/videos）、'new_chat'（/app）、'conversation'（/app/<id>）、'other'。纯函数，可离线测。"""
+    try:
+        from urllib.parse import urlparse
+
+        u = urlparse(url or "")
+        if "gemini.google.com" not in (u.netloc or ""):
+            return "other"
+        path = (u.path or "").rstrip("/") or "/"
+    except Exception:
+        return "other"
+    if path == "/videos":
+        return "videos"
+    if path == "/app":
+        return "new_chat"
+    if re.fullmatch(r"/app/[0-9a-zA-Z_-]{6,}", path):
+        return "conversation"
+    return "other"
+
+
+def _videos_path_ok(page, allow_conversation: bool = False) -> bool:
+    """t131u: /videos 现在会跳到 /app（新对话）。/videos 或没有对话 id 的 /app 都算视频页；/app/<id>（旧对话）不算，
+    t136u: 同一对话里自动重发时 allow_conversation=True，/app/<id> 也算。"""
+    try:
+        kind = classify_gemini_url(_live_url(page))
+    except Exception:
+        kind = "other"
+    return kind in ("videos", "new_chat") or (allow_conversation and kind == "conversation")
+
+
+def _dismiss_popups(page) -> None:
+    """t131u: 关掉页面里的菜单 / 对话框（Esc）。Chrome 的下载气泡是浏览器界面不在页面里，
+    CDP 的鼠标 / 键盘事件直接发给页面，它挡不住自动操作；Esc 顺便也会让它收起。"""
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+    for _ in range(2):
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            break
+        time.sleep(0.2)
 
 
 def _select_video_chip(page) -> bool:
@@ -1240,9 +1315,138 @@ def _video_state(page) -> dict:
         return {}
 
 
-def _wait_video(page, before: dict, status: Status, timeout_s: float = VIDEO_TIMEOUT_S) -> str:
-    """等新的 <video>（src 不在 before 里），返回 src。回复结束却只有文字（额度、拒绝等）时报出那段文字。"""
+# t134u/t135u: Gemini 有时不出视频、回一句「我只是一个语言模型……帮不上忙」；在同一个对话里重新上传图、贴提示词、发送。
+VIDEO_MAX_AUTO_RETRIES = 3
+VIDEO_TEXT_ONLY_S = 20.0  # 回复结束、只有文字、没有视频 / 进度，持续这么久就当没成功
+_REFUSAL_RE = re.compile(
+    r"只是一个语言模型|只是一個語言模型|语言模型|語言模型|帮不上忙|幫不上忙|不具备|不具備|无法|無法|没法|沒法|"
+    r"做不到|提供这方面的帮助|提供這方面的幫助|"
+    r"(I'?m|I am) (just|only) a language model|as a language model|I can'?t help|I cannot help|I can'?t assist|"
+    r"I'?m not able to|I am not able to|I'?m unable to|I can'?t (create|generate|make|do that)",
+    re.I,
+)
+
+
+def _is_refusal(text: str) -> bool:
+    return bool(_REFUSAL_RE.search(text or ""))
+
+
+def _resp_count(page) -> int:
+    try:
+        return page.locator("model-response").count()
+    except Exception:
+        return 0
+
+
+_LAST_UQ_JS = """() => {
+    const uq = [...document.querySelectorAll('user-query')];
+    const last = uq[uq.length - 1];
+    if (!last) return { n: 0, img: false, text: '' };
+    return { n: uq.length, img: !!last.querySelector('img'), text: (last.innerText || '').replace(/\\s+/g, '').slice(0, 200) };
+}"""
+
+
+def _last_user_turn(page) -> dict:
+    try:
+        return page.evaluate(_LAST_UQ_JS) or {"n": 0}
+    except Exception:
+        return {"n": _user_query_count(page), "img": False, "text": ""}
+
+
+def resubmit_verified(before_uq: int, after: dict, prompt: str) -> tuple:
+    """t137u: 纯函数（可离线测）：重发算数 = 用户消息数正好 +1，最后一条里有图，且有提示词开头。返回 (ok, 原因)。"""
+    n = int(after.get("n") or 0)
+    if n != before_uq + 1:
+        return False, f"用户消息数 {before_uq} → {n}（应 +1）"
+    if not after.get("img"):
+        return False, "新的用户消息里没有图"
+    want = _re_ws.sub("", (prompt or "").strip())[:30]
+    if want and want not in (after.get("text") or ""):
+        return False, "新的用户消息里没有提示词"
+    return True, "ok"
+
+
+_re_ws = re.compile(r"\s+")
+
+
+def _clear_composer_attachments(page) -> None:
+    """上次没发出去的附件先删掉，免得重复上传。"""
+    for _ in range(6):
+        try:
+            loc = page.locator(_ATTACH_CLOSE)
+            if not loc.count():
+                return
+            _mouse_click(page, loc.first)
+            time.sleep(0.6)
+        except Exception:
+            return
+
+
+def _resubmit_video(page, image_path: str, prompt: str, status: Status, k: int, orientation: str = ""):
+    """t137u: 只在同一个对话里完整重发：选上「视频」→ 删掉残留附件 → 重新上传起始图（等缩略图）→ 贴原提示词 →
+    点发送 → 核实：用户消息数 +1、最后一条有图和提示词。不开新对话、不换标签。
+    返回 (page, 发送前回复数, ok, 原因)。没核实到 ok=False（调用方算一次失败的重试）。"""
+    url = _live_url(page)
+    uq0 = _user_query_count(page)
+    n0 = _resp_count(page)
+    log = {"url": url, "uq_before": uq0, "upload": False, "send": ""}
+
+    def _fail(why: str):
+        log["why"] = why
+        log["uq_after"] = _user_query_count(page)
+        print(f"[gemini_cdp] 自动重试{k} 失败 {log}")
+        _say(status, f"自动重试 {k}/{VIDEO_MAX_AUTO_RETRIES} 没发出去：{why}")
+        return page, n0, False, why
+
+    _say(status, f"自动重试 {k}/{VIDEO_MAX_AUTO_RETRIES}（重新上传图片和提示词）…")
+    print(f"[gemini_cdp] 自动重试{k} 开始 url={url} kind={classify_gemini_url(url)} 用户消息={uq0} 回复={n0}")
+    try:
+        page.bring_to_front()
+        _dismiss_popups(page)
+        if not _select_video_chip(page):
+            return _fail("「视频」选不上")
+        _clear_composer_attachments(page)
+        _video_upload(page, image_path, status, allow_conversation=True)
+        log["upload"] = _attached(page)
+        if not log["upload"]:
+            return _fail("图没进输入框")
+        if not _type_prompt_real(page, prompt):
+            return _fail("提示词没写进输入框")
+        time.sleep(2.5)
+        if not _select_video_chip(page):
+            return _fail("发送前「视频」被取消")
+        _pre_send_check(page, prompt, f"自动重试{k}发送前", True)
+        if _user_query_count(page) != uq0:
+            return _fail("发送前用户消息数就变了")
+        log["send"] = _click_video_send(page)
+    except RuntimeError as exc:
+        return _fail(str(exc))
+    deadline = time.monotonic() + 60.0
+    last = {}
+    while time.monotonic() < deadline:
+        last = _last_user_turn(page)
+        if int(last.get("n") or 0) > uq0:
+            time.sleep(1.5)  # 等图 / 字渲染完
+            last = _last_user_turn(page)
+            break
+        time.sleep(0.5)
+    ok, why = resubmit_verified(uq0, last, prompt)
+    log["uq_after"] = int(last.get("n") or 0)
+    if not ok:
+        return _fail(f"点了发送但没核实到新消息（{why}）")
+    print(f"[gemini_cdp] 自动重试{k} 已发出并核实 {log}")
+    _say(status, f"自动重试 {k}/{VIDEO_MAX_AUTO_RETRIES}：已重新提交（核实到新消息），等 Gemini …")
+    return page, n0, True, "ok"
+
+
+def _wait_video(page, before: dict, status: Status, timeout_s: float = VIDEO_TIMEOUT_S, resubmit=None) -> str:
+    """等新的 <video>（src 不在 before 里），返回 src。回复结束却只有文字（拒绝等）时调用 resubmit(page, k)
+    在同一对话里完整重发，最多 VIDEO_MAX_AUTO_RETRIES 次；之后报出那段文字。"""
     old = {v.get("src") for v in before.get("vids") or []}
+    base_n = before.get("n", 0)  # 只看这之后的新回复，旧回复（含已处理的拒绝）不算
+    retries = 0  # 尝试次数（含没发出去的）
+    verified = 0  # 真正发出去并核实的次数
+    fails = []
     started = time.monotonic()
     last_say, text_since = 0.0, None
     while time.monotonic() - started < timeout_s:
@@ -1251,12 +1455,36 @@ def _wait_video(page, before: dict, status: Status, timeout_s: float = VIDEO_TIM
         fresh = [v for v in st.get("vids") or [] if v.get("src") and v["src"] not in old]
         if fresh and not st.get("busy") and not _generating(page):
             return fresh[-1]["src"]
-        done_text = (st.get("n", 0) > before.get("n", 0) and not st.get("busy") and not _generating(page)
-                     and st.get("text") and not fresh)
+        done_text = (st.get("n", 0) > base_n and not st.get("busy") and not _generating(page)
+                     and st.get("text") and not fresh and not re.search(r"正在生成视频|Generating (your )?video", st.get("text") or "", re.I))
         if done_text:
             text_since = text_since or time.monotonic()
-            if time.monotonic() - text_since > 20:
-                raise RuntimeError(f"Gemini 没有出视频，回复：{st.get('text')[:200]}")
+            refusal = _is_refusal(st.get("text") or "")
+            if refusal or time.monotonic() - text_since > VIDEO_TEXT_ONLY_S:
+                reply = (st.get("text") or "")[:200]
+                print(f"[gemini_cdp] 视频没出、只有文字（{'拒绝' if refusal else '超时'}）回复数={st.get('n')} base_n={base_n}：{reply!r}")
+                old |= {v.get("src") for v in st.get("vids") or []}
+                ok = False
+                while resubmit is not None and retries < VIDEO_MAX_AUTO_RETRIES and not ok:
+                    retries += 1
+                    got = resubmit(page, retries)
+                    page = got[0] or page
+                    ok = bool(got[2])
+                    if ok:
+                        verified += 1
+                        base_n = int(got[1])  # 发送前的回复数：旧回复（含刚才的拒绝）都不算
+                    else:
+                        fails.append(f"第{retries}次：{got[3]}")
+                if not ok:
+                    raise RuntimeError(
+                        f"Gemini 没有出视频（拒绝 / 只回文字）。自动重试 {retries} 次，真正发出去并核实的 {verified} 次"
+                        + (f"（没发出去：{'；'.join(fails)}）" if fails else "")
+                        + f"。回复：{reply}"
+                    )
+                print(f"[gemini_cdp] stage=等视频（重试{retries}后，已核实 {verified} 次） url={_live_url(page)} base_n={base_n}")
+                text_since = None
+                time.sleep(3.0)
+                continue
         else:
             text_since = None
         elapsed = time.monotonic() - started
@@ -1313,7 +1541,7 @@ def _save_gemini_video(page, src: str, dest_dir: str, status: Status) -> str:
 
 def _on_videos(page) -> bool:
     try:
-        return "/videos" in (page.url or "") and _video_chip_on(page)
+        return _videos_path_ok(page) and _video_chip_on(page)
     except Exception:
         return False
 
@@ -1339,7 +1567,7 @@ def _ensure_videos_page(page, status: Status, step: str) -> None:
         while time.monotonic() < deadline:
             if _on_videos(page):
                 return
-            if "/videos" in (page.url or "") and _select_video_chip(page):
+            if _videos_path_ok(page) and _select_video_chip(page):
                 return
             time.sleep(0.5)
     raise RuntimeError(f"{step}：打不开 Gemini 视频页（现在是 {page.url}，没有选上「视频」）")
@@ -1443,13 +1671,14 @@ def _attached(page) -> bool:
 def _video_mode_ok(page) -> bool:
     """视频模式：只认 https://gemini.google.com/videos，且「视频」选上、视频输入框在。
     /app 里选「制作视频」虽然输入框看着一样，实测会被当成普通对话（回「我只是一个语言模型」），不用。"""
-    return _url_path(page) == "/videos" and _video_chip_on(page) and _video_input_ready(page)
+    return _videos_path_ok(page) and _video_chip_on(page) and _video_input_ready(page)  # t131u: /videos 会跳到 /app
 
 
-def _pre_send_check(page, prompt: str, step: str) -> None:
+def _pre_send_check(page, prompt: str, step: str, allow_conversation: bool = False) -> None:
     """发送前最后一刻确认三件事：视频模式、起始图在输入框里（加载完）、提示词在输入框里。缺哪个补哪个，补不上就不发。"""
-    if _url_path(page) != "/videos":
-        raise RuntimeError(f"{step}：不在 https://gemini.google.com/videos（现在 {page.url}），没有发送")
+    print(f"[gemini_cdp] stage={step} url={_live_url(page)} in_chat={allow_conversation}")
+    if not _videos_path_ok(page, allow_conversation):
+        raise RuntimeError(f"{step}：不在 Gemini 视频页 / 新对话（现在 {page.url}），没有发送")
     if not _select_video_chip(page):
         raise RuntimeError(f"{step}：「视频」工具没有选上（{page.url}），没有发送")
     deadline = time.monotonic() + 15.0
@@ -1464,16 +1693,17 @@ def _pre_send_check(page, prompt: str, step: str) -> None:
     time.sleep(3.0)  # 「视频」确认选上后再等一会儿，让视频模式在页面里生效（Tom：别着急）
     if not _video_chip_on(page):
         raise RuntimeError(f"{step}：「视频」没有保持选中（{page.url}），没有发送")
-    if not _video_mode_ok(page):
+    if not (_video_mode_ok(page) or (allow_conversation and _video_chip_on(page) and _video_input_ready(page))):
         raise RuntimeError(f"{step}：不在视频模式（{page.url}，「视频」{'已选' if _video_chip_on(page) else '没选'}），没有发送")
 
 
-def _send_video_prompt(page, prompt: str, status: Status, already_typed: bool = False) -> None:
+def _send_video_prompt(page, prompt: str, status: Status, already_typed: bool = False,
+                       allow_conversation: bool = False) -> None:
     """只在 /videos 发送：发送前确认（视频模式 + 起始图 + 提示词），点视频输入框里的发送，确认视频任务开始。
     发送后落到 /app 新对话或普通对话（没有视频任务）就直接报错，绝不在对话页补发。"""
     if not already_typed:
         _type_prompt_real(page, prompt)
-    _pre_send_check(page, prompt, "发送前")
+    _pre_send_check(page, prompt, "发送前", allow_conversation)
     before_uq = _user_query_count(page)
     try:
         before_resp = page.locator("model-response").count()
@@ -1499,7 +1729,7 @@ def _send_video_prompt(page, prompt: str, status: Status, already_typed: bool = 
         if _video_generating_announced(page):
             submitted = "chat"
             break
-        if _url_path(page) == "/videos" and _composer_cleared(page):
+        if _videos_path_ok(page, allow_conversation) and _composer_cleared(page):
             submitted = "cleared"
             break
         time.sleep(0.5)
@@ -1592,27 +1822,36 @@ def _composer_cleared(page) -> bool:
     return not re.sub(r"\s+", "", _composer_text(page) or "")
 
 
-def _fresh_videos_page(page, status: Status, step: str) -> None:
-    """切到前台 → goto /videos → reload（最多 3 次），确认路径就是 /videos、视频输入框在、「视频」chip 选上。
-    每一步把当前网址写进状态行。不就绪就报「打开视频页：…（实际网址）」。"""
+def _fresh_videos_page(page, status: Status, step: str):
+    """切到前台、关弹出 → 打开视频页，确认是视频页（/videos 或新对话 /app）、视频输入框在、「视频」选上。
+    t131u：第 1 次 goto /videos；第 2 次开新对话 /app 再选「视频」；第 3 次新开一个 Gemini 标签（同一账户），
+    成功后关掉旧标签。返回可用的 page（可能是新标签）。不就绪就报「打开视频页：…（实际网址）」。"""
     last = ""
+    orig = page
     for attempt in range(1, 4):
+        _dismiss_popups(page)
         try:
-            page.bring_to_front()
-        except Exception:
-            pass
-        try:
-            page.goto(GEMINI_VIDEOS_URL, wait_until="domcontentloaded", timeout=60_000)
+            if attempt == 3:
+                from utility import chrome_account
+
+                _say(status, f"{step}：新开一个 Gemini 标签重试 …")
+                browser = page.context.browser
+                newp = chrome_account.new_page(browser, GEMINI_URL, status) if browser else None
+                if newp is None:
+                    newp = page.context.new_page()
+                page = newp
+                _dismiss_popups(page)
+            target = GEMINI_VIDEOS_URL if attempt == 1 else GEMINI_URL
+            if attempt < 3 or "gemini.google.com" not in (page.url or ""):
+                page.goto(target, wait_until="domcontentloaded", timeout=60_000)
             _say(status, f"{step}：已打开 {page.url}")
-            if attempt > 1:
-                page.reload(wait_until="domcontentloaded", timeout=60_000)
         except Exception as exc:
             last = f"第{attempt}次加载失败（网址 {page.url}）：{exc}"
             _say(status, f"{step}：{last}")
             continue
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
-            if (_url_path(page) == "/videos" and _video_input_ready(page)
+            if (_videos_path_ok(page) and _video_input_ready(page)
                     and (_video_chip_on(page) or _select_video_chip(page))):
                 time.sleep(3.0)  # Gemini 加载后 1~2 秒才决定禁不禁用输入框
                 if _video_input_disabled(page):
@@ -1621,12 +1860,17 @@ def _fresh_videos_page(page, status: Status, step: str) -> None:
                         "多半是今天的视频额度用完了，或者还有一个视频在生成；请在这个标签里手动试试能不能输入。"
                     )
                 _say(status, f"{step}：视频页就绪（{page.url}）")
-                return
+                if page is not orig:
+                    try:
+                        orig.close()  # 旧标签（同一账户、我们自己的 Gemini 标签）
+                    except Exception:
+                        pass
+                return page
             time.sleep(0.7)
         last = (f"第{attempt}次：实际网址 {page.url}，路径 {_url_path(page)}，"
                 f"视频输入框{'在' if _video_input_ready(page) else '不在'}，「视频」{'已选' if _video_chip_on(page) else '没选上'}")
-        _say(status, f"{step}：视频页没就绪（{last}），刷新重试 …")
-    raise RuntimeError(f"打开视频页：{step}，刷新 3 次仍不是可用的 Gemini 视频页（{last}）")
+        _say(status, f"{step}：视频页没就绪（{last}），换个方式重试 …")
+    raise RuntimeError(f"打开视频页：{step}，试了 3 次（视频页 / 新对话 / 新标签）仍不是可用的 Gemini 视频页（{last}）")
 
 
 def _os_clipboard_image(path: str) -> None:
@@ -1688,11 +1932,12 @@ def _type_prompt_real(page, prompt: str) -> bool:
     return _prompt_landed(_composer_text(page), prompt)
 
 
-def _video_upload(page, path: str, status: Status) -> None:
+def _video_upload(page, path: str, status: Status, allow_conversation: bool = False) -> None:
     """视频页上传起始图，模仿人手：PNG 放进系统剪贴板 → 鼠标点视频输入框 → 真实 Ctrl+V；
     不行再用输入框里的「文件上传」（真实文件选择框）。不用合成 paste 事件。"""
-    if _url_path(page) != "/videos" or not _video_input_ready(page):
-        raise RuntimeError(f"打开视频页：上传前不在视频页（实际网址 {page.url}）")
+    print(f"[gemini_cdp] stage=上传前 url={_live_url(page)} kind={classify_gemini_url(_live_url(page))} in_chat={allow_conversation}")
+    if not _videos_path_ok(page, allow_conversation) or not _video_input_ready(page):
+        raise RuntimeError(f"上传起始图：上传前不在视频页 / 可用对话（实际网址 {_live_url(page)}）")
     if _video_input_disabled(page):
         raise RuntimeError(f"上传起始图：Gemini 视频输入框是禁用的（{page.url}），多半是视频额度用完或另一个视频在生成")
     path = _upload_copy(path)
@@ -1757,24 +2002,31 @@ def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = Non
 
                 if is_login_page(page):
                     raise RuntimeError("这个 Chrome 里的 Gemini 还没登录。请在 Gemini 标签里登录后再试。")
-                _fresh_videos_page(page, status, "打开视频页")
+                page = _fresh_videos_page(page, status, "打开视频页") or page
                 _select_model(page, status, model)
                 _set_orientation(page, orientation, status)
                 last_err = None
                 for attempt in range(1, 4):  # 发送前页面离开视频页 → 整页刷新重来（最多再试 2 次）
                     if attempt > 1:
                         _say(status, f"发送前页面不在视频模式（{last_err}），刷新视频页重来（第{attempt}次）…")
-                        _fresh_videos_page(page, status, "重新打开视频页")
+                        page = _fresh_videos_page(page, status, "重新打开视频页") or page
                         _set_orientation(page, orientation, status)
                     else:
-                        _fresh_videos_page(page, status, "上传前刷新视频页")
+                        page = _fresh_videos_page(page, status, "上传前刷新视频页") or page
                         _set_orientation(page, orientation, status)
-                    _video_upload(page, image_path, status)
+                    print(f"[gemini_cdp] stage=第{attempt}次准备 url={_live_url(page)}")
+                    try:
+                        _video_upload(page, image_path, status)
+                    except RuntimeError as exc:
+                        if "上传前不在视频页" not in str(exc):
+                            raise
+                        last_err = str(exc)  # t136u: 停在旧对话 /app/<id> 等 → 走恢复梯子（视频页 / 新对话 / 新标签）
+                        continue
                     if not _type_prompt_real(page, prompt):
                         got = re.sub(r"\s+", " ", _composer_text(page)).strip()
                         raise RuntimeError(f"写提示词：没能写进输入框（框里：{got[:40] or '空'}）")
                     time.sleep(2.5)  # 写完提示词静等一会儿再检查 / 发送
-                    if _url_path(page) != "/videos":
+                    if not _videos_path_ok(page):
                         last_err = f"页面到了 {page.url}"
                         continue
                     if not _select_video_chip(page):
@@ -1788,11 +2040,14 @@ def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = Non
                 page = _send_video_prompt(page, prompt, status, already_typed=True) or page
                 left = max(60.0, VIDEO_TIMEOUT_S - (time.monotonic() - sent_at))  # 发送起总共 10 分钟
                 try:
-                    src = _wait_video(page, {"n": 0, "vids": before.get("vids") or []}, status, timeout_s=left)
+                    src = _wait_video(
+                        page, {"n": 0, "vids": before.get("vids") or []}, status, timeout_s=left,
+                        resubmit=lambda pg, k: _resubmit_video(pg, image_path, prompt, status, k, orientation),
+                    )
                 except RuntimeError as exc:
                     if "没有出视频" in str(exc):
                         raise RuntimeError(
-                            f"{exc}\n（Gemini 当成普通对话回答了，没有生成视频。不会自动重发：请在 Gemini 视频页手动贴图和提示词、"
+                            f"{exc}\n（Gemini 当成普通对话回答了，没有生成视频。可按「重试」，或请在 Gemini 视频页手动贴图和提示词、"
                             "点发送箭头；视频下载到「下载」文件夹后，回到这个窗口按「确定」继续。）"
                         ) from exc
                     raise

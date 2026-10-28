@@ -166,7 +166,7 @@ class StoryEngine:
         return ok, msg
 
     def _append_cover_image(self, cover_path: str) -> tuple[bool, str]:
-        """追加一张封面图到 cover_image 数组。"""
+        """新封面图放到 cover_image 数组最前面（t128u：最新在前 = 封面）。"""
         vd = self.session.video_detail
         if not isinstance(vd, dict):
             return False, "no video_detail"
@@ -181,7 +181,14 @@ class StoryEngine:
         norm = cover_path.strip()
         key = os.path.normcase(os.path.normpath(norm))
         if not any(os.path.normcase(os.path.normpath(p)) == key for p in paths):
-            paths.append(norm)
+            import project_manager
+
+            if project_manager.ensure_cover_newest_first(vd):
+                paths = [p for p in vd.get("cover_image") or [] if isinstance(p, str) and p.strip()]
+            paths.insert(0, norm)
+        import project_manager
+
+        vd[project_manager.COVER_ORDER_KEY] = True
         return self._persist_field("cover_image", paths)
 
     def _patch_wf(self, patch: dict) -> dict:

@@ -62,6 +62,71 @@ def _project_video_size() -> str:
     return project_manager.video_size_key()
 
 
+PICTURE_SUBMIT_PREF = "picture_submit_choice"
+
+
+def ask_llm_and_account(parent, pref_key: str = PICTURE_SUBMIT_PREF, title: str = "提交"):
+    """t129u: 小窗口选 LLM（Grok / Gemini）和 Chrome 账户。返回 (backend, account) 或 None（取消 / Esc）。
+    t133u: 图片 / 视频共用；``pref_key`` 分开记上次的选择。"""
+    import config
+    from utility import chrome_account
+
+    try:
+        last = dict(config.load_yt_tools_prefs().get(pref_key) or {})
+    except Exception:  # noqa: BLE001
+        last = {}
+    box = tk.Toplevel(parent)
+    box.title(title)
+    box.transient(parent)
+    box.resizable(False, False)
+    llm_var = tk.StringVar(master=box, value=last.get("llm") if last.get("llm") in ("grok", "gemini") else "grok")
+    acct_var = tk.StringVar(master=box, value=chrome_account.normalize(last.get("account") or ""))
+    frm = ttk.Frame(box, padding=14)
+    frm.pack(fill=tk.BOTH, expand=True)
+    row1 = ttk.LabelFrame(frm, text="LLM", padding=(8, 4))
+    row1.pack(fill=tk.X)
+    for v, t in (("grok", "Grok"), ("gemini", "Gemini")):
+        ttk.Radiobutton(row1, text=t, value=v, variable=llm_var).pack(side=tk.LEFT, padx=(0, 12))
+    row2 = ttk.LabelFrame(frm, text="账户（Chrome 用户）", padding=(8, 4))
+    row2.pack(fill=tk.X, pady=(8, 0))
+    for v, t in chrome_account.ACCOUNTS:
+        ok = bool(chrome_account.profile_dir(v))
+        rb = ttk.Radiobutton(row2, text=t + ("" if ok else "（还没建）"), value=v, variable=acct_var)
+        rb.pack(anchor=tk.W)
+    res = {"v": None}
+
+    def go(_e=None):
+        acct = acct_var.get()
+        if not chrome_account.profile_dir(acct):
+            messagebox.showwarning("提交", chrome_account.missing_profile_message(acct), parent=box)
+            return
+        res["v"] = (llm_var.get(), acct)
+        try:
+            config.save_yt_tools_prefs({pref_key: {"llm": llm_var.get(), "account": acct}})
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 提交选择没有记下：{exc}")
+        box.destroy()
+
+    btns = ttk.Frame(frm)
+    btns.pack(fill=tk.X, pady=(12, 0))
+    ok_btn = ttk.Button(btns, text="提交", command=go, default="active")
+    ok_btn.pack(side=tk.RIGHT)
+    ttk.Button(btns, text="取消", command=box.destroy).pack(side=tk.RIGHT, padx=(0, 8))
+    box.bind("<Return>", go)
+    box.bind("<Escape>", lambda _e: box.destroy())
+    box.update_idletasks()
+    try:
+        x = parent.winfo_rootx() + (parent.winfo_width() - box.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - box.winfo_height()) // 2
+        box.geometry(f"+{max(0, x)}+{max(0, y)}")
+    except tk.TclError:
+        pass
+    ok_btn.focus_set()
+    box.grab_set()
+    parent.wait_window(box)
+    return res["v"]
+
+
 def open_picture_prompt_dialog(
     parent,
     anchor,
@@ -251,17 +316,17 @@ def open_picture_prompt_dialog(
         if edit_only:
             hint.config(text="未选内容：只按「注意 / FYI」修改现有图片")
         elif extract:
-            hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点 Grok提交 或 Gemini提交。")
+            hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点「提交」。")
         else:
             hint.config(
-                text="画风改变决定这张图怎么画；叙事风格下面的蓝字说明这次怎么讲。勾选要写进提示词的内容，选好后点 Grok提交 或 Gemini提交。"
+                text="画风改变决定这张图怎么画；叙事风格下面的蓝字说明这次怎么讲。勾选要写进提示词的内容，选好后点「提交」。"
             )
 
     def close() -> None:
         remember()
         dlg.destroy()
 
-    def on_go(backend: str = "grok") -> None:
+    def on_go(backend: str = "grok", account: str = "") -> None:
         if narrative_var.get() == "step" and step_no > 0:
             # 提取第 N 步：沿用 Step Image 提示词，当前选中的图当输入，结果走图片修改的正常回填
             scene = get_scene() if get_scene is not None else None
@@ -285,10 +350,7 @@ def open_picture_prompt_dialog(
             remember()
             dlg.destroy()
             if callable(open_manual):
-                try:
-                    open_manual(prompt, [path], backend)
-                except TypeError:
-                    open_manual(prompt, [path])
+                _call_open_manual(prompt, [path], backend, account)
             return
         extract = task_var.get() == "extract"
         edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
@@ -436,7 +498,10 @@ def open_picture_prompt_dialog(
                     jobs.append((sc, req[0], req[1], req[2]))
             remember()
             dlg.destroy()
-            run_batch(jobs, backend, skipped)
+            try:
+                run_batch(jobs, backend, skipped, account)
+            except TypeError:
+                run_batch(jobs, backend, skipped)
             return
         req = build_request(scene)
         if req is None:
@@ -445,15 +510,26 @@ def open_picture_prompt_dialog(
         remember()
         dlg.destroy()
         if callable(open_manual):
+            _call_open_manual(prompt, images, backend, account)
+
+    def _call_open_manual(prompt, images, backend, account) -> None:
+        try:
+            open_manual(prompt, images, backend, account)
+        except TypeError:
             try:
                 open_manual(prompt, images, backend)
             except TypeError:
                 open_manual(prompt, images)
 
+    def on_submit() -> None:
+        """t129u: 一个「提交」键：先问 LLM（Grok / Gemini）和 Chrome 账户，记住上次的选择。"""
+        picked = ask_llm_and_account(dlg)
+        if picked:
+            on_go(picked[0], picked[1])
+
     from gui.slide_prompt_dialog import big_submit_button
 
-    big_submit_button(dlg, bottom, lambda: on_go("grok"), text="Grok提交").pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
-    big_submit_button(dlg, bottom, lambda: on_go("gemini"), text="Gemini提交").pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
+    big_submit_button(dlg, bottom, on_submit, text="提交").pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
     narrative_var.trace_add("write", refresh)

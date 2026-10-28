@@ -1150,6 +1150,7 @@ class SceneEditorImpl:
                     messagebox.showerror("打开", f"打不开：\n{exc}", parent=dlg)
 
             def _material_images() -> list:
+                project_manager.ensure_cover_newest_first(video_detail)  # t128u: 旧数据一次性改成最新在前
                 imgs = project_manager.get_cover_images(video_detail)
                 if not imgs:
                     one = (_find_gen_video_webp_for_row(video_detail) or "").strip()
@@ -1315,6 +1316,7 @@ class SceneEditorImpl:
 
             def _set_cover_list(paths: list) -> None:
                 project_manager.set_cover_images(video_detail, paths)
+                video_detail[project_manager.COVER_ORDER_KEY] = True  # 手动顺序，不再自动排
                 drop_ctx3 = getattr(dlg, "_summary_drop_ctx", None)
                 refresh_media = drop_ctx3.get("refresh_feature_media_row") if isinstance(drop_ctx3, dict) else None
                 if callable(refresh_media):
@@ -2625,14 +2627,17 @@ class SceneEditorImpl:
                         except Exception as exc:  # noqa: BLE001
                             print(f"⚠️ 自动摘要没有启动:{exc}")
 
-                    def _ask_scene_text_backend(parent) -> str:
-                        """t119u: 场景生成前选 Grok / Gemini（记住上次）。取消 / Esc 返回空串。"""
+                    def _ask_scene_text_backend(parent, text_only_blocked: bool = False) -> str:
+                        """t119u/t121u: 场景生成前选 Grok / Gemini / DeepSeek（记住上次；DeepSeek 直接调 API）。取消 / Esc 返回空串。"""
                         pref_key = "scene_gen_text_backend"
                         try:
                             last = str(config.load_yt_tools_prefs().get(pref_key) or "grok").lower()
                         except Exception:
                             last = "grok"
-                        if last not in ("grok", "gemini"):
+                        if last not in ("grok", "gemini", "deepseek", "strata"):
+                            last = "grok"
+                        text_only = ("deepseek", "strata")  # 只收文字，不能带 PDF/音视频附件
+                        if text_only_blocked and last in text_only:
                             last = "grok"
                         box = tk.Toplevel(parent)
                         box.title("场景生成")
@@ -2652,9 +2657,13 @@ class SceneEditorImpl:
                             box.destroy()
 
                         btns = {}
-                        for v, txt in (("grok", "Grok"), ("gemini", "Gemini")):
+                        for v, txt in (("grok", "Grok"), ("gemini", "Gemini"), ("deepseek", "DeepSeek"), ("strata", "Strata")):
                             btns[v] = ttk.Button(row, text=txt, width=10, command=lambda v=v: pick(v))
                             btns[v].pack(side=tk.LEFT, padx=6)
+                            if text_only_blocked and v in text_only:
+                                btns[v].state(["disabled"])
+                        if text_only_blocked:
+                            ttk.Label(box, text="素材是 PDF/音视频，DeepSeek / Strata 不支持", foreground="gray40").pack(padx=20, pady=(0, 12))
                         ttk.Button(row, text="取消", width=8, command=box.destroy).pack(side=tk.LEFT, padx=6)
                         box.bind("<Escape>", lambda _e: box.destroy())
                         box.bind("<Return>", lambda _e: pick(last))
@@ -2873,7 +2882,11 @@ class SceneEditorImpl:
                         elif material_var.get() == "media" and kind != "transcript":
                             # 有文字稿就直接用文字稿，不再附媒体；没有再附媒体本身。
                             attachment = _find_item_media_file(video_detail)
-                        backend = _ask_scene_text_backend(dlg)
+                        backend = _ask_scene_text_backend(
+                            dlg,
+                            text_only_blocked=self.llm_api.__class__._attachment_kind(attachment or "")
+                            in ("pdf", "audio", "video"),
+                        )
                         if not backend:
                             return  # 取消 / Esc
                         self._run_scene_smart_generate_async(

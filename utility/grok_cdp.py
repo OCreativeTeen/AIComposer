@@ -282,8 +282,14 @@ def ensure_chrome(status: Status = None) -> int:
     if not os.path.isfile(CHROME_EXE):
         raise RuntimeError(f"找不到 Chrome: {CHROME_EXE}")
     _say(status, f"启动 Chrome (端口 {CDP_PORT}) …")
+    # t130u: 带 --profile-directory（Tom 的 profile），不弹「Who's using Chrome?」选人窗口。
+    # 别的账户之后由 chrome_account 再跑 chrome.exe --profile-directory 在同一个 Chrome 里开窗口。
+    from utility import chrome_account
+
+    tom_dir = chrome_account.profile_dir(chrome_account.TOM) or "Default"
     subprocess.Popen(
-        [CHROME_EXE, f"--remote-debugging-port={CDP_PORT}", f"--user-data-dir={CHROME_USER_DATA_DIR}", GROK_CHAT_URL],
+        [CHROME_EXE, f"--remote-debugging-port={CDP_PORT}", f"--user-data-dir={CHROME_USER_DATA_DIR}",
+         f"--profile-directory={tom_dir}", GROK_CHAT_URL],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     deadline = time.monotonic() + CHROME_LAUNCH_WAIT_S
@@ -329,8 +335,11 @@ def site_page(ctx, host: str, url: str = "", *, close_duplicates: bool = True, f
     ``close_duplicates``：同一 host 的多余标签关掉（只关这个 host，绝不碰别的网站）。
     复用的标签从不关闭。
     """
+    from utility import chrome_account
+
     host = (host or "").lower()
-    same = [p for p in ctx.pages if _host_of(p.url) == host]
+    # t129u: 只看当前账户（Chrome profile）的标签；别的账户的标签不复用、也不关
+    same = chrome_account.filter_pages([p for p in ctx.pages if _host_of(p.url) == host])
     page = same[0] if same else None
     if close_duplicates:
         for extra in same[1:]:
@@ -340,9 +349,11 @@ def site_page(ctx, host: str, url: str = "", *, close_duplicates: bool = True, f
             except Exception:
                 pass
     if page is None:
-        page = ctx.new_page()
-        if url:
-            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        page = chrome_account.new_page(ctx.browser, url or f"https://{host}/") if ctx.browser else None
+        if page is None:
+            page = ctx.new_page()
+            if url:
+                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
     if front:
         try:
             page.bring_to_front()
@@ -352,7 +363,9 @@ def site_page(ctx, host: str, url: str = "", *, close_duplicates: bool = True, f
 
 
 def _page_for(ctx, url_part: str, exclude: str = ""):
-    for p in ctx.pages:
+    from utility import chrome_account
+
+    for p in chrome_account.filter_pages(list(ctx.pages)):  # t133u: 只看当前账户的标签
         u = p.url or ""
         if url_part in u and not (exclude and exclude in u):
             return p
@@ -566,8 +579,10 @@ def _fetch_image_bytes(page, ctx, src: str) -> bytes:
 
 def _imagine_page(ctx, *, want_image: bool):
     """Imagine tab: the one whose composer already holds an image when ``want_image``."""
+    from utility import chrome_account
+
     bt = _bt()
-    pages = [p for p in ctx.pages if "grok.com/imagine" in (p.url or "")]
+    pages = chrome_account.filter_pages([p for p in ctx.pages if "grok.com/imagine" in (p.url or "")])
     if want_image:
         for p in pages:
             if bt._grok_composer_has_image_page(p):
@@ -671,7 +686,10 @@ def prepare_imagine(image_path, status: Status = None) -> None:
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = _imagine_page(ctx, want_image=False) or site_page(ctx, "grok.com")
+            from utility import chrome_account
+
+            chrome_account.ensure_known(browser, GROK_IMAGINE_URL, status)  # t129u: 其他账户先认出它的 profile
+            page = _imagine_page(ctx, want_image=False) or site_page(ctx, "grok.com", GROK_IMAGINE_URL)
             page.bring_to_front()
             _say(status, "打开 Grok Imagine …")
             page.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=45_000)
@@ -953,7 +971,10 @@ def fetch_current_imagine_result(status: Status = None):
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-        page = next((pg for pg in ctx.pages if "grok.com/imagine/post/" in (pg.url or "")), None)
+        from utility import chrome_account
+
+        page = next((pg for pg in chrome_account.filter_pages(list(ctx.pages))
+                     if "grok.com/imagine/post/" in (pg.url or "")), None)
         if page is None:
             raise RuntimeError("没有打开的 grok.com/imagine/post/ 页面")
         st = _imagine_wait_done(page, set(), status, timeout_s=20)

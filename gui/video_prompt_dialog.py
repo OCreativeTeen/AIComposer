@@ -94,6 +94,7 @@ def open_video_prompt_dialog(
     saved_choice=None,
     save_choice=None,
     on_story_style=None,
+    get_actor_portraits=None,
 ) -> None:
     """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选叙事风格、画面、背景、演进、运镜、动画，
     再打开手动窗口，里面放提示词和画面）。
@@ -297,7 +298,7 @@ def open_video_prompt_dialog(
                 if (is_transition or two)
                 else "选「保留」时背景选项才生效。运镜选默认就不写镜头怎么动。"
             )
-            + "选好后点 Grok 生成 或 Gemini 生成。选择会记下。"
+            + "选好后点「提交」，再选 Grok / Gemini 和 Chrome 账户。选择会记下。"
         )
         hint.config(text=base)
 
@@ -305,7 +306,7 @@ def open_video_prompt_dialog(
         remember()
         dlg.destroy()
 
-    def on_go(backend: str = "grok") -> None:
+    def on_go(backend: str = "grok", account: str = "") -> None:
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
         # 什么都没勾、但写了注意 / FYI：只按 FYI 让图动起来（同图片提示「仅修改」）。
         fyi_only = not (visual_var.get() or speaking_var.get() or actor_var.get())
@@ -406,6 +407,22 @@ def open_video_prompt_dialog(
                     images.append(end)
                 else:
                     missing.append("终止画面")
+        # t123u: Grok 单画面：场景图后面按说话人顺序附上有形象图的人，提示词里说明每张图是谁。
+        portrait_refs = []
+        if backend == "grok" and frames != "two" and images and callable(get_actor_portraits):
+            try:
+                portrait_refs = list(get_actor_portraits(scenes[0]) or [])[:4]  # Grok 最多 5 张输入图
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 人物形象图没取到：{exc}")
+                portrait_refs = []
+        if portrait_refs:
+            images = images[:1] + [p for _n, _name, p in portrait_refs]
+            block = config_prompt.portrait_reference_block(portrait_refs)
+            if "OUTPUT FORMAT" in prompt:
+                head, sep, rest = prompt.partition("\n\n")
+                prompt = head + "\n\n" + block + ("\n\n" + rest if sep else "")
+            else:
+                prompt = block + "\n\n" + prompt
         if missing:
             messagebox.showinfo(
                 "视频提示",
@@ -419,6 +436,8 @@ def open_video_prompt_dialog(
                 "duration": duration_var.get(),
                 "resolution": "720p",
                 "video_backend": backend,
+                "chrome_account": account or "",  # t133u: LLM 窗口的 CLI自动 / 重试 都用这个账户
+                "portrait_refs": len(portrait_refs),
                 "orientation": "portrait" if _size == "1080x1920" else "landscape",
             }
             try:
@@ -473,11 +492,16 @@ def open_video_prompt_dialog(
         ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var).pack(anchor=tk.W)
     from gui.slide_prompt_dialog import big_submit_button
 
-    go = big_submit_button(dlg, actions, lambda: on_go("grok"), text="Grok 生成")
+    def on_submit() -> None:
+        """t133u: 一个「提交」键（同图片修改）：先选 LLM（Grok / Gemini）和 Chrome 账户，记住上次的选择。"""
+        from gui.picture_prompt_dialog import ask_llm_and_account
+
+        picked = ask_llm_and_account(dlg, pref_key="video_submit_choice")
+        if picked:
+            on_go(picked[0], picked[1])
+
+    go = big_submit_button(dlg, actions, on_submit, text="提交")
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
-    big_submit_button(dlg, actions, lambda: on_go("gemini"), text="Gemini 生成").pack(
-        side=tk.LEFT, anchor=tk.S, padx=(8, 0)
-    )
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     text_var.trace_add("write", refresh_choices)

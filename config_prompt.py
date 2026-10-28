@@ -1,4 +1,5 @@
 import json
+import os
 import re
 
 import config_prompt
@@ -831,6 +832,59 @@ _SCENE_IMAGE_UNITS = {
 }
 
 
+# t126u: 关键词放哪里（所有「关键字作背景」共用）：长在环境里；实在不行才用一块融进场景的半透明板。
+KEYWORD_PLACE_ZH = (
+    "- 关键词放在哪里，按这个先后顺序：\n"
+    "  1) 最好：让字融化在环境本身里：地板、墙面、天空（云或光里）、桌上的日历、墙上挂的画、沙滩上直接写在沙里等，"
+    "跟着透视、光线和材质走，像是这个场景本来就有的一部分。\n"
+    "  2) 这样不行时，才写在黑板、白板、便利贴或纸条、书本封面、门牌 / 招牌这类本来就会有字的东西上。\n"
+    "  3) 实在都不行，最后才用一块融进场景的半透明板子。\n"
+    "- 禁止：直接压在画面上的白色或彩色浮字、标题栏、字幕条、贴纸式文字框。字小而清楚、能读出来，但不抢画面。"
+)
+KEYWORD_PLACE_EN = (
+    "- Where the keyword goes, in this order of priority:\n"
+    "  1) BEST: melt the words into the environment itself: the floor, the wall surface, the sky (clouds or light), a desk "
+    "calendar, a painting hanging on the wall, written in the sand on a beach, and so on, following the perspective, "
+    "lighting and material, as if part of the scene.\n"
+    "  2) Only if that does not work: a chalkboard, whiteboard, sticky note or slip of paper, book cover, or sign.\n"
+    "  3) Last resort only: one semi-transparent board blended into the scene.\n"
+    "- Forbidden: plain white or coloured text floating on top of the picture, title bars, caption strips, "
+    "sticker-like text boxes. Keep it small but legible, never dominant."
+)
+KEYWORD_PLACE_SHORT_EN = (
+    "Placement priority: 1) best, melt it into the environment itself (floor, wall surface, sky / clouds / light, desk "
+    "calendar, a painting on the wall, written in beach sand), following perspective, light and material; 2) only if that "
+    "fails, a chalkboard, whiteboard, note, book cover or sign; 3) last resort, one semi-transparent board blended into "
+    "the scene. Never floating overlay text, a title bar, a caption strip or a sticker box. Small but legible."
+)
+
+
+# t125u: 信息图每个场景部分：不要「第N幕 / Scene N」之类的编号，改成融进环境的核心关键词。
+INFOGRAPHIC_NO_INDEX_RULE = (
+    "- 信息图不要任何编号或序号标签：不写「第1幕 / 第一场 / 场景1 / 第N集 / Scene 1 / Act 1 / Part 1 / 01」，"
+    "也不要数字角标或步骤编号。场景顺序只靠排列体现。\n"
+    "- No numbering or index labels anywhere on the infographic: never write 第1幕, 第一场, 场景1, 第N集, Scene 1, Act 1, "
+    "Part 1, Step 1, 01 or a number badge. The order is shown only by the layout."
+)
+INFOGRAPHIC_KEYPHRASE_RULE = (
+    "信息图关键词（必须遵守）：\n"
+    "- 先读懂每一场，再为它提炼一个核心关键词：只有几个字（中文 2–6 字，英文 1–3 词），说出这一场背后真正要揭示的东西："
+    "关键的情绪、病因 / 根源、核心问题或转折。例如「怕改变」「假装没事」「被看见」「不敢开口」；"
+    "绝不是场景标题、编号或「第N幕」。content.pdf 里这一场有 caption / 标题时，可以从它提炼，但要落到核心意思上。\n"
+    + KEYWORD_PLACE_ZH + "\n"
+    "- 关键词用和 content.pdf 相同的语言和字体（繁体 / 简体一致）。每个场景部分只有这一个关键词，没有别的字。\n"
+    "Infographic key phrase (must follow):\n"
+    "- First understand each scene, then distil ONE key phrase for it: only a few characters (Chinese 2–6 characters, "
+    "English 1–3 words) that name what the scene really reveals: the key emotion, the root cause, the core problem or "
+    "turning point, e.g. \"afraid of change\", \"pretending to be fine\", \"finally seen\". Never a scene title, a number, "
+    "or a label like 第N幕 / Act N. If the scene in content.pdf has a caption or title, you may derive it from that, but "
+    "boil it down to the core meaning.\n"
+    + KEYWORD_PLACE_EN + "\n"
+    "- Write it in the same language and script as content.pdf (Traditional vs Simplified Chinese consistent). "
+    "That phrase is the only text in each scene section."
+)
+
+
 def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
     """全集生成：NotebookLM 爱给幻灯加标题和正文，这里按说明文字写死画面上能有什么字。汇报类不管（有自己的规则）。"""
     if presentation or output not in ("slides", "infographic", "video_overview"):
@@ -838,12 +892,20 @@ def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
     unit_zh = {"slides": "每页幻灯片", "infographic": "信息图的每个场景部分", "video_overview": "视频的每个画面"}[output]
     unit_en = {"slides": "Each slide", "infographic": "Each scene section of the infographic",
                "video_overview": "Each visual of the video"}[output]
+    if output == "infographic":
+        if text in ("erase", "express"):
+            return (
+                f"- 画面文字：{unit_zh}没有标题、没有正文、没有关键词，也没有任何文字框、面板或标题栏，全部用画面来讲。\n"
+                f"- On-screen text: {unit_en} has NO title, NO body text, and NO keyword. "
+                "No text box, panel, board, card, title bar, or caption area. The picture tells it all.\n"
+                + INFOGRAPHIC_NO_INDEX_RULE
+            )
+        return INFOGRAPHIC_KEYPHRASE_RULE + "\n" + INFOGRAPHIC_NO_INDEX_RULE
     if text == "keywords":
         return (
             f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是那一个融进场景的关键词（中文≤8字 / 英文≤3词）。\n"
             f"- On-screen text: {unit_en} has NO title text and NO body text. The only text is that one keyword, "
-            "blended into the scene (Chinese ≤ 8 characters / English ≤ 3 words). "
-            "No text box, panel, board, card, title bar, or caption area.\n"
+            "blended into the scene (Chinese ≤ 8 characters / English ≤ 3 words).\n"
             + KEYWORD_BG_RULE_ZH
         )
     if text in ("erase", "express"):
@@ -989,7 +1051,10 @@ def build_slide_flow_prompt(
     if presentation:
         lines.append(SLIDE_FLOW_SLIDE_TEXT_NOTE)
     else:
-        lines.append(flow_caption_rule(text))
+        lines.append(
+            "Keyword: follow the infographic key phrase rule in Output_rules."
+            if output == "infographic" and text == "keywords" else flow_caption_rule(text)
+        )
     lines.append(SLIDE_FLOW_META_NOTE)
     if keywords:
         lines.append(
@@ -1451,21 +1516,15 @@ KEYWORD_MAX_EN_WORDS = 3
 KEYWORD_BG_RULE_ZH = (
     "关键字作背景（必须遵守）：\n"
     "- 每一场 / 每一页只提炼一个很短的关键词：中文最多 8 个字，英文最多 3 个词。只有这一个，不要句子、不要列表、不要副标题、不要第二行。\n"
-    "- 这个关键词要融进场景本身，成为环境的一部分：例如画在或刻在墙上、写在场景里的桌面或纸上、路面或路牌上、店铺的招幌上，"
-    "或者轻轻浮在天空、云里。字的大小适中或偏小，绝不能抢眼。\n"
-    "- 禁止：单独的文字框、面板、白板、卡片、屏幕、横幅叠加、标题栏、字幕区；文字占据画面的一大块；纯色底上的大段文字。\n"
-    "- 画面（场景）才是主体，关键词只是一个不显眼的点缀。"
+    + KEYWORD_PLACE_ZH + "\n"
+    "- 画面（场景）才是主体，关键词只是一个点缀。"
 )
 KEYWORD_BG_RULE_EN = (
     "Keyword as background (must follow):\n"
     "- Take ONE short keyword phrase per scene / slide: Chinese at most 8 characters, English at most 3 words. "
     "Nothing more: no sentence, no bullet list, no subtitle, no second line.\n"
-    "- Blend that keyword into the scene itself, as part of the environment: painted or carved on a wall, "
-    "written on a table or a sheet of paper in the scene, on a road or a sign, on a shop banner, "
-    "or floating softly in the sky or the clouds. Small to moderate size, never dominant.\n"
-    "- Forbidden: a separate text box, panel, board, card, screen, banner overlay, title bar, or caption area; "
-    "text covering a large part of the frame; plain flat-background blocks of text.\n"
-    "- The picture, the scene, stays the main content. The keyword is only a subtle accent."
+    + KEYWORD_PLACE_EN + "\n"
+    "- The picture, the scene, stays the main content. The keyword is only an accent."
 )
 # 去掉文字 / 用画面讲 / 关键字作背景 共用：不要任何独立的文字区。
 NO_TEXT_PANEL_LINE = (
@@ -1489,7 +1548,7 @@ def flow_caption_rule(text: str) -> str:
     """说明文字的三种处理，外加保留。图片、幻灯、视频用同一段。"""
     if text == "keywords":
         return (
-            "Take the explanation text off the picture. Do not leave an empty board, a blank panel, "
+            "Take the explanation text off the picture. Do not leave an empty space "
             "or a ring of decoration around nothing.\n"
             + KEYWORD_BG_RULE_EN + "\n"
             "The meaning itself is shown through the people, the place, or the story. "
@@ -2878,9 +2937,9 @@ def _video_flow_instruction(
         )
         if background == "art_text":
             chunks.append(
-                f"""** In the deep background, behind the people, place ONE short artistic keyword, blended into the place (a wall, a sign, a banner, the sky). It belongs to the picture, not to a subtitle bar.
-** Take it from {content_fields}: Chinese at most 8 characters, English at most 3 words. Never a sentence, never a second line. Small to moderate size, never dominant.
-** {NO_TEXT_PANEL_LINE}
+                f"""** In the deep background, behind the people, place ONE short artistic keyword, blended into the place. It belongs to the picture, not to a subtitle bar.
+** Take it from {content_fields}: Chinese at most 8 characters, English at most 3 words. Never a sentence, never a second line. 
+** {KEYWORD_PLACE_SHORT_EN}
 ** Draw the letters in a hand that fits the picture. Do not cover faces.
 ** Do not turn the content into captions or spoken lines."""
             )
@@ -3344,6 +3403,40 @@ GENDER_LOCK_LINE = (
 )
 
 
+def scene_speaker_portraits(scene: dict, find_portrait) -> list:
+    """t123u: 这一场的说话人（<N> 的顺序）里有形象图的：[(N, 名字, 图路径), ...]。没图的跳过。"""
+    out = []
+    for n, row in enumerate(_scene_speakers(scene) if isinstance(scene, dict) else [], 1):
+        try:
+            path = find_portrait(row) or ""
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 找人物形象图失败：{exc}")
+            path = ""
+        if path and os.path.isfile(path):
+            name = _speaker_identity(row)[0] or f"Speaker {n}"
+            out.append((n, name, path))
+    return out
+
+
+def portrait_reference_block(refs: list) -> str:
+    """t123u: 视频提示词：说明第 1 张是场景/首帧，后面是第 N 位说话人的形象图，只用来认人。"""
+    if not refs:
+        return ""
+    lines = ["REFERENCE IMAGES:", "- Reference image 1 is the scene / first frame of the video."]
+    for i, (n, name, _path) in enumerate(refs, 2):
+        lines.append(f"- Reference image {i} is the portrait of Speaker {n} {name}.")
+    lines += [
+        "Use the portraits only to identify which person in reference image 1 is each speaker.",
+        "Each spoken line must be delivered strictly by the speaker marked by its <1>/<2>/<N> tag: lip movement "
+        "and voice on that exact person, matching that speaker's gender, age and voice. Other people stay silent "
+        "while someone else speaks.",
+        "The portraits are identity references only: the video must start from reference image 1's composition. "
+        "Do not add new people, do not insert the portraits as extra characters, and do not change the scene, "
+        "background, art style or lighting.",
+    ]
+    return "\n".join(lines)
+
+
 def _speaker_sex_word(row: dict) -> str:
     _name, _ident, tone = _speaker_identity(row)
     return "MALE" if " male voice" in tone else "FEMALE" if "female voice" in tone else ""
@@ -3570,8 +3663,7 @@ def _video_text_line(text: str, background: str, narrative: str) -> str:
         return "Text: " + flow_caption_rule(text).replace("\n", " ")
     if background == "art_text":
         return ("Text: one short artistic keyword (Chinese at most 8 characters, English at most 3 words) may sit in the deep "
-                "background, blended into a wall, sign, or sky, taken from the spoken content. Never a sentence, never a "
-                "caption bar. " + NO_TEXT_PANEL_LINE)
+                "background, taken from the spoken content. Never a sentence. " + KEYWORD_PLACE_SHORT_EN)
     if background == "bubble" and narrative == "story":
         return ("Text: at most one small thought bubble near a speaker, holding a keyword from their line; "
                 "never a subtitle bar, never over a face.")
@@ -4055,7 +4147,7 @@ _STEP_CAPTION_LINES = {
     "keep": "** Text: keep step {k}'s short title as one caption line; no other text.",
     "erase": "** Text: remove step {k}'s text too (title, labels); no letters, and no blank board or panel left behind.",
     "keywords": "** Text: drop step {k}'s title and labels; blend ONE short keyword from them (Chinese max 8 characters, "
-                "English max 3 words) into the scene itself, e.g. on a wall, sign or paper, small, never a text box or banner.",
+                "English max 3 words) into the scene itself. " + KEYWORD_PLACE_SHORT_EN,
     "express": "** Text: no letters at all; show what step {k}'s text says through the people, action and setting; "
                "no text box, panel or caption area.",
 }
@@ -5830,7 +5922,8 @@ def build_analysis_flow_prompt(
         "No person appears in the pictures, and no narrator, host, or presenter is drawn. "
         "Places, objects, symbols, metaphors, diagrams, and strong composition carry each idea.",
         "",
-        flow_caption_rule(text),
+        ("Keyword: follow the infographic key phrase rule in Output_rules."
+         if output == "infographic" and text == "keywords" else flow_caption_rule(text)),
         SLIDE_FLOW_META_NOTE.replace(
             "the order of the scenes, any scene number, scene title, episode number",
             "the headings and numbering of the report, any part number, episode number",
