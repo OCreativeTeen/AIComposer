@@ -70,7 +70,7 @@ cli\run_telegram_client.bat  :: Hermes Telegram 客户端
 - **Strata**（本机 OpenAI 兼容 LLM，`STRATA_BASE_URL`）：纯文字调用
 - **Gemini / Grok / NotebookLM**：Chrome CDP 自动操作网页（手动窗口里的「CLI自动」）
 - **Voicebox**（`VOICEBOX_BASE_URL`）：TTS / ASR
-- **转写服务**（`TRANSCRIBE_URL`）、ComfyUI / WAN（部分已停用）
+- **ComfyUI / WAN**（已停用）
 - **YouTube Data API**：OAuth client_secret 放 `config/`（不进 git）
 
 ## 注意

@@ -74,8 +74,17 @@ def _transcribe_form(language: Optional[str]) -> Optional[Dict[str, str]]:
     except Exception:  # noqa: BLE001
         model = ""
     if model:
+        # t142u: Voicebox v0.5.0 openapi：/transcribe 只有 ``model`` 字段（base/small/medium/large/turbo）。
+        # 不发的话服务端用 base（那台机器上没下载，会去下载）。
         form["model"] = model
+    global _STT_MODEL_LOGGED
+    if not _STT_MODEL_LOGGED:
+        print(f"Voicebox /transcribe Whisper 模型：{model or '（服务端默认）'}")
+        _STT_MODEL_LOGGED = True
     return form or None
+
+
+_STT_MODEL_LOGGED = False
 
 
 def _transcribe_result_json(text: str, duration: Any = None) -> str:

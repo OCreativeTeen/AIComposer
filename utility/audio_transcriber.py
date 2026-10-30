@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 from . import llm_api
 import config_prompt
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-import requests
-import config
 
 
 def remove_transcribe_cache_for_audio_path(audio_path: str) -> None:
@@ -32,7 +30,6 @@ class AudioTranscriber:
         self.pid = pid
         self.model_size = model_size
         self.device = device
-        self.api_url = config.TRANSCRIBE_URL
         self.llm_api = llm_api.LLMApi(llm_api.TEXT_MODEL)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self._whisperx_engine: Optional[Any] = None
@@ -62,9 +59,8 @@ class AudioTranscriber:
         max_duration,
     ) -> List[Dict[str, Any]]:
         """
-        优先使用本地 WhisperX（``utility/audio_transcriber_x.AudioTranscriberX.transcribe``：
-        对齐、可选 diarization、NLP 重切后再合并）。
-        失败时回退到原有 HTTP API。
+        使用本地 WhisperX（``utility/audio_transcriber_x.AudioTranscriberX.transcribe``：
+        对齐、可选 diarization、NLP 重切后再合并）。失败时返回空列表。
         """
         print(f"🔍 开始转录：{audio_path}")
         self.last_error = ""

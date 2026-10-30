@@ -19,7 +19,7 @@ from . import file_util
 
 
 # 本机 Strata 上已加载的模型。/v1/models 的 id，上下文 65536，只收文字。
-STRATA = "qwen3.8-flash-next-iq3_xxs"
+STRATA = "qwen3.8-flash-next-iq3_s"  # t144u: 192.168.1.227:8080 /v1/models 实测只有这个 id
 
 GEMINI = "gemini-3.5-flash-lite"
 

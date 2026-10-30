@@ -849,7 +849,7 @@ TRANSCRIBE_FALLBACK_TO_AUDIO = True
 # 想换的话直接改这一行，不用重启其它东西，重新打开工作流窗口就生效。
 TRANSCRIBE_ENGINE = "voicebox"
 # Voicebox 转录用哪个 Whisper 模型（/transcribe 的 model 字段）：base / small / medium / large / turbo；空 = 服务端默认
-VOICEBOX_STT_MODEL = "medium"
+VOICEBOX_STT_MODEL = "medium"  # t142u: 实测 192.168.1.227 v0.5.0 只认 base/small/medium/large/turbo；whisper_medium → 400
 
 # 长音频/视频转录成「带时间戳的文字」时，每一小段多少秒；一段一段转，再合起来。
 TRANSCRIBE_CHUNK_SECONDS = 600
@@ -933,11 +933,9 @@ def _env_list(name: str, default: str, sep: str = ",") -> list:
 
 
 # 本机 Strata（OpenAI 兼容）
-STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.30:8080/v1")
+STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.227:8080/v1")
 # Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
 VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://192.168.1.30:17493")
-# 远程转写服务（AudioTranscriber.api_url）
-TRANSCRIBE_URL = _env("TRANSCRIBE_URL", "http://10.0.0.231:9001/transcribe")
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
 COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placeholder
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
