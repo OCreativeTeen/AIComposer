@@ -746,6 +746,8 @@ call venv\\Scripts\\activate.bat
 #   RandomNoise           : noise_seed
 #   CreateVideo           : fps（帧数公式按 24fps 写死，改 fps 只改播放速度和时长）
 #   SaveVideo             : filename_prefix；结果从 /history 的 outputs 里取，/view 下载
+# t155u: 可选 last_frame（结束图，新加 LoadImage）；可选配音：LoadAudio → PixaromaH3AudioSync（插在模型/latent 和
+#   采样之间，用工作流里的音频 VAE），把真实录音放进 H3 的声音部分、画面跟着对口型；CreateVideo 用它输出的音轨。
 MINIMAX_H3_API_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                        "workflow", "MiniMax_H3_api.json")
 MINIMAX_H3_FPS = 24
@@ -770,7 +772,7 @@ def _one_node(prompt: Dict[str, Any], class_type: str) -> str:
 
 def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt: str, seconds: float,
                             width: int, height: int, seed: int, fps=None, filename_prefix: str = "video/MiniMax_H3",
-                            negative=None) -> Dict[str, Any]:
+                            negative=None, last_image_name=None, audio_name=None) -> Dict[str, Any]:
     """把 API 格式工作流复制一份并填入参数（纯函数，可离线测）。image_name 是 /upload/image 返回的文件名。"""
     import copy
 
@@ -779,14 +781,37 @@ def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt
         raise ValueError(f"MiniMax H3 的宽高必须是 32 的倍数（给的是 {width}x{height}）")
     i2v = _one_node(wf, "MiniMaxH3ImageToVideo")
     text = (prompt or "").strip()
+    # MiniMax H3 没有负面提示词输入：写进正面提示词末尾。t159u: 永远加上不要字幕；有连续性规则时加上不要光线变化
+    avoid = ["captions", "subtitles", "on-screen text", "text overlays", "speech bubbles", "watermarks",
+             "spoken lines written on screen"]
+    if "CONTINUITY (real time)" in text:
+        avoid += ["lighting change", "day-night transition", "time-lapse"]
     if negative:
-        # MiniMax H3 没有负面提示词输入：写进正面提示词末尾
-        text += "\n\nAvoid: " + str(negative).strip()
+        avoid.append(str(negative).strip())
+    text += "\n\nAvoid: " + ", ".join(avoid)
     wf[i2v]["inputs"].update({"prompt": text, "width": int(width), "height": int(height)})
     load_id = str(max(int(k) for k in wf if str(k).isdigit()) + 1)
     wf[load_id] = {"class_type": "LoadImage", "inputs": {"image": image_name}, "_meta": {"title": "first_frame"}}
     wf[i2v]["inputs"]["first_frame"] = [load_id, 0]
     wf[i2v]["inputs"].pop("last_frame", None)
+    if last_image_name:  # t155u: 结束图接到 MiniMaxH3ImageToVideo 的可选 last_frame
+        last_id = str(int(load_id) + 1)
+        wf[last_id] = {"class_type": "LoadImage", "inputs": {"image": last_image_name}, "_meta": {"title": "last_frame"}}
+        wf[i2v]["inputs"]["last_frame"] = [last_id, 0]
+    if audio_name:  # t155u: 配音对口型
+        audio_vae = wf[_one_node(wf, "VAEDecodeAudio")]["inputs"]["vae"]
+        guider = _one_node(wf, "BasicGuider")
+        sampler = _one_node(wf, "SamplerCustomAdvanced")
+        nid = max(int(k) for k in wf if str(k).isdigit())
+        la_id, sync_id = str(nid + 1), str(nid + 2)
+        wf[la_id] = {"class_type": "LoadAudio", "inputs": {"audio": audio_name}, "_meta": {"title": "scene_audio"}}
+        wf[sync_id] = {"class_type": "PixaromaH3AudioSync",
+                       "inputs": {"model": wf[guider]["inputs"]["model"], "latent": [i2v, 1],
+                                  "audio_vae": audio_vae, "track": [la_id, 0]},
+                       "_meta": {"title": "lip sync"}}
+        wf[guider]["inputs"]["model"] = [sync_id, 0]
+        wf[sampler]["inputs"]["latent_image"] = [sync_id, 1]
+        wf[_one_node(wf, "CreateVideo")]["inputs"]["audio"] = [sync_id, 2]
     wf[_one_node(wf, "PrimitiveFloat")]["inputs"]["value"] = float(seconds)
     wf[_one_node(wf, "RandomNoise")]["inputs"]["noise_seed"] = int(seed)
     if fps:
@@ -795,9 +820,79 @@ def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt
     return wf
 
 
+def video_size_for(orientation: str, long_side: int = 1024) -> tuple:
+    """t152u: 方向 → (宽, 高)：长边 long_side，短边按 16:9 / 9:16 算再取 32 的倍数。portrait → 576x1024。"""
+    short = max(32, int(round(long_side * 9 / 16 / 32.0)) * 32)
+    return (short, long_side) if str(orientation or "").lower() == "portrait" else (long_side, short)
+
+
+def _parse_size(text: str, fallback: tuple) -> tuple:
+    try:
+        a, b = (int(x) for x in str(text).lower().replace("×", "x").split("x"))
+        a, b = max(a, b), min(a, b)
+        if a % 32 or b % 32 or b < 32:
+            raise ValueError
+        return a, b
+    except Exception:  # noqa: BLE001
+        print(f"[ComfyUI H3] 分辨率设置不对（{text}），用 {fallback[0]}x{fallback[1]}")
+        return fallback
+
+
+def minimax_audio_video_seconds(audio_seconds) -> float:
+    """t158u: 有音频时的视频长度：> 10 秒（或读不到）按 15 秒；否则跟音频走，至少 4 秒。"""
+    a = float(audio_seconds or 0)
+    if a <= 0 or a > 10:
+        return 15.0
+    return max(4.0, a)
+
+
+def minimax_size_for(orientation: str, seconds: float, has_audio: bool, audio_seconds=None) -> tuple:
+    """返回 (宽, 高, 说明)，尺寸见 config.MINIMAX_SIZE_*。
+    t158u 有音频：按音频长度 ≤ 6 秒 XLARGE，≤ 10 秒 LARGE，> 10 秒或读不到 SMALL。
+    t156u/t157u 没音频：≤ 6 秒 XLARGE，≤ 10 秒 LARGE，> 10 秒（15 秒）SMALL。"""
+    if has_audio:
+        a = float(audio_seconds or 0)
+        tier = "small" if a <= 0 or a > 10 else ("xlarge" if a <= 6 else "large")
+        what = f"音频 {a:.1f} 秒" if a > 0 else "音频时长读不到"
+        if a > 10:
+            what += "，按 15 秒"
+    else:
+        s = float(seconds or 0)
+        tier = "small" if s > 10 else ("xlarge" if s <= 6 else "large")
+        what = f"{int(round(s))}秒"
+    if tier == "small":
+        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_SMALL", "832x480"), (832, 480))
+        why = what + "，用小分辨率"
+    elif tier == "xlarge":
+        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_XLARGE", "1280x704"), (1280, 704))
+        why = what + "，用高分辨率"
+    else:
+        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_LARGE", "1024x576"), (1024, 576))
+        why = what + "，用大分辨率"
+    w, h = (short_e, long_e) if str(orientation or "").lower() == "portrait" else (long_e, short_e)
+    return w, h, why
+
+
+def crop_to_aspect(image_path: str, width: int, height: int, out_path: str) -> str:
+    """t152u: 居中裁到 width:height 的比例再缩到 width x height（不拉伸），存成 PNG。返回 out_path。"""
+    with Image.open(image_path) as im:
+        im = im.convert("RGB")
+        w, h = im.size
+        want = width / float(height)
+        if w / float(h) > want:  # 太宽：裁左右
+            nw = int(round(h * want))
+            box = ((w - nw) // 2, 0, (w - nw) // 2 + nw, h)
+        else:  # 太高：裁上下
+            nh = int(round(w / want))
+            box = (0, (h - nh) // 2, w, (h - nh) // 2 + nh)
+        im.crop(box).resize((int(width), int(height)), Image.LANCZOS).save(out_path, "PNG")
+    return out_path
+
+
 def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: int, height: int,
                          negative=None, seed=None, fps=None, output_path=None, server=None,
-                         timeout_s: float = 3600.0, status=None) -> str:
+                         timeout_s: float = 3600.0, status=None, crop: bool = True,
+                         audio_path=None, last_image_path=None) -> str:
     """ComfyUI（MiniMax H3）图生视频：上传起始图 → POST /prompt → 轮询 /history → /view 下载 mp4。返回本地路径。
     server 默认 config.COMFYUI_VIDEO_URL；宽高要是 32 的倍数；seed 不给就随机。"""
     import random
@@ -822,17 +917,55 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
     seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    upload_path = image_path
+    if crop:  # t152u: 居中裁到目标比例并缩小，避免拉伸、减小上传
+        import tempfile
+
+        upload_path = crop_to_aspect(image_path, width, height,
+                                     os.path.join(tempfile.gettempdir(), f"h3_{stamp}_first_frame.png"))
+    def upload(path, name):
+        # ComfyUI 的 /upload/image 只是把文件存进 input 目录，音频也能这样传（LoadAudio 从 input 目录选）
+        with open(path, "rb") as f:
+            r = requests.post(f"{base}/upload/image", files={"image": (name, f)},
+                              data={"type": "input", "overwrite": "true"}, timeout=300)
+        r.raise_for_status()
+        up = r.json()
+        return (up.get("subfolder") + "/" if up.get("subfolder") else "") + up["name"]
+
+    import tempfile
+
+    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–15 秒，H3 训练长度），音频按这个长度截好转 wav 再上传
+    audio_local = None
+    if audio_path and os.path.isfile(audio_path):
+        dur = h3_audio_seconds(audio_path)
+        seconds = minimax_audio_video_seconds(dur)  # t158u: > 10 秒按 15 秒；否则跟音频（至少 4 秒）
+        if dur > 15.0:
+            say(f"场景音频 {dur:.1f} 秒，超过 H3 的 15 秒，只用前 15 秒")
+        audio_local = os.path.join(tempfile.gettempdir(), f"h3_{stamp}_audio.wav")
+        # apad + -t：音频不够长就补静音，正好和视频一样长（后面换音轨用 -shortest 不会截掉画面）
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", audio_path, "-af", "apad", "-t", f"{float(seconds):.3f}",
+                        "-ac", "2", "-ar", "48000", audio_local], check=True)
+    elif audio_path:
+        say(f"场景音频不存在，按无声处理：{audio_path}")
+
     say(f"上传起始图 {os.path.basename(image_path)} → {base}")
-    with open(image_path, "rb") as f:
-        r = requests.post(f"{base}/upload/image", files={"image": (f"h3_{stamp}_{os.path.basename(image_path)}", f)},
-                          data={"type": "input", "overwrite": "true"}, timeout=120)
-    r.raise_for_status()
-    up = r.json()
-    image_name = (up.get("subfolder") + "/" if up.get("subfolder") else "") + up["name"]
+    image_name = upload(upload_path, f"h3_{stamp}_{os.path.basename(image_path)}")
+    last_image_name = None
+    if last_image_path and os.path.isfile(last_image_path):
+        last_up = last_image_path
+        if crop:
+            last_up = crop_to_aspect(last_image_path, width, height,
+                                     os.path.join(tempfile.gettempdir(), f"h3_{stamp}_last_frame.png"))
+        say(f"上传结束图 {os.path.basename(last_image_path)}")
+        last_image_name = upload(last_up, f"h3_{stamp}_last_{os.path.basename(last_image_path)}")
+    audio_name = None
+    if audio_local:
+        say(f"上传场景音频 {os.path.basename(audio_path)}（{float(seconds):.1f} 秒，对口型）")
+        audio_name = upload(audio_local, f"h3_{stamp}_audio.wav")
 
     wf = build_minimax_h3_prompt(workflow, image_name=image_name, prompt=prompt, seconds=seconds, width=width,
                                  height=height, seed=seed, fps=fps, filename_prefix=f"video/H3_{stamp}",
-                                 negative=negative)
+                                 negative=negative, last_image_name=last_image_name, audio_name=audio_name)
     client_id = str(uuid.uuid4())
     r = requests.post(f"{base}/prompt", json={"prompt": wf, "client_id": client_id}, timeout=60)
     if r.status_code != 200:
@@ -882,4 +1015,24 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         with open(output_path, "wb") as f:
             for chunk in r.iter_content(1 << 20):
                 f.write(chunk)
+    if audio_local:
+        # t155u: 保险起见把原始场景音频（同样截好的）换进 mp4，画面不重编码；失败就保留 ComfyUI 的输出
+        muxed = output_path + ".mux.mp4"
+        try:
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", output_path, "-i", audio_local, "-map", "0:v:0",
+                            "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", muxed],
+                           check=True)
+            os.replace(muxed, output_path)
+        except Exception as e:  # noqa: BLE001
+            print(f"[ComfyUI H3] 换原始音轨失败，保留 ComfyUI 的音轨：{e}")
     return output_path
+
+
+def h3_audio_seconds(path: str) -> float:
+    """t155u: ffprobe 读音频时长（秒），读不到返回 0。"""
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
+                              "default=noprint_wrappers=1:nokey=1", path], capture_output=True, text=True, timeout=60)
+        return float((out.stdout or "").strip() or 0)
+    except Exception:  # noqa: BLE001
+        return 0.0

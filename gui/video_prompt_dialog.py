@@ -290,7 +290,7 @@ def open_video_prompt_dialog(
         keep_words = text_var.get() == "keep"
         for btn in bg_buttons:
             btn.configure(state=("normal" if keep_words else "disabled"))
-        go.config(text="Grok 生成")
+        go.config(text="视频生成")
         base = (
             "叙事风格下面的蓝字说明这次怎么讲。写进提示词的内容勾选场景描述、讲话、人物。说明文字决定字怎么处理。"
             + (
@@ -298,7 +298,8 @@ def open_video_prompt_dialog(
                 if (is_transition or two)
                 else "选「保留」时背景选项才生效。运镜选默认就不写镜头怎么动。"
             )
-            + "选好后点「提交」，再选 Grok / Gemini 和 Chrome 账户。选择会记下。"
+            + "选好后点「视频生成」，再选 Grok / Gemini（和 Chrome 账户）或 MiniMax（ComfyUI）。选择会记下。"
+            + "只有 MiniMax 会用当前场景的声音对口型。"
         )
         hint.config(text=base)
 
@@ -384,6 +385,8 @@ def open_video_prompt_dialog(
             prompt = prepend_fyi(
                 prompt, get_fyi_text(), include=bool(fyi_include_var.get())
             )
+        # t159u: 硬规则（不要字幕；有对话时光线 / 时间不变）放在最前面，所有后端都用
+        prompt = config_prompt.video_guard_block(scenes, transition if is_transition else None) + "\n\n" + prompt
         # 出图比例：16:9 / 9:16（项目画面大小），提示词里没有才加在最前面。
         from gui.picture_prompt_dialog import _project_video_size
 
@@ -439,7 +442,11 @@ def open_video_prompt_dialog(
                 "chrome_account": account or "",  # t133u: LLM 窗口的 CLI自动 / 重试 都用这个账户
                 "portrait_refs": len(portrait_refs),
                 "orientation": "portrait" if _size == "1080x1920" else "landscape",
+                "frames": frames,  # t155u: MiniMax 用：two 时第二张图是结束图
             }
+            if backend == "minimax" and get_image is not None:
+                # t155u: 只有 MiniMax 接声音：当前场景音频一起送去对口型
+                extra["scene_audio"] = get_image("clip_audio") or ""
             try:
                 open_manual(prompt, images, extra=extra)
             except TypeError:
@@ -496,12 +503,23 @@ def open_video_prompt_dialog(
         """t133u: 一个「提交」键（同图片修改）：先选 LLM（Grok / Gemini）和 Chrome 账户，记住上次的选择。"""
         from gui.picture_prompt_dialog import ask_llm_and_account
 
-        picked = ask_llm_and_account(dlg, pref_key="video_submit_choice")
+        picked = ask_llm_and_account(
+            dlg, pref_key="video_submit_choice",
+            extra_backends=(("minimax", "MiniMax（ComfyUI，带场景声音）"),),  # t152u: 不用浏览器，账户灰掉
+        )
         if picked:
             on_go(picked[0], picked[1])
 
-    go = big_submit_button(dlg, actions, on_submit, text="提交")
+    go = big_submit_button(dlg, actions, on_submit, text="视频生成")
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    # t155u: 说清楚声音输入只有 MiniMax 支持
+    _has_audio = bool(get_image("clip_audio")) if get_image is not None else False
+    ttk.Label(
+        advanced,
+        text="声音输入：仅 MiniMax 支持（会把当前场景音频一起送去对口型，音频 ≤ 10 秒视频长度跟音频、至少 4 秒，> 10 秒按 15 秒；分辨率按音频长度：≤ 6 秒最高、≤ 10 秒中档、> 10 秒最低），"
+        "Grok / Gemini 不支持。" + ("" if _has_audio else "（这一场没有音频）"),
+        foreground="#b05a00", wraplength=620, justify=tk.LEFT,
+    ).pack(anchor=tk.W, pady=(0, 6), before=lower)
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     text_var.trace_add("write", refresh_choices)

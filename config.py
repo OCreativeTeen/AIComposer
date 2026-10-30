@@ -941,6 +941,11 @@ COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placehold
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
 # t148u: MiniMax H3 图生视频的 ComfyUI（192.168.1.36，启动要加 --listen 0.0.0.0）
 COMFYUI_VIDEO_URL = _env("COMFYUI_VIDEO_URL", "http://192.168.1.36:8188")
+# t156u: MiniMax H3 分辨率分档（长边x短边，都要是 32 的倍数；方向按 16:9 / 9:16 自动换）。
+#   有场景音频，或时长 > 10 秒（15 秒）→ SMALL；≤ 6 秒且没有音频 → XLARGE（t157u）；其余（10 秒）→ LARGE。
+MINIMAX_SIZE_XLARGE = _env("MINIMAX_SIZE_XLARGE", "1280x704")
+MINIMAX_SIZE_LARGE = _env("MINIMAX_SIZE_LARGE", "1024x576")
+MINIMAX_SIZE_SMALL = _env("MINIMAX_SIZE_SMALL", "832x480")
 COMFYUI_WORKFLOW_DIR = _env("COMFYUI_WORKFLOW_DIR", r"\\10.0.0.179\wan22\ComfyUI\user\default\workflows")
 WAN_I2V_URL = _env("WAN_I2V_URL", "http://10.0.0.231:9001")
 WAN_S2V_URL = _env("WAN_S2V_URL", "http://10.0.0.222:9001")

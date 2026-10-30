@@ -1575,14 +1575,17 @@ class LLMApi:
         _bk_key = "image_backend" if win_mode == "image" else "video_backend"
         video_backend_var = tk.StringVar(
             master=dialog,
-            value=("gemini" if str(extra_params.get(_bk_key) or "").strip().lower() == "gemini" else "grok"),
+            value=(lambda b: b if b in ("gemini", "minimax") else "grok")(str(extra_params.get(_bk_key) or "").strip().lower()),
         )
         backend_radios = []
         if not manual_only:
             vb_row = ttk.Frame(model_frame)
             vb_row.pack(anchor=tk.W, pady=(2, 0))
             ttk.Label(vb_row, text=("图片生成：" if win_mode == "image" else "视频生成：")).pack(side=tk.LEFT)
-            for _v, _t in (("grok", "Grok"), ("gemini", "Gemini")):
+            _bk_opts = (("grok", "Grok"), ("gemini", "Gemini"))
+            if cli_kind == "video":
+                _bk_opts += (("minimax", "MiniMax"),)  # t152u: ComfyUI MiniMax H3（config.COMFYUI_VIDEO_URL）
+            for _v, _t in _bk_opts:
                 _rb = ttk.Radiobutton(vb_row, text=_t, value=_v, variable=video_backend_var)
                 _rb.pack(side=tk.LEFT, padx=(0, 4))
                 backend_radios.append(_rb)
@@ -1713,7 +1716,34 @@ class LLMApi:
                     elif cli_kind == "video":
                         if not image_path:
                             raise RuntimeError("生成视频需要一张起始图")
-                        if video_backend == "gemini":
+                        if video_backend == "minimax":
+                            # t152u: 另一台机器上的 ComfyUI 跑 MiniMax H3：同样的提示词 + 起始图；长边 1024，按方向；
+                            # 每次（含重试）新的随机 seed。下载到和 Grok / Gemini 视频同一个目录，交给同一个「完成」流程。
+                            from . import sd_image_processor as _sdp
+                            import config as _cfg
+
+                            _secs = float(str(extra_params.get("duration") or "10s").rstrip("sS") or 10)
+                            # t155u: 双画面 / 转场：第二张图是结束图；有场景音频就一起送去对口型（长度跟音频走）
+                            _imgs = [p for p in (image_paths or []) if p] if isinstance(image_paths, (list, tuple)) else []
+                            _last = _imgs[1] if extra_params.get("frames") == "two" and len(_imgs) > 1 else None
+                            _audio = str(extra_params.get("scene_audio") or "").strip() or None
+                            # t156u: 分辨率按时长 / 有没有音频分档（每次含重试都重新算）
+                            # t158u: 有音频时先读音频长度，按它选分辨率和视频长度
+                            _adur = _sdp.h3_audio_seconds(_audio) if _audio and os.path.isfile(_audio) else 0.0
+                            _w, _h, _why = _sdp.minimax_size_for(
+                                str(extra_params.get("orientation") or "landscape"), _secs, bool(_audio), _adur)
+                            _vsecs = _sdp.minimax_audio_video_seconds(_adur) if _audio else _secs
+                            _cli_set_status(f"CLI自动：MiniMax（ComfyUI）生成视频 {_w}×{_h}（{_why}） "
+                                            + f"{_vsecs:g}秒" + ("（跟场景音频）" if _audio else "")
+                                            + ("，含结束图" if _last else "") + " …")
+                            _dest = file_dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
+                            mp4 = _sdp.generate_video_comfy(
+                                image_path, prompt, _secs, _w, _h,
+                                output_path=os.path.join(_dest, time.strftime("minimax_h3_%Y%m%d_%H%M%S.mp4")),
+                                server=getattr(_cfg, "COMFYUI_VIDEO_URL", None), status=_cli_set_status,
+                                audio_path=_audio, last_image_path=_last,
+                            )
+                        elif video_backend == "gemini":
                             from . import gemini_cdp
 
                             _cli_set_status("CLI自动：Gemini 生成视频 …")

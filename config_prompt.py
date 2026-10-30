@@ -3694,6 +3694,59 @@ def _video_camera_short(camera: str) -> str:
     return line
 
 
+# t159u: 视频（Grok / Gemini / MiniMax 共用）的两条硬规则，放在提示词最前面（不只在 FYI 里）。
+VIDEO_NO_CAPTION_RULE = (
+    "NO ON-SCREEN TEXT (hard rule): never write the spoken lines / dialogue / narration on screen. "
+    "No captions, no subtitles, no speech bubbles, no lower-thirds, no text overlays, no watermarks, no title cards. "
+    "The words are only heard, never shown. Only text that is physically part of the scene in the start image "
+    "(e.g. a sign on a wall) may stay as it is.\n"
+    "禁止字幕：说话内容只用声音表现，绝不能以字幕、文字、对话气泡或任何叠加文字出现在画面里。"
+)
+VIDEO_CONTINUITY_MARK = "CONTINUITY (real time)"
+VIDEO_CONTINUITY_RULE = (
+    VIDEO_CONTINUITY_MARK + ": this conversation happens in real time and lasts only seconds. "
+    "Keep lighting, time of day, weather and surroundings constant and consistent with the start image "
+    "from the first frame to the last. No day/night transition, no sunrise or sunset, no sudden light changes, "
+    "no time-lapse, no big change to the environment.\n"
+    "连续性：对话就在几秒钟内发生，光线、时间（白天/夜晚）、天气和周围环境始终和起始画面一致，不要变。"
+)
+VIDEO_LIGHT_CHANGE_WORDS = (
+    "天亮", "日出", "日落", "黄昏", "傍晚", "天黑", "入夜", "夜幕降临", "光线变化", "光线变", "灯亮", "灯灭", "关灯", "开灯",
+    "熄灯", "亮灯", "时间流逝", "时光流逝", "从白天到", "从夜晚到", "白天变", "夜晚变", "转为白天", "转为夜晚",
+    "sunrise", "sunset", "dawn", "dusk", "lights turn on", "lights turn off", "light turns on", "light turns off",
+    "lights go out", "lights come on", "time passes", "time-lapse", "timelapse", "day to night", "night to day",
+    "day turns", "night turns", "lighting change", "light changes",
+)
+
+
+def lighting_change_requested(text: str) -> bool:
+    """t159u: 视觉里明确写了光线 / 时间变化（简单关键词）就返回 True。"""
+    low = str(text or "").lower()
+    return any(w in low for w in VIDEO_LIGHT_CHANGE_WORDS)
+
+
+def _scene_has_dialogue(sc: dict) -> bool:
+    for key in ("speaking", "voiceover", "dialogue", "story_content"):
+        if _strip_speech_marks(str(sc.get(key) or "")).strip():
+            return True
+    return False
+
+
+def video_guard_block(scenes, transition=None) -> str:
+    """t159u: 视频提示词最前面的硬规则：永远不要字幕；有人说话时光线 / 时间不变（视觉里写了变化就不加）。"""
+    rules = [VIDEO_NO_CAPTION_RULE]
+    scs = [s for s in (scenes or []) if isinstance(s, dict)]
+    talk = any(_scene_has_dialogue(s) for s in scs)
+    if isinstance(transition, dict) and str(transition.get("对白") or "").strip():
+        talk = True
+    visual = " ".join(str(s.get("visual") or "") for s in scs)
+    if isinstance(transition, dict):
+        visual += " " + str(transition.get("时空") or "") + " " + str(transition.get("特效") or "")
+    if talk and not lighting_change_requested(visual):
+        rules.append(VIDEO_CONTINUITY_RULE)
+    return "HARD RULES (apply to the whole clip):\n" + "\n\n".join(rules)
+
+
 def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruction: list,
                            language: str, payload: list, extra_sections: dict | None = None) -> str:
     lang_label = ""

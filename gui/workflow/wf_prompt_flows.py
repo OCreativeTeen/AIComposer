@@ -469,6 +469,12 @@ class PromptFlowsMixin:
             path = scene.get(key) if isinstance(scene, dict) else ""
             if isinstance(path, str) and path and os.path.isfile(path):
                 return path
+            if key == "clip_audio" and isinstance(scene, dict):  # t155u: 同轨道备份那样找场景音频
+                from utility.file_util import get_file_path
+
+                path = get_file_path(scene, "clip_audio") or ""
+                if path and os.path.isfile(path):
+                    return path
             return ""
 
         def copy_text(text: str) -> None:
@@ -582,7 +588,7 @@ class PromptFlowsMixin:
                 ("仅当前场景", lambda: self._run_clip_video("still", "single")),
                 ("本集从这一场起", lambda: self._run_clip_video("still", "story")),
                 ("全部场景", lambda: self._run_clip_video("still", "all")),
-                ("WAN 生成（以后再用）", lambda: self._run_clip_video("wan", "single")),
+                # t152u: WAN 生成按钮先不显示（_run_clip_video("wan", ...) 的代码还留着，以后再接回）
             ],
         )
 

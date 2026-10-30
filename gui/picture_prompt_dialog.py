@@ -65,9 +65,10 @@ def _project_video_size() -> str:
 PICTURE_SUBMIT_PREF = "picture_submit_choice"
 
 
-def ask_llm_and_account(parent, pref_key: str = PICTURE_SUBMIT_PREF, title: str = "提交"):
+def ask_llm_and_account(parent, pref_key: str = PICTURE_SUBMIT_PREF, title: str = "提交", extra_backends=()):
     """t129u: 小窗口选 LLM（Grok / Gemini）和 Chrome 账户。返回 (backend, account) 或 None（取消 / Esc）。
-    t133u: 图片 / 视频共用；``pref_key`` 分开记上次的选择。"""
+    t133u: 图片 / 视频共用；``pref_key`` 分开记上次的选择。
+    t152u: ``extra_backends``（如视频的 ("minimax", "MiniMax（ComfyUI）")）不用浏览器：选中时账户灰掉，返回 (backend, "")。"""
     import config
     from utility import chrome_account
 
@@ -79,23 +80,43 @@ def ask_llm_and_account(parent, pref_key: str = PICTURE_SUBMIT_PREF, title: str 
     box.title(title)
     box.transient(parent)
     box.resizable(False, False)
-    llm_var = tk.StringVar(master=box, value=last.get("llm") if last.get("llm") in ("grok", "gemini") else "grok")
+    no_account = {v for v, _t in extra_backends}
+    valid = ("grok", "gemini") + tuple(no_account)
+    llm_var = tk.StringVar(master=box, value=last.get("llm") if last.get("llm") in valid else "grok")
     acct_var = tk.StringVar(master=box, value=chrome_account.normalize(last.get("account") or ""))
     frm = ttk.Frame(box, padding=14)
     frm.pack(fill=tk.BOTH, expand=True)
     row1 = ttk.LabelFrame(frm, text="LLM", padding=(8, 4))
     row1.pack(fill=tk.X)
-    for v, t in (("grok", "Grok"), ("gemini", "Gemini")):
+    for v, t in (("grok", "Grok"), ("gemini", "Gemini")) + tuple(extra_backends):
         ttk.Radiobutton(row1, text=t, value=v, variable=llm_var).pack(side=tk.LEFT, padx=(0, 12))
     row2 = ttk.LabelFrame(frm, text="账户（Chrome 用户）", padding=(8, 4))
     row2.pack(fill=tk.X, pady=(8, 0))
+    acct_radios = []
     for v, t in chrome_account.ACCOUNTS:
         ok = bool(chrome_account.profile_dir(v))
         rb = ttk.Radiobutton(row2, text=t + ("" if ok else "（还没建）"), value=v, variable=acct_var)
         rb.pack(anchor=tk.W)
+        acct_radios.append(rb)
     res = {"v": None}
 
+    def _sync_account(*_a):
+        flag = ["disabled"] if llm_var.get() in no_account else ["!disabled"]
+        for rb in acct_radios:
+            rb.state(flag)
+
+    llm_var.trace_add("write", _sync_account)
+    _sync_account()
+
     def go(_e=None):
+        if llm_var.get() in no_account:
+            res["v"] = (llm_var.get(), "")
+            try:
+                config.save_yt_tools_prefs({pref_key: {"llm": llm_var.get(), "account": acct_var.get()}})
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 提交选择没有记下：{exc}")
+            box.destroy()
+            return
         acct = acct_var.get()
         if not chrome_account.profile_dir(acct):
             messagebox.showwarning("提交", chrome_account.missing_profile_message(acct), parent=box)
