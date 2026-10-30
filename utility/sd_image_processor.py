@@ -736,3 +736,150 @@ call venv\\Scripts\\activate.bat
             for file_obj in files_to_upload.values():
                 file_obj.close()
 
+
+# ---------------------------------------------------------------------------
+# t148u: ComfyUI HTTP API — MiniMax H3 图生视频（workflow/MiniMax_H3_api.json）
+# ---------------------------------------------------------------------------
+# API 格式的工作流来自 ComfyUI 里一次成功运行（/history），节点按 class_type 找，不靠写死的 id：
+#   MiniMaxH3ImageToVideo : prompt / width / height / first_frame（新加的 LoadImage 接进来）
+#   PrimitiveFloat        : 秒数（ComfyMathExpression 换算帧数：24fps，至少 5 帧，向上取到 17n+5）
+#   RandomNoise           : noise_seed
+#   CreateVideo           : fps（帧数公式按 24fps 写死，改 fps 只改播放速度和时长）
+#   SaveVideo             : filename_prefix；结果从 /history 的 outputs 里取，/view 下载
+MINIMAX_H3_API_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                       "workflow", "MiniMax_H3_api.json")
+MINIMAX_H3_FPS = 24
+
+
+def minimax_h3_frames(seconds: float, fps: int = MINIMAX_H3_FPS) -> int:
+    """和工作流里 ComfyMathExpression 一样：max(5, round(s*fps)) 再向上取到 17n+5（模型要求的帧数）。"""
+    n = max(5, int(round(float(seconds) * fps)))
+    return n + (5 - n % 17) % 17
+
+
+def _find_nodes(prompt: Dict[str, Any], class_type: str) -> list:
+    return [k for k, v in prompt.items() if v.get("class_type") == class_type]
+
+
+def _one_node(prompt: Dict[str, Any], class_type: str) -> str:
+    ids = _find_nodes(prompt, class_type)
+    if len(ids) != 1:
+        raise ValueError(f"MiniMax H3 工作流里 {class_type} 节点应有 1 个，实际 {len(ids)} 个")
+    return ids[0]
+
+
+def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt: str, seconds: float,
+                            width: int, height: int, seed: int, fps=None, filename_prefix: str = "video/MiniMax_H3",
+                            negative=None) -> Dict[str, Any]:
+    """把 API 格式工作流复制一份并填入参数（纯函数，可离线测）。image_name 是 /upload/image 返回的文件名。"""
+    import copy
+
+    wf = copy.deepcopy(workflow)
+    if width % 32 or height % 32:
+        raise ValueError(f"MiniMax H3 的宽高必须是 32 的倍数（给的是 {width}x{height}）")
+    i2v = _one_node(wf, "MiniMaxH3ImageToVideo")
+    text = (prompt or "").strip()
+    if negative:
+        # MiniMax H3 没有负面提示词输入：写进正面提示词末尾
+        text += "\n\nAvoid: " + str(negative).strip()
+    wf[i2v]["inputs"].update({"prompt": text, "width": int(width), "height": int(height)})
+    load_id = str(max(int(k) for k in wf if str(k).isdigit()) + 1)
+    wf[load_id] = {"class_type": "LoadImage", "inputs": {"image": image_name}, "_meta": {"title": "first_frame"}}
+    wf[i2v]["inputs"]["first_frame"] = [load_id, 0]
+    wf[i2v]["inputs"].pop("last_frame", None)
+    wf[_one_node(wf, "PrimitiveFloat")]["inputs"]["value"] = float(seconds)
+    wf[_one_node(wf, "RandomNoise")]["inputs"]["noise_seed"] = int(seed)
+    if fps:
+        wf[_one_node(wf, "CreateVideo")]["inputs"]["fps"] = float(fps)
+    wf[_one_node(wf, "SaveVideo")]["inputs"]["filename_prefix"] = filename_prefix
+    return wf
+
+
+def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: int, height: int,
+                         negative=None, seed=None, fps=None, output_path=None, server=None,
+                         timeout_s: float = 3600.0, status=None) -> str:
+    """ComfyUI（MiniMax H3）图生视频：上传起始图 → POST /prompt → 轮询 /history → /view 下载 mp4。返回本地路径。
+    server 默认 config.COMFYUI_VIDEO_URL；宽高要是 32 的倍数；seed 不给就随机。"""
+    import random
+    import time
+    import uuid
+
+    def say(msg):
+        print(f"[ComfyUI H3] {msg}")
+        if callable(status):
+            try:
+                status(msg)
+            except Exception:
+                pass
+
+    base = (server or getattr(config, "COMFYUI_VIDEO_URL", "") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("没有设置 ComfyUI 地址（config.COMFYUI_VIDEO_URL）")
+    if not (image_path and os.path.isfile(image_path)):
+        raise FileNotFoundError(f"起始图不存在：{image_path}")
+    with open(MINIMAX_H3_API_WORKFLOW, encoding="utf-8-sig") as f:
+        workflow = json.load(f)
+    seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    say(f"上传起始图 {os.path.basename(image_path)} → {base}")
+    with open(image_path, "rb") as f:
+        r = requests.post(f"{base}/upload/image", files={"image": (f"h3_{stamp}_{os.path.basename(image_path)}", f)},
+                          data={"type": "input", "overwrite": "true"}, timeout=120)
+    r.raise_for_status()
+    up = r.json()
+    image_name = (up.get("subfolder") + "/" if up.get("subfolder") else "") + up["name"]
+
+    wf = build_minimax_h3_prompt(workflow, image_name=image_name, prompt=prompt, seconds=seconds, width=width,
+                                 height=height, seed=seed, fps=fps, filename_prefix=f"video/H3_{stamp}",
+                                 negative=negative)
+    client_id = str(uuid.uuid4())
+    r = requests.post(f"{base}/prompt", json={"prompt": wf, "client_id": client_id}, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"ComfyUI /prompt HTTP {r.status_code}: {r.text[:800]}")
+    prompt_id = r.json()["prompt_id"]
+    say(f"已提交 prompt_id={prompt_id}（{seconds}s → {minimax_h3_frames(seconds)} 帧，{width}x{height}，seed={seed}）")
+
+    started = time.monotonic()
+    last_say = 0.0
+    entry = None
+    while time.monotonic() - started < timeout_s:
+        try:
+            h = requests.get(f"{base}/history/{prompt_id}", timeout=30).json()
+        except requests.RequestException as e:
+            h = {}
+            print(f"[ComfyUI H3] /history 读取失败：{e}")
+        entry = h.get(prompt_id)
+        if entry and (entry.get("status") or {}).get("completed") is not None:
+            st = entry.get("status") or {}
+            if st.get("status_str") == "error":
+                err = next((m[1] for m in st.get("messages", []) if m and m[0] == "execution_error"), {})
+                raise RuntimeError(f"ComfyUI 运行出错（{err.get('node_type')}）：{str(err.get('exception_message'))[:500]}")
+            if entry.get("outputs"):
+                break
+        elapsed = time.monotonic() - started
+        if elapsed - last_say >= 30:
+            say(f"生成中 … {int(elapsed)} 秒")
+            last_say = elapsed
+        time.sleep(3.0)
+    else:
+        raise RuntimeError(f"等了 {int(timeout_s)} 秒，ComfyUI 还没生成完（prompt_id={prompt_id}）")
+
+    files = []
+    for out in (entry.get("outputs") or {}).values():
+        for key in ("images", "videos", "gifs"):
+            files += [x for x in out.get(key) or [] if str(x.get("filename", "")).lower().endswith((".mp4", ".webm", ".mov", ".mkv"))]
+    if not files:
+        raise RuntimeError(f"ComfyUI 完成了但没有视频输出：{json.dumps(entry.get('outputs'), ensure_ascii=False)[:300]}")
+    v = files[0]
+    if not output_path:
+        output_path = os.path.join(os.path.dirname(os.path.abspath(image_path)), v["filename"])
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+    say(f"下载 {v['filename']} → {output_path}")
+    with requests.get(f"{base}/view", params={"filename": v["filename"], "subfolder": v.get("subfolder", ""),
+                                              "type": v.get("type", "output")}, stream=True, timeout=600) as r:
+        r.raise_for_status()
+        with open(output_path, "wb") as f:
+            for chunk in r.iter_content(1 << 20):
+                f.write(chunk)
+    return output_path

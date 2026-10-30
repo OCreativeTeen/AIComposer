@@ -939,6 +939,8 @@ VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://192.168.1.30:17493")
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
 COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placeholder
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
+# t148u: MiniMax H3 图生视频的 ComfyUI（192.168.1.36，启动要加 --listen 0.0.0.0）
+COMFYUI_VIDEO_URL = _env("COMFYUI_VIDEO_URL", "http://192.168.1.36:8188")
 COMFYUI_WORKFLOW_DIR = _env("COMFYUI_WORKFLOW_DIR", r"\\10.0.0.179\wan22\ComfyUI\user\default\workflows")
 WAN_I2V_URL = _env("WAN_I2V_URL", "http://10.0.0.231:9001")
 WAN_S2V_URL = _env("WAN_S2V_URL", "http://10.0.0.222:9001")
