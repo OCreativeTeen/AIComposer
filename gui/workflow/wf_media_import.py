@@ -387,7 +387,8 @@ class MediaImportMixin:
         self.refresh_gui_scenes()
         show_auto_close_popup(self.root, "混音", f"已混进 {written} 场。每一场可以用时钟退回。")
 
-    def _apply_editor_pick(self, pick: dict, *, stage_download: bool) -> None:
+    def _apply_editor_pick(self, pick: dict, *, stage_download: bool, on_done=None) -> None:
+        """导入视频「确定 / 替换」之后的处理。t179u: ``on_done(ok, why)`` 给全集提交自动导入用（走同一条路）。"""
         if isinstance(pick, dict) and pick.get("audio_only"):
             audio = pick.get("audio") or {}
             src = audio.get("path") or ""
@@ -484,7 +485,7 @@ class MediaImportMixin:
             )
             return
         if stage_download and source in ("download", "project"):
-            folder = (
+            folder = pick.get("folder") or (
                 self._project_input_dir("input_video")
                 if source == "project"
                 else self._download_mp4_source()[0]
@@ -506,7 +507,9 @@ class MediaImportMixin:
                     res["audio_choice"] = (pick.get("radio") or "").strip()
                 res["mix_volume"] = float(pick.get("mix_volume") or 0.5)
                 print(f"🎚️ 导入视频：对话框传回的声音方式 radio={pick.get('radio')!r}, 采用={res['audio_choice']!r}")
-                self._apply_download_video_result(res, track, share_episode=share_episode)
+                self._apply_download_video_result(res, track, share_episode=share_episode, on_done=on_done)
+            elif on_done:
+                on_done(False, "移进项目失败")
             return
         refresh_scene_media(scene, track, ".mp4", mp4)
         if wav and os.path.isfile(wav):
@@ -641,7 +644,8 @@ class MediaImportMixin:
             "track": picked_radio,
         }
 
-    def _apply_download_video_result(self, res: dict, track: str, *, share_episode: bool | None = None) -> None:
+    def _apply_download_video_result(self, res: dict, track: str, *, share_episode: bool | None = None,
+                                     on_done=None) -> None:
         if share_episode is None:
             share_episode = track == "zero"
         if res.get("track"):
@@ -686,6 +690,7 @@ class MediaImportMixin:
                 track_status="ORIG",
                 share_episode=share_episode,
                 mix_volume=float(res.get("mix_volume") or 0.5),
+                on_done=on_done,
             )
             return
 

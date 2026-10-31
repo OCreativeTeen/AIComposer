@@ -100,18 +100,52 @@ def parse_title_suggestions(text: str, n: int = 3, exclude: str = "") -> list[st
     return out
 
 
-def _title_prompt(chinese: bool) -> str:
-    lang = "Chinese (简体中文)" if chinese else "the same language as the content"
+_TRAD_ONLY = set("這們說個來時對會為麼經過還與兒後點裡學問題開關將讓從當應該實現發見機語萬試臉頭聽")
+_SIMP_ONLY = set("这们说个来时对会为么经过还与儿后点里学问题开关将让从当应该实现发见机语万试脸头听")
+
+
+def content_is_traditional(text: str) -> bool:
+    t = sum(1 for c in (text or "") if c in _TRAD_ONLY)
+    s = sum(1 for c in (text or "") if c in _SIMP_ONLY)
+    return t > s
+
+
+def _title_prompt(chinese: bool, traditional: bool = False) -> str:
+    # t168u: 整个故事的总名字，不是某一场的标题；文字跟内容同一种字体（繁/简）
+    if chinese:
+        lang = "Traditional Chinese (繁體中文)" if traditional else "Simplified Chinese (简体中文)"
+    else:
+        lang = "the same language as the content"
     limit = "at most 16 Chinese characters" if chinese else "at most 8 words"
     return (
-        "You name video projects. Read the scene content below and propose exactly 3 concise project titles "
-        f"that match what it is about. Write them in {lang}. Each title is {limit}. "
-        "Make the 3 titles different from each other. No numbering, no quotes, no explanation. "
+        "You name a whole story. Below is the complete story: an optional summary, then every scene in order. "
+        "Read all of it and propose exactly 3 overall titles for the WHOLE story: its theme, its central relationship "
+        "or its turning point. A title names the story as a whole; it is never just the caption of one scene. "
+        f"Write them in {lang}. Each title is {limit}. "
+        "Make the 3 titles clearly different from each other. No numbering, no quotes, no explanation. "
         'Return only a JSON array of 3 strings, for example ["…", "…", "…"].'
     )
 
 
-def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: str = "") -> list[str]:
+def story_text_for_titles(scenes, summary: str = "", max_chars: int = SCENE_TEXT_MAX_CHARS) -> str:
+    """t168u: 摘要 + 每场一行（场景号、caption、speaking、visual 摘要），给起总名字用。"""
+    head = f"摘要 / Summary: {summary.strip()}\n\n" if (summary or "").strip() else ""
+    rows: list[str] = []
+    for i, scene in enumerate(scenes or [], 1):
+        if not isinstance(scene, dict):
+            continue
+        bits = []
+        for key in ("caption", "speaking", "visual"):
+            val = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", str(scene.get(key) or ""))
+            val = re.sub(r"\s+", " ", val).strip()
+            if val:
+                bits.append(f"{key}: {val[:240]}")
+        if bits:
+            rows.append(f"[{i}] " + " | ".join(bits))
+    return (head + "\n".join(rows))[:max_chars].rstrip()
+
+
+def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: str = "", summary: str = "") -> list[str]:
     """本机 Strata（llm_api.MODEL_SIMPLE）出 n 个项目名。失败或没内容就抛 RuntimeError。不开手动窗口。
 
     给了 ``source_text``（分析报告）就用它，否则用场景内容。
@@ -120,14 +154,14 @@ def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: s
     if text:
         text = text[:SCENE_TEXT_MAX_CHARS].rstrip()
     else:
-        text = scenes_text_for_titles(scenes)
+        text = story_text_for_titles(scenes, summary) or scenes_text_for_titles(scenes)
     if not text:
         raise RuntimeError("没有场景内容，不能生成项目名称。")
     import utility.llm_api as llm_api
 
     api = llm_api.LLMApi(llm_api.MODEL_SIMPLE)
     api.manual_fallback = False
-    answer = api.generate_text(_title_prompt(content_is_chinese(text)), text)
+    answer = api.generate_text(_title_prompt(content_is_chinese(text), content_is_traditional(text)), text)
     titles = parse_title_suggestions(answer or "", n=n, exclude=current)
     if not titles:
         raise RuntimeError("Strata 没有返回可用的项目名称。")
@@ -142,6 +176,8 @@ def ask_project_title(
     on_chosen: Callable[[str], None],
     title: str = "项目名称建议",
     source_text: str = "",
+    summary: str = "",
+    on_titles: Callable[[list], None] | None = None,
 ) -> tk.Toplevel:
     """选项目名称的小窗：当前名称在最前（默认选中），后面是 3 个建议；可以直接改写。
 
@@ -216,7 +252,13 @@ def ask_project_title(
 
     def _work():
         try:
-            results.put(("ok", suggest_project_titles(scenes, current, source_text=source_text)))
+            got = suggest_project_titles(scenes, current, source_text=source_text, summary=summary)
+            if callable(on_titles):
+                try:
+                    on_titles(list(got))  # t168u: 记进生成历史
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 名字没有记进历史：{exc}")
+            results.put(("ok", got))
         except Exception as exc:  # noqa: BLE001
             results.put(("err", str(exc)))
 

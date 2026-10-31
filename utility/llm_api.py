@@ -1733,7 +1733,7 @@ class LLMApi:
                             _w, _h, _why = _sdp.minimax_size_for(
                                 str(extra_params.get("orientation") or "landscape"), _secs, bool(_audio), _adur)
                             _vsecs = _sdp.minimax_audio_video_seconds(_adur) if _audio else _secs
-                            _cli_set_status(f"CLI自动：MiniMax（ComfyUI）生成视频 {_w}×{_h}（{_why}） "
+                            _cli_set_status(f"CLI自动：MiniMax（ComfyUI，实际发送=窗口里的 H3 格式提示词）生成视频 {_w}×{_h}（{_why}） "
                                             + f"{_vsecs:g}秒" + ("（跟场景音频）" if _audio else "")
                                             + ("，含结束图" if _last else "") + " …")
                             _dest = file_dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")

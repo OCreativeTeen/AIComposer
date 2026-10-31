@@ -2,7 +2,7 @@
 SCENE_SPLIT_MANY = """
 把下面这一场拆成若干场。每一场只有一个 speaking，没有 voiceover。
 
-speaking 是这一场里的整段对话。用 <N> 标明是 actor 里第几个人在说，从 1 开始，按 actor 里写下的顺序。讲员只有一个，写在 actor 里也占一个位置。actor 一共最多四个人。开口的最多三个人，所以 <N> 只写 1、2、3。第四个人只出现在画面里，不说话，不要写 <4>。同一个人继续说，直到下一个 <N>。一个人可以来回说好几次。
+speaking 是这一场里的整段对话。用 <N> 标明是 actor 里第几个人在说，从 1 开始，按 actor 里写下的顺序。讲员只有一个，写在 actor 里也占一个位置。actor 一共最多四个人。开口的最多三个人，所以 <N> 只写 1、2、3。第四个人只出现在画面里，不说话，不要写 <4>。同一个人继续说，直到下一个 <N>。每场通常 1 到 2 人开口，最多换 3 次说话人，每人最多说 2 次，整场约 10 秒说完。
 
 样子："<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。"
 
@@ -1262,7 +1262,7 @@ You are a psychological counselor and master of high-empathy storytelling.
 			* NO clinical or academic language. NO therapy speeches, counseling notes.
 			* NO summarizing the "lesson," "moral," or the psychological insight at the end.
         * Subtextual Dialogue: Keep conversations natural. Characters should talk around their issues.
-        * If two people are in the life, most scenes are both of them. Both people speak inside ``speaking``, each with their own ``<N>``, said aloud, not as a private thought. They may trade lines. Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
+        * If two people are in the life, most scenes are both of them. Both people speak inside ``speaking``, each with their own ``<N>``, said aloud, not as a private thought. They may trade a few short lines (at most 3 speaker changes, about 10 seconds). Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
 
 ## STEP 3 - (Json structure)
 """ + STORY_SPEAK_CAST_RULES + """

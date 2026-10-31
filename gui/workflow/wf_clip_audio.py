@@ -174,7 +174,7 @@ class ClipAudioMixin:
             targets = [scene_anchor]
         self._run_still_clip_videos(targets)
 
-    def _run_still_clip_videos(self, targets: list) -> None:
+    def _run_still_clip_videos(self, targets: list, *, quiet: bool = False) -> None:
         """后台给这些场景用 clip_image 加 clip_audio 重做静态 clip 视频，做完弹出结果。"""
         if not targets:
             messagebox.showwarning("生场视频", "没有可用场景", parent=self.root)
@@ -210,7 +210,11 @@ class ClipAudioMixin:
                 msg = f"已生成 {ok} / {len(targets)} 个场景的静态视频。"
                 if tail:
                     msg += "\n\n跳过：\n" + tail
-                    messagebox.showwarning("生场视频", msg, parent=root)
+                    if quiet:  # t176u: 自动流程不弹要确认的窗
+                        print(msg)
+                        show_auto_close_popup(root, "生场视频", msg, duration_ms=4000)
+                    else:
+                        messagebox.showwarning("生场视频", msg, parent=root)
                 else:
                     show_auto_close_popup(root, "生场视频", msg, duration_ms=2000)
 

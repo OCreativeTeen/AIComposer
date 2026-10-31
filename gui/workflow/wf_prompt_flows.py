@@ -123,7 +123,128 @@ class PromptFlowsMixin:
             actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
         )
 
-    def _run_picture_batch(self, jobs: list, backend: str, skipped: list, account: str = "") -> None:
+    def _auto_import_scene_video(self, scene: dict, path: str, on_done) -> None:
+        """t173u / t179u: 全集提交：不开窗口，做和手动「导入视频 → 原声 → Clip → 替换」一模一样的事。
+
+        参数取刚打开的导入视频对话框、选中这个文件、什么都不动时「替换」交出去的值：
+        区间 = default_video_range（终点吸到最后一帧起点）、速度 1.0、音量 1、不淡变、混音 50%、
+        先用同一个 _build_volume_adjusted_mp4_wav_pair 做裁剪对，再交给同一个 _apply_editor_pick(stage_download=True)。
+        完成后 on_done(ok, 原因)。
+        """
+        import threading
+
+        from gui.mp4_pick_preview_dialog import default_video_range
+
+        def fail(why: str) -> None:
+            print(f"⚠️ 全集提交自动导入失败：{why}")
+            on_done(False, why)
+
+        if not (isinstance(scene, dict) and path and os.path.isfile(path)):
+            fail("视频文件不在了")
+            return
+        folder = os.path.dirname(os.path.abspath(path))
+        try:
+            same = os.path.normcase(folder) == os.path.normcase(os.path.abspath(self._project_input_dir("input_video")))
+        except Exception:  # noqa: BLE001
+            same = False
+
+        def build_pair() -> None:
+            try:
+                start, end = default_video_range(path)
+                pair = self._build_volume_adjusted_mp4_wav_pair(path, 1.0, start=start, end=end, speed=1.0)
+                err = ""
+                print(f"🎚️ 全集提交自动导入：区间 {start:.3f}–{end:.3f} 秒，速度 1.0，音量 1 倍")
+            except Exception as exc:  # noqa: BLE001
+                pair, err = None, f"裁剪失败：{exc}"
+            self.root.after(0, lambda: stage(pair, err))
+
+        def stage(pair, err: str) -> None:
+            if err or not pair:
+                fail(err or "裁剪失败")
+                return
+            mp4, wav = pair
+            for i, sc in enumerate(self.workflow.scenes or []):  # 手动导入写的是当前场景
+                if sc is scene:
+                    self.current_scene_index = i
+                    break
+            pick = {
+                "filename": os.path.basename(path), "mp4": mp4, "wav": wav, "action": "replace",
+                "radio": "keep", "mix_volume": 0.5, "source": "project" if same else "download",
+                "folder": folder, "dest": "clip", "audio": None,
+                "video_fade_in": 0.0, "video_fade_out": 0.0, "audio_fade": False,
+            }
+            try:
+                self._apply_editor_pick(pick, stage_download=True, on_done=on_done)
+            except Exception as exc:  # noqa: BLE001
+                fail(f"导入失败：{exc}")
+
+        threading.Thread(target=build_pair, daemon=True).start()
+
+    def _maybe_auto_extract_steps_from_cover(self) -> None:
+        """t172u: 新项目从预览导入了封面、本集 2-6 场：按「图片修改」的提取第 N 步，逐场从封面画出这一场的图。
+
+        选项固定：叙事风格 = 提取第 N 步，说明文字 = 关键字作背景，画风改变 = 保持画风，交给 LLM 的图 = 封面。
+        提示词用图片修改同一个 build_step_image_clipbody；出图、写回 clip_image 走 _run_picture_batch（可停止）。
+        条件不满足就安静跳过。
+        """
+        from gui.picture_prompt_dialog import PICTURE_SUBMIT_PREF, _project_video_size, ask_llm_and_account
+
+        wf = getattr(self, "workflow", None)
+        cover = (getattr(wf, "cover_seeded_path", "") or "") if wf else ""
+        if wf is not None:
+            wf.cover_seeded_path = ""  # 只做一次
+        if not cover or not os.path.isfile(cover):
+            return
+        scenes = [s for s in (wf.scenes or []) if isinstance(s, dict)]
+        if not (2 <= len(scenes) <= 6):
+            return
+        story = [s for s in wf.scenes_in_story(scenes[0]) if isinstance(s, dict)]
+        if len(story) != len(scenes):  # 不止一集：不自动做
+            return
+        n = len(story)
+        picked = None
+        try:  # t176u: 直接用上次「图片修改」记住的 LLM + 账户；没有记录 / 账户不在了才弹选择窗
+            import config
+            from utility import chrome_account
+
+            last = dict(config.load_yt_tools_prefs().get(PICTURE_SUBMIT_PREF) or {})
+            llm = str(last.get("llm") or "").strip().lower()
+            acct = chrome_account.normalize(last.get("account") or "")
+            if llm in ("grok", "gemini") and chrome_account.profile_dir(acct):
+                picked = (llm, acct)
+                print(f"🖼 从封面逐场提取：用上次的选择 {llm} / {acct or '默认账户'}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"从封面逐场提取：读上次的选择失败，改为弹窗：{exc}")
+        if not picked:
+            picked = ask_llm_and_account(
+                self.root, pref_key=PICTURE_SUBMIT_PREF,
+                title=f"从封面提取每一场的图（共 {n} 场，取消 = 不做）",
+            )
+        if not picked:
+            print("ℹ️ 从封面逐场提取：取消，没有做。")
+            return
+        backend, account = picked
+        pc = project_manager.PROJECT_CONFIG or {}
+        style = (
+            (self.scene_visual_style.get() or "").strip()
+            or (pc.get("visual_style") or "").strip()
+            or (project_manager.LAST_VISUAL_STYLE or "").strip()
+        )
+        aspect = config_prompt.output_aspect_line(_project_video_size())
+        jobs = []
+        for k, sc in enumerate(story, 1):
+            body = config_prompt.build_step_image_clipbody(
+                k, visual_style=style, keep_style=True, caption="keywords", extract_only=True, fyi="",
+            )
+            if backend == "gemini":  # 同一个 Gemini 对话：比例行由批量那边放
+                jobs.append((sc, body, [cover], {"aspect": aspect, "actors": [], "base": cover}))
+            else:
+                jobs.append((sc, (aspect + "\n\n" + body) if aspect else body, [cover],
+                             {"aspect": "", "actors": [], "base": cover}))
+        print(f"🖼 从封面逐场提取第 1–{n} 步（{backend}）：{os.path.basename(cover)}")
+        self._run_picture_batch(jobs, backend, [], account, auto=True)
+
+    def _run_picture_batch(self, jobs: list, backend: str, skipped: list, account: str = "", *, auto: bool = False) -> None:
         """图片修改 · 本集所有场景：每一场单独走 CLI自动（Grok / Gemini 网页图生图），结果写回那一场。
 
         手动窗口只能一场一场贴，所以批量直接调 CLI自动 用的同一个 make_image。
@@ -360,9 +481,13 @@ class PromptFlowsMixin:
                     f"{len(rebuilt)} 场已重做静态 clip 视频。")
             if failed:
                 note += "\n\n没处理 / 失败：\n" + "\n".join(failed[:30])
-            messagebox.showinfo("图片修改", note, parent=self.root)
-            # 最后再查一遍：这一段里 clip 视频还比图旧的场景（以前漏做的）一起重做。
-            self._rebuild_still_clips_after_batch([], jobs)
+            if auto:  # t176u: 自动提取不弹要按确定的窗，只显示几秒的提示
+                print(note)
+                show_auto_close_popup(self.root, "从封面逐场提取", note, duration_ms=4000)
+            else:
+                messagebox.showinfo("图片修改", note, parent=self.root)
+            # 最后再查一遍：这一段里 clip 视频还比图旧的场景（以前漏做的）一起重做（本地 ffmpeg，静态图 + clip 音频）。
+            self._rebuild_still_clips_after_batch([], jobs, quiet=auto)
 
         threading.Thread(target=clip_worker, daemon=True).start()
         threading.Thread(target=worker, daemon=True).start()
@@ -384,7 +509,7 @@ class PromptFlowsMixin:
                 out.append(s)
         return out
 
-    def _rebuild_still_clips_after_batch(self, updated: list, jobs: list, tries: int = 0) -> None:
+    def _rebuild_still_clips_after_batch(self, updated: list, jobs: list, tries: int = 0, *, quiet: bool = False) -> None:
         """批量换图之后：换了图的场景，加上这一段里 clip 视频比图旧的场景（修复以前漏做的），一起重做静态 clip 视频。"""
         pool = [job[0] for job in jobs]
         targets = list(updated)
@@ -396,9 +521,9 @@ class PromptFlowsMixin:
             return
         if getattr(self, "_clip_video_worker_busy", False):
             if tries < 60:  # 等前一个生场视频任务（最多约 1 分钟）
-                self.root.after(1000, lambda: self._rebuild_still_clips_after_batch(updated, jobs, tries + 1))
+                self.root.after(1000, lambda: self._rebuild_still_clips_after_batch(updated, jobs, tries + 1, quiet=quiet))
             return
-        self._run_still_clip_videos(targets)
+        self._run_still_clip_videos(targets, quiet=quiet)
 
     def repair_stale_still_clips(self) -> None:
         """修复：本集里 clip 视频比 clip_image 旧的场景，用现在的 clip_image + clip_audio 重做静态 clip 视频。"""
@@ -526,11 +651,38 @@ class PromptFlowsMixin:
             """CLI自动 生成的 mp4：打开导入视频，来源=下载，片段列表预选这个文件（不自动导入）。"""
             if not path or not os.path.isfile(path):
                 return
+            batch = getattr(self, "_video_batch_files", None)
+            if isinstance(batch, list):  # t172u: 全集提交中：先记下，全部做完再打开一次导入视频
+                batch.append(path)
+                return
             show_auto_close_popup(self.root, "生场视频", f"视频已下载：\n{os.path.basename(path)}")
             self.root.after(
                 200,
                 lambda: self.choose_import_video(initial_source="download", preselect_file=os.path.basename(path)),
             )
+
+        def _episode_from_current() -> tuple:
+            """t172u: 全集提交：从当前场到本集结束。返回 (场景, 当前是本集第 k 场, 本集共 m 场)。"""
+            self.update_current_scene()
+            cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+            if not isinstance(cur, dict):
+                return [], 0, 0
+            story = [s for s in self.workflow.scenes_in_story(cur) if isinstance(s, dict)]
+            k = next((i for i, s in enumerate(story) if s is cur), 0)
+            return story[k:], k + 1, len(story)
+
+        def _select_scene(scene: dict) -> None:
+            """t172u: 全集提交：把这一场设成当前场景（图、音频、内容都按它取）。"""
+            self.update_current_scene()
+            for i, sc in enumerate(self.workflow.scenes or []):
+                if sc is scene:
+                    self.current_scene_index = i
+                    break
+            self.refresh_gui_scenes()
+
+        def _episode_done(files: list) -> None:
+            # t173u: 每一场已自动导入（_auto_import_scene_video），这里不再打开导入视频
+            self._video_batch_files = None
 
         def save_video_choice(choice: dict) -> None:
             cfg = project_manager.PROJECT_CONFIG
@@ -584,6 +736,13 @@ class PromptFlowsMixin:
             save_choice=save_video_choice,
             on_story_style=on_story_style,
             get_actor_portraits=lambda sc: config_prompt.scene_speaker_portraits(sc, self._actor_entry_portrait),
+            episode={
+                "scenes": _episode_from_current,
+                "select": _select_scene,
+                "begin": lambda: setattr(self, "_video_batch_files", []),
+                "end": _episode_done,
+                "import": self._auto_import_scene_video,
+            },
             simple_actions=[
                 ("仅当前场景", lambda: self._run_clip_video("still", "single")),
                 ("本集从这一场起", lambda: self._run_clip_video("still", "story")),

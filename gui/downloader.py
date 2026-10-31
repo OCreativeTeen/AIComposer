@@ -1214,6 +1214,10 @@ class MediaGUIManager:
         )
         if not (prompt or "").strip():
             return None
+        # t167u: 四个后端共用：每场少人、少交换、约 10 秒说完
+        import config_prompt as _cp
+        prompt = prompt.rstrip() + "\n\n" + _cp.scene_dialogue_budget_block().strip() + "\n"
+        prompt = prompt.rstrip() + "\n\n" + _cp.scene_speaker_id_block().strip() + "\n"  # t174u
         backend = (text_backend or "").strip().lower()
         if backend in ("deepseek", "strata"):
             # t121u/t122u: DeepSeek API / 本机 Strata 直接调用，不开手动窗口；失败直接报错（不转手动）。只收文字。
@@ -1305,6 +1309,15 @@ class MediaGUIManager:
                 )
             except Exception as ex:
                 err_msg = str(ex)
+            if scenes:
+                try:  # t174u: 人物编号对齐（只重排 / 补位，不删内容），有问题只提醒
+                    from utility.speaker_ids import align_story_speakers
+
+                    scenes, _id_notes = align_story_speakers(scenes)
+                    for _n in _id_notes:
+                        print(f"⚠️ 人物编号：{_n}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 人物编号检查没做：{exc}")
 
             def apply():
                 if on_idle:

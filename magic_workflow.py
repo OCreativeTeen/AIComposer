@@ -2131,8 +2131,8 @@ class MagicWorkflow(EpisodeOpsMixin):
         # 多场景：用幻灯片 PDF 逐页对应 clip_image
         if isinstance(scene_list, list) and len(scene_list) > 1:
             slide_pdf = (pc.get("slide") or "").strip()
-            if not (picked and picked[0] == "pdf") and (not slide_pdf or not os.path.isfile(slide_pdf)) and n_scenes <= 4:
-                # 没有分页 PDF、只有 2-4 场：预览里的封面图给每一场当 clip_image / clip_image_last
+            if not (picked and picked[0] == "pdf") and (not slide_pdf or not os.path.isfile(slide_pdf)) and n_scenes <= 6:
+                # 没有分页 PDF、只有 2-6 场：预览里的封面图给每一场当 clip_image / clip_image_last
                 if self._seed_scenes_from_cover(pc):
                     return
             if not slide_pdf or not os.path.isfile(slide_pdf):
@@ -2306,9 +2306,10 @@ class MagicWorkflow(EpisodeOpsMixin):
         return result[0]
 
     def _seed_scenes_from_cover(self, pc: dict) -> bool:
-        """1-4 场 + 有封面：封面拷进每一场的 clip_image 和 clip_image_last（已有 clip_image 的场不动）。"""
+        """1-6 场 + 有封面：封面拷进每一场的 clip_image 和 clip_image_last（已有 clip_image 的场不动）。
+        t172u: 拷进去以后记下 cover_seeded_path，魔法工作流窗口起来后自动从封面逐场提取第 N 步。"""
         cover = self._seed_cover_path(pc)
-        if not cover or not (1 <= len(self.scenes) <= 4):
+        if not cover or not (1 <= len(self.scenes) <= 6):
             return False
         ext = os.path.splitext(cover)[1].lower() or ".webp"
         if ext not in (".webp", ".png", ".jpg", ".jpeg"):
@@ -2325,6 +2326,8 @@ class MagicWorkflow(EpisodeOpsMixin):
             except Exception as e:  # noqa: BLE001
                 print(f"⚠️ 封面写入场景 clip_image 失败: {e}")
         print(f"✅ 封面 {os.path.basename(cover)} 已拷进 {done}/{len(self.scenes)} 场的 clip_image / clip_image_last")
+        if done:
+            self.cover_seeded_path = cover
         return True
 
     def get_image_main_scenes(self):

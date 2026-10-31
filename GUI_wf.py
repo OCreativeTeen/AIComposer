@@ -203,6 +203,9 @@ class WorkflowGUI(LayoutMixin, ConfigMixin, FinalizePublishMixin, PromptFlowsMix
         # 绑定窗口关闭事件
 
         self.on_tab_changed(None)
+        # t172u: 新项目用了预览的封面（2-6 场一集）：窗口起来后自动从封面逐场提取第 N 步
+        if getattr(self.workflow, "cover_seeded_path", ""):
+            self.root.after(1500, self._maybe_auto_extract_steps_from_cover)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 

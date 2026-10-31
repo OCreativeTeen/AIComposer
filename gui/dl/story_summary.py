@@ -73,6 +73,13 @@ class StorySummaryImpl:
             if not out:
                 _fail("LLM 没有返回内容。")
                 return
+            try:  # t168u: 每次生成的摘要都追加进生成历史
+                from gui.dl import gen_history
+                # t169u: 记真正回答的那一个：_last_source = Strata 的模型 id，或 manual（手动窗口里贴回的）
+                src = str(getattr(self.llm_api, "_last_source", "") or getattr(self.llm_api, "model", "") or "")
+                gen_history.record(video_detail, "summaries", gen_history.display_backend(src), out)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 摘要没有记进历史：{exc}")
 
             def done() -> None:
                 try:

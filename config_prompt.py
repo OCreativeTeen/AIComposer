@@ -834,29 +834,65 @@ _SCENE_IMAGE_UNITS = {
 
 # t126u: 关键词放哪里（所有「关键字作背景」共用）：长在环境里；实在不行才用一块融进场景的半透明板。
 KEYWORD_PLACE_ZH = (
-    "- 关键词放在哪里，按这个先后顺序：\n"
-    "  1) 最好：让字融化在环境本身里：地板、墙面、天空（云或光里）、桌上的日历、墙上挂的画、沙滩上直接写在沙里等，"
-    "跟着透视、光线和材质走，像是这个场景本来就有的一部分。\n"
-    "  2) 这样不行时，才写在黑板、白板、便利贴或纸条、书本封面、门牌 / 招牌这类本来就会有字的东西上。\n"
-    "  3) 实在都不行，最后才用一块融进场景的半透明板子。\n"
-    "- 禁止：直接压在画面上的白色或彩色浮字、标题栏、字幕条、贴纸式文字框。字小而清楚、能读出来，但不抢画面。"
+    "- 关键词要像这个场景本来就有的东西，用场景里的材质、光线和透视做出来，字大，和整幅画用同一种画风（写实时就是真实存在、被拍下来的字）：\n"
+    "  · 木桌、木门、木柜上：刻进木纹里的木刻字，有刀痕、凹槽和木头的阴影。\n"
+    "  · 墙上：嵌进墙面的大字（浮雕、砖石刻字、斑驳的老墙字），或写在挂着的字画、卷轴、匾额上。\n"
+    "  · 天空里：由云自然聚成的字。\n"
+    "  · 水面、沙地、雪地、玻璃上的雾气里：写在 / 印在这些表面上。\n"
+    "  · 没有合适的表面时：半透明、朦胧的大字，从灯光、光束、烟雾或水汽里飘出来，柔和，像被灯照亮的真实雾气。\n"
+    "- 字要大，在画面里一眼能看见、能读出来；它是场景的一部分，不是贴上去的标签或字幕框。"
 )
 KEYWORD_PLACE_EN = (
-    "- Where the keyword goes, in this order of priority:\n"
-    "  1) BEST: melt the words into the environment itself: the floor, the wall surface, the sky (clouds or light), a desk "
-    "calendar, a painting hanging on the wall, written in the sand on a beach, and so on, following the perspective, "
-    "lighting and material, as if part of the scene.\n"
-    "  2) Only if that does not work: a chalkboard, whiteboard, sticky note or slip of paper, book cover, or sign.\n"
-    "  3) Last resort only: one semi-transparent board blended into the scene.\n"
-    "- Forbidden: plain white or coloured text floating on top of the picture, title bars, caption strips, "
-    "sticker-like text boxes. Keep it small but legible, never dominant."
+    "- Make each keyword look like it already belongs to the scene, crafted from the scene's own material, light and "
+    "perspective. LARGE lettering in the same art style as the whole picture (under a realistic style: real, physical lettering photographed in the scene):\n"
+    "  · On a wooden table, door or cabinet: carved into the wood grain, with chisel marks, grooves and wood shadows.\n"
+    "  · On a wall: large characters inlaid or carved into the wall (relief, stone or brick carving, weathered old wall "
+    "lettering), or brushed on a hanging painting, scroll or plaque.\n"
+    "  · In the sky: characters formed naturally by clouds.\n"
+    "  · On water, sand, snow, or misted glass: written or pressed into that surface.\n"
+    "  · With no suitable surface: large, semi-transparent, hazy characters drifting out of lamplight, a light beam, "
+    "smoke or steam, soft, like real lamp-lit mist.\n"
+    "- Big enough to read at a glance. It is part of the scene, never a label or caption box."
 )
 KEYWORD_PLACE_SHORT_EN = (
-    "Placement priority: 1) best, melt it into the environment itself (floor, wall surface, sky / clouds / light, desk "
-    "calendar, a painting on the wall, written in beach sand), following perspective, light and material; 2) only if that "
-    "fails, a chalkboard, whiteboard, note, book cover or sign; 3) last resort, one semi-transparent board blended into "
-    "the scene. Never floating overlay text, a title bar, a caption strip or a sticker box. Small but legible."
+    "Make the keyword part of the scene, LARGE, in the picture's own art style, from the scene's own material and light: carved into wood "
+    "grain on a wooden table; inlaid into a wall or brushed on a hanging scroll, painting or plaque; formed by clouds in "
+    "the sky; or, with no suitable surface, large semi-transparent hazy characters drifting out of lamplight or smoke like "
+    "lit mist. Follow perspective and lighting; never a label or caption box."
 )
+
+
+# t175u: 画风写在最前面并在最后重复（NotebookLM 信息图 / 幻灯 / 视频一句埋在中间的画风经常被忽略）。
+def is_realistic_style(style: str) -> bool:
+    s = (style or "").strip().lower()
+    return (not s) or "realistic" in s or "写实" in s or "寫實" in s
+
+
+def art_style_block(style: str, output: str = "", *, reminder: bool = False) -> str:
+    """画风硬规则。写实时明确排除插画 / 卡通 / 绘画；其他画风只要求全程同一种。"""
+    style = (style or "").strip() or "写实 (Realistic)"
+    unit = {"infographic": "the infographic", "slides": "every slide", "video_overview": "every visual of the video"}.get(
+        output, "every picture")
+    if is_realistic_style(style):
+        zh = ("画风（必须遵守）：照片级写实，像真实拍摄的照片 / 电影剧照：真实的人、真实的皮肤和材质、自然光。"
+              "不是插画，不是卡通，不是三维动画 / 皮克斯风格，不是绘画、水彩、动漫，也不是扁平矢量图标风。")
+        en = (f"Art style (must follow): photorealistic, like real photographs / cinematic film stills, for {unit}: "
+              "real people with real skin and real materials, natural lighting, real camera depth of field. "
+              "NOT illustration, NOT cartoon, NOT 3D animation or Pixar style, NOT painting, watercolor or anime, "
+              "NOT flat vector icon art.")
+        extra = ("Keywords under this style are physically real things photographed in the scene: letters really carved "
+                 "into wood, inlaid in stone, a real neon or lit sign, real steam or mist lit by a lamp. Never painted, "
+                 "drawn or cartoon lettering. A scene style (for example Dream) only changes the light and mood; the "
+                 "picture stays a photograph.")
+        if output == "infographic":
+            extra += " The infographic is a layout of photo-real scene stills, not drawn icons or illustrations."
+    else:
+        zh = f"画风（必须遵守）：{style}。所有画面只用这一种画风，不混用别的画风。"
+        en = (f"Art style (must follow): {style}, for {unit}. Use only this one style everywhere; "
+              "keywords are rendered in the same style as the picture.")
+        extra = ""
+    head = "Reminder — art style again (overrides anything above): " if reminder else ""
+    return head + zh + "\n" + en + ("\n" + extra if extra else "")
 
 
 # t125u: 信息图每个场景部分：不要「第N幕 / Scene N」之类的编号，改成融进环境的核心关键词。
@@ -868,13 +904,13 @@ INFOGRAPHIC_NO_INDEX_RULE = (
 )
 INFOGRAPHIC_KEYPHRASE_RULE = (
     "信息图关键词（必须遵守）：\n"
-    "- 先读懂每一场，再为它提炼一个核心关键词：只有几个字（中文 2–6 字，英文 1–3 词），说出这一场背后真正要揭示的东西："
+    "- 先读懂每一场，再为它提炼 1 到 3 个核心关键词：每个只有几个字（中文 2–4 字，英文 1–3 词），说出这一场背后真正要揭示的东西："
     "关键的情绪、病因 / 根源、核心问题或转折。例如「怕改变」「假装没事」「被看见」「不敢开口」；"
     "绝不是场景标题、编号或「第N幕」。content.pdf 里这一场有 caption / 标题时，可以从它提炼，但要落到核心意思上。\n"
     + KEYWORD_PLACE_ZH + "\n"
-    "- 关键词用和 content.pdf 相同的语言和字体（繁体 / 简体一致）。每个场景部分只有这一个关键词，没有别的字。\n"
+    "- 关键词用和 content.pdf 相同的语言和字体（繁体 / 简体一致）。每个场景部分只有这几个关键词，没有别的字。\n"
     "Infographic key phrase (must follow):\n"
-    "- First understand each scene, then distil ONE key phrase for it: only a few characters (Chinese 2–6 characters, "
+    "- First understand each scene, then distil 1 to 3 key phrases for it: each only a few characters (Chinese 2–4 characters, "
     "English 1–3 words) that name what the scene really reveals: the key emotion, the root cause, the core problem or "
     "turning point, e.g. \"afraid of change\", \"pretending to be fine\", \"finally seen\". Never a scene title, a number, "
     "or a label like 第N幕 / Act N. If the scene in content.pdf has a caption or title, you may derive it from that, but "
@@ -903,9 +939,9 @@ def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
         return INFOGRAPHIC_KEYPHRASE_RULE + "\n" + INFOGRAPHIC_NO_INDEX_RULE
     if text == "keywords":
         return (
-            f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是那一个融进场景的关键词（中文≤8字 / 英文≤3词）。\n"
-            f"- On-screen text: {unit_en} has NO title text and NO body text. The only text is that one keyword, "
-            "blended into the scene (Chinese ≤ 8 characters / English ≤ 3 words).\n"
+            f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是 1 到 3 个融进场景的关键词（每个 2 到 4 字 / 英文 1 到 3 词）。\n"
+            f"- On-screen text: {unit_en} has NO title text and NO body text. The only text is 1 to 3 keywords, "
+            "blended into the scene (each 2-4 Chinese characters / 1-3 English words).\n"
             + KEYWORD_BG_RULE_ZH
         )
     if text in ("erase", "express"):
@@ -1017,7 +1053,7 @@ def build_slide_flow_prompt(
             lines.append("Draw what that scene's show_this_content explains as one slide, following the order of the talk.")
         else:
             lines.extend([
-                "Paint what that scene's show_this_content describes: the place, the emotion, the action, and the light.",
+                "Show what that scene's show_this_content describes: the place, the emotion, the action, and the light.",
                 "A change of angle or an action already written there belongs in that picture.",
             ])
 
@@ -1058,7 +1094,7 @@ def build_slide_flow_prompt(
     lines.append(SLIDE_FLOW_META_NOTE)
     if keywords:
         lines.append(
-            "The one exception: the single short keyword from ``Keyword hint``, blended into the scene as described above. "
+            "The one exception: 1 to 3 short keywords (each 2-4 Chinese characters), taken from ``Keyword hint`` and the scene's core emotion, blended into the scene as described above. "
             "Never the full scene title."
         )
 
@@ -1132,6 +1168,9 @@ def build_slide_flow_prompt(
             )
     else:
         parts["Story_Scene_Content"] = json_content
+    # t175u: 画风放最前面，最后再说一遍
+    parts = {"Art_Style": art_style_block(style, output), **parts,
+             "Art_Style_Reminder": art_style_block(style, output, reminder=True)}
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
@@ -1515,16 +1554,17 @@ KEYWORD_MAX_ZH = 8
 KEYWORD_MAX_EN_WORDS = 3
 KEYWORD_BG_RULE_ZH = (
     "关键字作背景（必须遵守）：\n"
-    "- 每一场 / 每一页只提炼一个很短的关键词：中文最多 8 个字，英文最多 3 个词。只有这一个，不要句子、不要列表、不要副标题、不要第二行。\n"
+    "- 每一场 / 每一页提炼 1 到 3 个关键词，每个 2 到 4 个字（英文 1 到 3 个词），取这一场的核心情绪或转折，例如「突然冷漠」「隔门试探」「笨拙破冰」。"
+    "只有这几个词，没有句子、标题或说明。\n"
     + KEYWORD_PLACE_ZH + "\n"
-    "- 画面（场景）才是主体，关键词只是一个点缀。"
+    "- 画面（场景）是主体，关键词像场景里的一件东西，让人看了更有感觉。"
 )
 KEYWORD_BG_RULE_EN = (
     "Keyword as background (must follow):\n"
-    "- Take ONE short keyword phrase per scene / slide: Chinese at most 8 characters, English at most 3 words. "
-    "Nothing more: no sentence, no bullet list, no subtitle, no second line.\n"
+    "- For each scene / slide take 1 to 3 keywords, each 2 to 4 Chinese characters (or 1 to 3 English words), drawn from "
+    "the scene's core emotion or turning point. Only these words: no sentence, title or explanation.\n"
     + KEYWORD_PLACE_EN + "\n"
-    "- The picture, the scene, stays the main content. The keyword is only an accent."
+    "- The picture, the scene, stays the main content; the keywords are part of it and deepen its feeling."
 )
 # 去掉文字 / 用画面讲 / 关键字作背景 共用：不要任何独立的文字区。
 NO_TEXT_PANEL_LINE = (
@@ -1571,6 +1611,14 @@ def flow_caption_rule(text: str) -> str:
             "Do not add new lettering. " + NO_TEXT_PANEL_LINE
         )
     return "Keep any words already drawn in the picture. They stay part of the picture. Do not add a new caption."
+
+
+def video_caption_rule(text: str) -> str:
+    """t172u: 视频用。「关键字作背景」时关键词已经在起始图里，视频只保持原样，不再画新字。"""
+    if text == "keywords":
+        return ("Words already drawn into the start picture stay exactly as they are, as part of the scene. "
+                "No new writing appears in the video; the spoken lines are heard, not shown.")
+    return flow_caption_rule(text)
 
 
 def _picture_flow_text_rule(text: str) -> str:
@@ -2960,7 +3008,7 @@ def _video_flow_instruction(
 ** {content_fields} are not text to draw."""
             )
     else:
-        chunks.append(flow_caption_rule(text))
+        chunks.append(video_caption_rule(text))
     chunks.append(_video_flow_camera_line(camera))
     motion_line = _video_flow_motion_line(motion)
     if motion_line:
@@ -3023,7 +3071,7 @@ def build_video_fyi_only_prompt(
             f"Open on picture 1's own style, then evolve the look into the target visual style: {style}, by {how}. "
             "The same people and place stay recognizable throughout."
         )
-    lines.append(flow_caption_rule(text))
+    lines.append(video_caption_rule(text))
     secs = "".join(ch for ch in (duration or "") if ch.isdigit())
     if secs:
         lines.append(f"Clip length: about {secs} seconds. Pace the main action to fill the clip; do not rush it or freeze at the end.")
@@ -3468,6 +3516,10 @@ def speaker_tag(row: dict, n: int, scene: dict | None = None) -> str:
     return out
 
 
+def _unquote(text: str) -> str:
+    return "".join(ch for ch in str(text or "") if ch not in "\"“”‘’「」『』").strip()
+
+
 def dialogue_script(scene: dict) -> list:
     """speaking 的 <N> → 逐句台词：'1. 阿明 (young man): "…"'。同一人连着说的合并成一句。"""
     if not isinstance(scene, dict):
@@ -3499,9 +3551,10 @@ def dialogue_script(scene: dict) -> list:
         if 1 <= n <= len(rows):
             name, _ident, _tone = _speaker_identity(rows[n - 1])
             sex = _speaker_sex_word(rows[n - 1])
-            out.append(f'[Speaker {n} {name}' + (f', {sex} voice' if sex else '') + f']: "{chunk}"')
+            # t163u: 不用引号 / 方括号（引号里的字容易被画成字幕）：'蘇敏 (Speaker 1, FEMALE voice) says aloud: …'
+            out.append(f'{name} (Speaker {n}' + (f', {sex} voice' if sex else '') + f') says aloud: {_unquote(chunk)}')
         else:
-            out.append(f'[Speaker {n}]: "{chunk}"')
+            out.append(f'Speaker {n} says aloud: {_unquote(chunk)}')
     return out
 
 
@@ -3658,16 +3711,21 @@ def _video_form_line(narrative: str) -> str:
 
 
 def _video_text_line(text: str, background: str, narrative: str) -> str:
-    """说明文字（画面上的字），只写一次。"""
+    """说明文字（画面上的字），只写一次。t163u: 短、正面，少用 caption / text 这类词。"""
+    if text == "erase":
+        return ("Picture: lettering printed beside or under the start image is not part of the scene; "
+                "continue the scene itself through that area.")
+    if text == "express":
+        return "Picture: the scene alone tells it; the frame holds no lettering."
     if text != "keep":
-        return "Text: " + flow_caption_rule(text).replace("\n", " ")
+        return "Text: " + video_caption_rule(text).replace("\n", " ")
     if background == "art_text":
         return ("Text: one short artistic keyword (Chinese at most 8 characters, English at most 3 words) may sit in the deep "
                 "background, taken from the spoken content. Never a sentence. " + KEYWORD_PLACE_SHORT_EN)
     if background == "bubble" and narrative == "story":
         return ("Text: at most one small thought bubble near a speaker, holding a keyword from their line; "
                 "never a subtitle bar, never over a face.")
-    return "Text: no words on the picture: no subtitle, caption, title card, sign text, or speech bubble."
+    return "Picture: keep lettering that is physically part of the scene (e.g. a sign) as it is; add nothing new."
 
 
 def _video_style_line(frames: str, evolve: str, style: str) -> str:
@@ -3696,19 +3754,15 @@ def _video_camera_short(camera: str) -> str:
 
 # t159u: 视频（Grok / Gemini / MiniMax 共用）的两条硬规则，放在提示词最前面（不只在 FYI 里）。
 VIDEO_NO_CAPTION_RULE = (
-    "NO ON-SCREEN TEXT (hard rule): never write the spoken lines / dialogue / narration on screen. "
-    "No captions, no subtitles, no speech bubbles, no lower-thirds, no text overlays, no watermarks, no title cards. "
-    "The words are only heard, never shown. Only text that is physically part of the scene in the start image "
-    "(e.g. a sign on a wall) may stay as it is.\n"
-    "禁止字幕：说话内容只用声音表现，绝不能以字幕、文字、对话气泡或任何叠加文字出现在画面里。"
+    "Clean film image: only the scene fills the frame. Spoken lines are heard only as voices; "
+    "the picture shows only the scene.\n"
+    "画面干净：画面里只有场景本身，台词只用声音表现。"
 )
 VIDEO_CONTINUITY_MARK = "CONTINUITY (real time)"
 VIDEO_CONTINUITY_RULE = (
-    VIDEO_CONTINUITY_MARK + ": this conversation happens in real time and lasts only seconds. "
-    "Keep lighting, time of day, weather and surroundings constant and consistent with the start image "
-    "from the first frame to the last. No day/night transition, no sunrise or sunset, no sudden light changes, "
-    "no time-lapse, no big change to the environment.\n"
-    "连续性：对话就在几秒钟内发生，光线、时间（白天/夜晚）、天气和周围环境始终和起始画面一致，不要变。"
+    "This is one continuous real-time moment of a few seconds: the room, the view outside, the light and "
+    "everyone's clothes stay the same from the first frame to the last.\n"
+    "连续性：同一时刻的几秒钟，光线、时间、环境始终和起始画面一致。"
 )
 VIDEO_LIGHT_CHANGE_WORDS = (
     "天亮", "日出", "日落", "黄昏", "傍晚", "天黑", "入夜", "夜幕降临", "光线变化", "光线变", "灯亮", "灯灭", "关灯", "开灯",
@@ -3732,9 +3786,7 @@ def _scene_has_dialogue(sc: dict) -> bool:
     return False
 
 
-def video_guard_block(scenes, transition=None) -> str:
-    """t159u: 视频提示词最前面的硬规则：永远不要字幕；有人说话时光线 / 时间不变（视觉里写了变化就不加）。"""
-    rules = [VIDEO_NO_CAPTION_RULE]
+def _guard_parts(scenes, transition=None, start_image: str = "") -> tuple:
     scs = [s for s in (scenes or []) if isinstance(s, dict)]
     talk = any(_scene_has_dialogue(s) for s in scs)
     if isinstance(transition, dict) and str(transition.get("对白") or "").strip():
@@ -3742,9 +3794,329 @@ def video_guard_block(scenes, transition=None) -> str:
     visual = " ".join(str(s.get("visual") or "") for s in scs)
     if isinstance(transition, dict):
         visual += " " + str(transition.get("时空") or "") + " " + str(transition.get("特效") or "")
-    if talk and not lighting_change_requested(visual):
+    changes = lighting_change_requested(visual)
+    light = "" if changes else minimax_lighting_phrase(visual, start_image)
+    return talk, changes, light
+
+
+VIDEO_AUDIO_MODE_LINES = {
+    "talk": "Voice: the people speak along with the given voice recording, lips moving in sync with the voice.",
+    "sing": "Song: the singer sings along with the given song, lips, breath and body moving in sync with the music.",
+}
+
+
+def video_guard_block(scenes, transition=None, start_image: str = "", audio_mode: str = "") -> str:
+    """t159u/t163u: 视频提示词最前面的要点（所有后端共用），只用正面、具体的描述：
+    画面干净（台词只用声音）；光线 / 时间写成具体样子（视觉或起始图亮度）；有对话时加实时连续性（视觉写了光线变化就不加）。"""
+    talk, changes, light = _guard_parts(scenes, transition, start_image)
+    rules = [VIDEO_NO_CAPTION_RULE]
+    if light:
+        rules.append(light)
+    if talk and not changes:
         rules.append(VIDEO_CONTINUITY_RULE)
-    return "HARD RULES (apply to the whole clip):\n" + "\n\n".join(rules)
+    if audio_mode in VIDEO_AUDIO_MODE_LINES:
+        rules.append(VIDEO_AUDIO_MODE_LINES[audio_mode])
+    return "KEY POINTS (whole clip):\n" + "\n".join(f"- {r}" for r in rules)
+
+
+def video_closing_block(scenes, transition=None, start_image: str = "") -> str:
+    """t163u: 结尾再强调一次：画面干净 + 光线。"""
+    _talk, _changes, light = _guard_parts(scenes, transition, start_image)
+    return "REMEMBER:\n- Clean film image: only the scene fills the frame." + (f"\n- {light}" if light else "")
+
+
+def strip_caption_lines(text: str) -> str:
+    """t163u: FYI 里讲字幕 / 文字的句子去掉（负面词会反过来引导），其余照旧。"""
+    keep = [ln for ln in str(text or "").splitlines()
+            if not re.search(r"caption|subtitle|\btext\b|字幕|文字", ln, re.I)]
+    return "\n".join(keep).strip()
+
+
+# ---------------------------------------------------------------------------
+# t162u: MiniMax H3 专用提示词。H3 只有正面提示词（BasicGuider，没有负面 / CFG），所以：
+#   - 不写「不要字幕 / 不要日夜变化」这种词（会被当成要画的东西），只描述画面「是什么」；
+#   - 台词不用引号 / 字段格式（容易被画成字），有配音时只说谁对谁说话，声音交给音轨；
+#   - 光线写成具体的样子（夜里：窗外一直是黑的夜色、室内灯光），从视觉文字或起始图亮度判断。
+# ---------------------------------------------------------------------------
+_NIGHT_WORDS = ("夜", "晚上", "晚间", "深夜", "半夜", "夜里", "夜晚", "night", "midnight", "late evening")
+_DAY_WORDS = ("白天", "早上", "早晨", "上午", "中午", "下午", "阳光", "陽光", "日光", "daytime", "morning", "noon",
+              "afternoon", "sunlight", "sunny")
+_QUOTE_CHARS = "\"'“”‘’「」『』《》"
+
+
+def _image_brightness(path: str) -> float:
+    """起始图平均亮度 0–255；读不到返回 -1。"""
+    try:
+        from PIL import Image, ImageStat
+
+        with Image.open(path) as im:
+            g = im.convert("L")
+            g.thumbnail((96, 96))
+            return float(ImageStat.Stat(g).mean[0])
+    except Exception:  # noqa: BLE001
+        return -1.0
+
+
+def minimax_lighting_phrase(visual: str, start_image: str = "") -> str:
+    """t162u: 正面描述「光线一直是这样」。视觉里写了时间就按它，否则看起始图亮度。"""
+    low = str(visual or "").lower()
+    night = any(w in low for w in _NIGHT_WORDS)
+    day = any(w in low for w in _DAY_WORDS)
+    if not (night or day) and start_image:
+        b = _image_brightness(start_image)
+        night = 0 <= b < 85
+        day = b > 150
+    if night and not day:
+        return ("It is night for the entire clip: the windows show the same dark night outside from the first frame "
+                "to the last, and the room is lit only by its warm indoor lamps, exactly as in the first frame.")
+    if day and not night:
+        return "It is daytime for the entire clip, with the same steady daylight as in the first frame."
+    return "The light and the time of day stay exactly as in the first frame for the entire clip."
+
+
+def _dialogue_turns(scene: dict) -> list:
+    """[(说话人序号, 名字, 身份, 台词)]，台词去掉引号。"""
+    rows = _scene_speakers(scene)
+    out = []
+    for line in dialogue_script(scene):
+        m = re.match(r'^.*?\(?Speaker (\d+)[^)]*?\)? says aloud: (.*)$', line, re.S)
+        if not m:
+            continue
+        n = int(m.group(1))
+        name, ident = (_speaker_identity(rows[n - 1])[:2] if 1 <= n <= len(rows) else (f"person {n}", ""))
+        text = "".join(ch for ch in m.group(2) if ch not in _QUOTE_CHARS).strip()
+        out.append((n, name, ident, text))
+    return out
+
+
+def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", region: str = "", era: str = "",
+                               with_audio: bool = False, start_image: str = "", fyi: str = "",
+                               transition=None, two_frames: bool = False) -> str:
+    """t162u: MiniMax H3 的短提示词，只用正面描述。"""
+    scs = [s for s in (scenes or []) if isinstance(s, dict)]
+    sc = scs[0] if scs else {}
+    lang = ""
+    try:
+        import config
+
+        lang = config.audio_language_label(language) if (language or "").strip() else ""
+    except Exception:  # noqa: BLE001
+        lang = ""
+    st = str(style or "").strip()
+    st_en = "realistic" if ("写实" in st or "realistic" in st.lower() or not st) else st
+    place = " ".join(x for x in (era or "", region or "") if x).strip()
+    lines = [f"A {st_en} cinematic film shot" + (f", set in {place}" if place else "") + "."]
+    lines.append("The video starts from the first frame and ends on the last frame." if two_frames else
+                 "The video continues directly from the first frame: same place, same camera angle, same people.")
+    visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip()
+    if isinstance(transition, dict):
+        visual = " ".join(x for x in (visual, str(transition.get("时空") or ""), str(transition.get("特效") or "")) if x.strip())
+    if visual:
+        lines.append(f"What happens: {visual}")
+    rows = _scene_speakers(sc)
+    if rows:
+        who = []
+        for r in rows:
+            name, ident, _tone = _speaker_identity(r)
+            who.append(f"{name}, a {ident}" if ident else name)
+        lines.append("People in the shot: " + "; ".join(who) + ". Only these people, nobody else.")
+    turns = _dialogue_turns(sc)
+    talk = bool(turns) or any(_scene_has_dialogue(s) for s in scs)
+    if talk:
+        if with_audio:
+            names = " and ".join(dict.fromkeys(t[1] for t in turns)) or "the people"
+            lines.append(f"{names} talk to each other" + (f" in {lang}" if lang else "")
+                         + ", their lips moving in sync with the voice track, one speaker at a time while the other "
+                         "listens and reacts with natural expressions and small gestures.")
+        else:
+            said = []
+            for i, (_n, name, ident, text) in enumerate(turns):
+                lead = "" if i == 0 else "Then "
+                said.append(f"{lead}{name}" + (f" (the {ident})" if ident else "") + f" says aloud: {text}")
+            lines.append("They talk to each other, heard as spoken voices" + (f" in {lang}" if lang else "")
+                         + ", one speaker at a time, lips in sync, the other listens and reacts. " + " ".join(said))
+    if talk and not lighting_change_requested(visual):
+        lines.append("This is one continuous real-time moment of a few seconds.")
+        lines.append(minimax_lighting_phrase(visual, start_image))
+        lines.append("The room, the view outside and everyone's clothes stay the same from the first frame to the last.")
+    elif not lighting_change_requested(visual):
+        lines.append(minimax_lighting_phrase(visual, start_image))
+    lines.append("Clean film image: only the scene itself fills the frame.")
+    lines.append("Sound: the voices and the natural sound of the place, no music.")
+    extra = []
+    for ln in str(fyi or "").splitlines():  # FYI 里讲字幕 / 文字的句子不带（负面词会反过来引导）
+        s = ln.strip()
+        if not s or s.startswith("注意") or re.search(r"caption|subtitle|text|字幕|文字|标题|標題", s, re.I):
+            continue
+        extra.append(s)
+    if extra:
+        lines.append("Note: " + " ".join(extra))
+    return "\n".join(lines)
+
+
+def _plain_payload(payload: list) -> str:
+    """t163u: 场景内容写成纯文字（字段名保留，台词每行一句，没有引号 / JSON）。"""
+    blocks = []
+    many = len([p for p in payload or [] if isinstance(p, dict)]) > 1
+    for i, sc in enumerate([p for p in payload or [] if isinstance(p, dict)], 1):
+        lines = [f"Scene {i}:"] if many else []
+        for key, val in sc.items():
+            if isinstance(val, list):
+                lines.append(f"{key}:")
+                lines += [f"  {_unquote(v) if key != 'dialogue' else v}" for v in val]
+            else:
+                lines.append(f"{key}: {val}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+# ---------------------------------------------------------------------------
+# t165u: MiniMax H3 官方提示词格式（MiniMaxAI/MiniMax-H3 docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md）
+#   第一行固定的图对齐说明（I2VA / FL2VA）+ 空行 + 三个字段：integrated_multimodal_description（[Shot 1] …，
+#   说话人 (S1)(S2) + 声音描述，台词在 <d>[语言] 原文</d> 里）、overall_soundscape、non_diegetic_music。不写禁止清单。
+#   只在提交给 MiniMax 时用；Grok / Gemini 仍用统一提示词。
+# ---------------------------------------------------------------------------
+H3_I2V_LINE = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."
+H3_FL2V_LINE = ("How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second "
+                "mark of the target video; Picture 2 (from Shot 1) aligns with the {end:.2f}-second mark of the target video.")
+_H3_CAMERA = {
+    "none": "The camera holds steady with only slight natural movement.",
+    "wide": "A wide shot frames the whole space while the camera holds steady.",
+    "close": "A close-up frames the faces while the camera holds steady.",
+    "push": "The camera pushes in with small amplitude at slow speed.",
+    "pull": "The camera pulls back with small amplitude at slow speed.",
+    "arc": "The camera arcs slowly around the subjects with small amplitude.",
+    "track": "The camera tracks the subjects smoothly at slow speed.",
+    "rotate": "The camera rotates slowly with small amplitude.",
+    "timelapse": "The shot runs as a time-lapse, time passing quickly.",
+}
+
+
+def _h3_style(style: str) -> str:
+    st = str(style or "").strip()
+    if not st or "写实" in st or "寫實" in st or "realistic" in st.lower():
+        return "Live-action, cinematic, realistic"
+    return f"Cinematic, in the style of {st}"
+
+
+def _h3_speaker_phrase(row: dict) -> str:
+    """'the middle-aged woman 蘇敏 with a mature female voice' (声音名有就加上)。"""
+    import project_manager
+
+    name, ident, tone = _speaker_identity(row)
+    body, _m = project_manager.split_actor_motion(row.get("body") or "")
+    voice = chosen_actor_voice(body, row.get("role") or "person")
+    who = f"the {ident} {name}".strip() if ident else name
+    tone0 = tone.split(",")[0].strip()
+    return who + (f" with {tone0}" if tone0 else "") + (f" (voice {voice})" if voice else "")
+
+
+def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str = "", region: str = "", era: str = "",
+                    language: str = "", camera: str = "none", audio_mode: str = "none", start_image: str = "",
+                    seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "") -> str:
+    """t165u: 场景内容 → MiniMax H3 官方格式提示词。"""
+    scs = [s for s in (scenes or []) if isinstance(s, dict)]
+    sc = scs[0] if scs else {}
+    two = frames == "two" or isinstance(transition, dict)
+    lang = ""
+    try:
+        import config
+
+        lang = config.audio_language_label(language) if (language or "").strip() else ""
+    except Exception:  # noqa: BLE001
+        lang = ""
+    lang = lang or "Chinese"
+    import project_manager
+
+    first = H3_FL2V_LINE.format(end=float(seconds)) if two else H3_I2V_LINE
+    era_s, reg_s = str(era or "").strip(), str(region or "").strip()
+    place = era_s if (reg_s and reg_s in era_s) else ", ".join(x for x in (era_s, reg_s) if x)
+    shot = [f"[Shot 1] {_h3_style(style)}" + (f", set in {place}" if place else "") + "."]
+    rows = _scene_speakers(sc)
+    names = [(_speaker_identity(r)[1] + " " + _speaker_identity(r)[0]).strip() for r in rows]
+    pic = "<Picture 1>"
+    who_all = " and the ".join(names)
+    if rows and isinstance(transition, dict):
+        shot.append(f"The {who_all} shown in {pic} keep their appearance and clothing.")
+    elif rows:
+        shot.append(f"The {who_all} shown in {pic} " + ("stays" if len(rows) == 1 else "stay")
+                    + " in the same place, preserving appearance, clothing, positions and the layout of the scene.")
+    else:
+        shot.append(f"The scene shown in {pic} stays the same place, preserving its layout, objects and colors.")
+    visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip() if use_visual else ""
+    vis_all = " ".join(str(s.get("visual") or "") for s in scs)
+    if isinstance(transition, dict):
+        for key in ("时空", "人物", "特效"):
+            v = str(transition.get(key) or "").strip()
+            if v:
+                visual = (visual + " " + v).strip()
+                vis_all += " " + v
+    if visual:
+        shot.append(f"What happens: {visual.rstrip('。.')}.")
+    turns = _dialogue_turns(sc) if use_speaking else []
+    story = str(sc.get("story_content") or "").strip()
+    if not turns and use_speaking and story and project_manager.scene_is_story_act(sc):
+        shot.append(f"Action: {story}")
+    talk = bool(turns)
+    changes = lighting_change_requested(vis_all) or camera == "timelapse"
+    if not changes:
+        light = minimax_lighting_phrase(vis_all, start_image)
+        if light.startswith("It is night"):  # H3: 室内外都适用的写法
+            light = (f"It is night throughout: the same darkness outside and the same lights as in {pic}, "
+                     "unchanged from the first frame to the last.")
+        if talk:
+            light = light.rstrip(".") + "; this is one continuous real-time moment, so the light, the time of day, " \
+                    "the view outside and everyone's clothes stay exactly the same from the first frame to the last."
+        shot.append(light)
+    shot.append(_H3_CAMERA.get(camera or "none", _H3_CAMERA["none"]))
+    # 台词：(S1)(S2) 按说话人序号，声音描述只在第一次出现时写
+    seen = set()
+    said = []
+    verb = "sings" if audio_mode == "sing" else "says"
+    for i, (n, _name, _ident, text) in enumerate(turns):
+        sid = f"(S{n})"
+        if n not in seen and 1 <= n <= len(rows):
+            who = _h3_speaker_phrase(rows[n - 1])
+            who = who[0].upper() + who[1:]
+            seen.add(n)
+            said.append(f"{who} {sid} {verb}: <d>[{lang}] {text}</d>")
+        else:
+            nm = _speaker_identity(rows[n - 1])[0] if 1 <= n <= len(rows) else f"Speaker {n}"
+            lead = "then answers" if i and turns[i - 1][0] != n else "continues"
+            if audio_mode == "sing":
+                lead = "sings on"
+            said.append(f"{nm} {sid} {lead}: <d>[{lang}] {text}</d>")
+    if said:
+        shot.append(" ".join(said))
+        shot.append("One person speaks at a time while the other listens and reacts with natural expressions and small gestures."
+                    if audio_mode != "sing" else "Lips, breath and body move with the song.")
+    if said and audio_mode == "talk":
+        shot.append("Their voices and lip movements follow the provided voice recording.")
+    if said:
+        pass
+    elif audio_mode == "sing" and rows:
+        shot.append(f"{_h3_speaker_phrase(rows[0])[0].upper() + _h3_speaker_phrase(rows[0])[1:]} (S1) sings along with the song, "
+                    "lips, breath and body moving with the music.")
+    elif audio_mode == "talk" and rows:
+        shot.append(f"{_h3_speaker_phrase(rows[0])[0].upper() + _h3_speaker_phrase(rows[0])[1:]} (S1) speaks, lips moving with the voice.")
+    elif not talk:
+        shot.append("Nobody speaks; the people keep their lips closed and act through small natural movements."
+                    if rows else "Only gentle natural movement in the scene.")
+    if two:
+        shot.append("The shot moves continuously from <Picture 1> and ends exactly on Picture 2.")
+    extra = strip_caption_lines(fyi)
+    extra = "\n".join(ln for ln in extra.splitlines() if ln.strip() and not ln.strip().startswith("注意"))
+    if extra:
+        shot.append("Direction: " + " ".join(extra.split()))
+    if audio_mode == "sing":
+        sound = "The singing voice from the song, with soft room ambience underneath."
+        music = "N/A"
+    else:
+        sound = ("Quiet indoor ambience with soft room tone, small movement sounds and the rustle of clothing."
+                 if talk or rows else "Natural ambient sound of the place.")
+        music = "N/A"
+    return (first + "\n\nintegrated_multimodal_description: " + " ".join(shot)
+            + "\n\noverall_soundscape: " + sound + "\n\nnon_diegetic_music: " + music)
 
 
 def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruction: list,
@@ -3761,7 +4133,7 @@ def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruc
     parts["Instructions"] = "\n".join(f"- {line}" for line in instruction if line)
     if lang_label:
         parts["Audio"] = f"- Spoken language: {lang_label}. Every spoken word is delivered in {lang_label}."
-    parts["Story_Scene_Content"] = json.dumps(payload, ensure_ascii=False, indent=2)
+    parts["Story_Scene_Content"] = _plain_payload(payload)  # t163u: 纯文字，不用 JSON 引号
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
@@ -4199,8 +4571,8 @@ def build_direct_video_clipbody(
 _STEP_CAPTION_LINES = {
     "keep": "** Text: keep step {k}'s short title as one caption line; no other text.",
     "erase": "** Text: remove step {k}'s text too (title, labels); no letters, and no blank board or panel left behind.",
-    "keywords": "** Text: drop step {k}'s title and labels; blend ONE short keyword from them (Chinese max 8 characters, "
-                "English max 3 words) into the scene itself. " + KEYWORD_PLACE_SHORT_EN,
+    "keywords": "** Text: drop step {k}'s title and labels; blend 1 to 3 short keywords from them (each 2-4 Chinese characters, "
+                "or 1-3 English words) into the scene itself. " + KEYWORD_PLACE_SHORT_EN,
     "express": "** Text: no letters at all; show what step {k}'s text says through the people, action and setting; "
                "no text box, panel or caption area.",
 }
@@ -5984,7 +6356,7 @@ def build_analysis_flow_prompt(
     ]
     if text == "keywords":
         lines.append(
-            "The one exception: a single short keyword for that part of the report (Chinese ≤ 8 characters / English ≤ 3 words), "
+            "The one exception: 1 to 3 short keywords for that part of the report (each 2-4 Chinese characters / 1-3 English words), "
             "blended into the picture as described above. Never a full heading."
         )
     parts["Instruction_for_image" if output in ("slides", "infographic") else "Instruction_for_scenes"] = "\n".join(lines)
@@ -6001,3 +6373,46 @@ def build_analysis_flow_prompt(
     srcs.append(f"If this notebook has other sources, ignore them except {names}.")
     parts["Content_Source"] = "\n".join(srcs)
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
+# t167u: 场景对话的长度和人数（Grok / Gemini / DeepSeek / Strata 场景生成共用，追加在提示词最后）
+SCENE_DIALOGUE_BUDGET_RULE = """
+*** 每一场的对话要短（这一条优先于上面所有关于 speaking 的写法）
+    ** 每一场开口说话的人很少：通常 1 到 2 人，最多 2 人。其他人只出现在画面里，不说话。
+    ** 每一场最多换 3 次说话人。句子很短时最多 3 次交换；句子稍长时 2 次；一问一答（1 次交换）也很好。
+    ** 每个人在一场里最多说 2 次话。
+    ** 整场 speaking 从从容容地说，大约 10 秒内说完：一共约 20 到 30 个汉字（英文约 25 到 35 个词）。
+    ** 句子精炼、口语化，只留最要紧的一两句意思；更多内容放到下一场，或放进 visual 里演出来。
+    ** 例子（两人，2 次交换）："<1> 这是好机会，你去试试。<2> 万一搞砸了呢？<1> 那就再来一次。"
+*** SCENE DIALOGUE BUDGET (overrides any earlier speaking rule)
+    ** 1-2 speakers per scene, never more. Others may appear silently.
+    ** At most 3 speaker changes per scene (short lines: up to 3; slightly longer lines: 2; one question and one answer is fine). Each person speaks at most twice.
+    ** The whole speaking is said unhurriedly in about 10 seconds: about 20-30 Chinese characters (about 25-35 English words) in total.
+"""
+
+
+def scene_dialogue_budget_block() -> str:
+    return SCENE_DIALOGUE_BUDGET_RULE
+
+
+# t174u: 人物编号整篇故事固定（四个后端共用，跟在对话长度规则后面）
+SCENE_SPEAKER_ID_RULE = """
+*** 人物编号：整个故事固定，一个人一个号（这一条优先于上面所有关于 <N> 和 actor 编号的写法）
+    ** 第一场按开口先后编号：先说话的是 人物1（<1>），第二个说话的是 人物2（<2>）。
+    ** 后面每一场，同一个人永远用同一个号和同一段描述（性别/年龄段/族裔/名字），即使他这一场先开口。所以第二场可以用 <2> 开头。
+    ** 只有真正新出场、不同的人才用下一个没用过的号（人物3…）。故事用一小组固定的人物：前面出现过的朋友、家人，后面再出现就还是原来那个号。
+    ** actor 写这一场出现的人，按号从小到大排（人物1 在 人物2 前面），用和 speaking 一样的 人物N。
+    ** 例子（同样两个人，三场）：
+       第1场 speaking："<1> 都兩點了，你還在滑？<2> 睡不著。"　actor："人物1：man/young/chinese/阿杰 | 人物2：man/mature/chinese/小林"
+       第2场 speaking："<2> 我是不是很失敗？<1> 你昨天還說要改履歷。"　actor："人物1：man/young/chinese/阿杰 | 人物2：man/mature/chinese/小林"
+       第3场 speaking："<1> 出來走走吧。<2> 好像輕鬆一點了。"　actor："人物1：man/young/chinese/阿杰 | 人物2：man/mature/chinese/小林"
+*** SPEAKER NUMBERS ARE FIXED FOR THE WHOLE STORY (overrides any earlier rule about <N> and actor numbering)
+    ** Scene 1: number people by who speaks first: the first speaker is 人物1 (<1>), the second is 人物2 (<2>).
+    ** Every later scene: the same person keeps the same number and the same description (gender / age / ethnicity / name), even when they speak first, so scene 2 may open with <2>.
+    ** Only a genuinely new, different person gets the next unused number (人物3 ...). Keep a small fixed cast: a friend or family member who returns is the same 人物N as before.
+    ** actor lists the people in that scene in number order (人物1 before 人物2), with the same 人物N as in speaking.
+"""
+
+
+def scene_speaker_id_block() -> str:
+    return SCENE_SPEAKER_ID_RULE

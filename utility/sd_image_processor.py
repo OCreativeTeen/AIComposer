@@ -781,14 +781,14 @@ def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt
         raise ValueError(f"MiniMax H3 的宽高必须是 32 的倍数（给的是 {width}x{height}）")
     i2v = _one_node(wf, "MiniMaxH3ImageToVideo")
     text = (prompt or "").strip()
-    # MiniMax H3 没有负面提示词输入：写进正面提示词末尾。t159u: 永远加上不要字幕；有连续性规则时加上不要光线变化
-    avoid = ["captions", "subtitles", "on-screen text", "text overlays", "speech bubbles", "watermarks",
-             "spoken lines written on screen"]
-    if "CONTINUITY (real time)" in text:
-        avoid += ["lighting change", "day-night transition", "time-lapse"]
+    # t162u: H3 只有正面条件（BasicGuider，没有负面 / CFG），「Avoid: 字幕, 日夜变化」写进去反而会被画出来，所以不加
     if negative:
-        avoid.append(str(negative).strip())
-    text += "\n\nAvoid: " + ", ".join(avoid)
+        print("[ComfyUI H3] 没有负面提示词输入，negative 不使用")
+    # t165u: H3 首尾帧对齐行里的结束秒数按实际帧数改准（17n+5 帧 / 24fps）
+    import re as _re
+
+    _end = minimax_h3_frames(seconds) / float(MINIMAX_H3_FPS)
+    text = _re.sub(r"(Picture 2 \(from Shot \d+\) aligns with the )[0-9.]+(-second mark)", lambda m: f"{m.group(1)}{_end:.2f}{m.group(2)}", text)
     wf[i2v]["inputs"].update({"prompt": text, "width": int(width), "height": int(height)})
     load_id = str(max(int(k) for k in wf if str(k).isdigit()) + 1)
     wf[load_id] = {"class_type": "LoadImage", "inputs": {"image": image_name}, "_meta": {"title": "first_frame"}}
@@ -951,6 +951,9 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
     say(f"上传起始图 {os.path.basename(image_path)} → {base}")
     image_name = upload(upload_path, f"h3_{stamp}_{os.path.basename(image_path)}")
     last_image_name = None
+    if not last_image_path and getattr(config, "MINIMAX_LOCK_LAST_FRAME", False):
+        last_image_path = image_path  # t162u: 单画面时把起始图也当结束图，锁住环境 / 光线（动作可能变少）
+        say("结束图用起始图（MINIMAX_LOCK_LAST_FRAME）")
     if last_image_path and os.path.isfile(last_image_path):
         last_up = last_image_path
         if crop:

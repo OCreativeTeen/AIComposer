@@ -2480,6 +2480,20 @@ class SceneEditorImpl:
                 _sum_status(f"生成失败：{msg}"[:120], "#b00020")
 
             scene_ui["summary_view"] = {"start": _sum_view_start, "done": _sum_view_done, "fail": _sum_view_fail}
+
+            def _sum_set_from_review(text: str) -> None:
+                """t168u: 生成查看里选了某个摘要：写进摘要框和 summary，并保存。"""
+                _sum_state["edited"] = False
+                _sum_state["dirty"] = False
+                _sum_show(text)
+                video_detail["summary"] = text
+                _sum_status("已从生成查看选定并保存。", "#0a6b0a")
+                try:
+                    self._persist_video_detail_story(video_detail, parent=dlg)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 摘要没有保存:{exc}")
+
+            scene_ui["summary_set"] = _sum_set_from_review
             if callable(scene_ui.get("sync_scene_json_height")):
                 scene_ui["sync_scene_json_height"]()  # 打开时就在分析报告页：直接 25 行
 
@@ -2609,6 +2623,16 @@ class SceneEditorImpl:
 
                     def _on_smart_saved():
                         """场景生成成功并保存之后：照旧 on_saved，再自动打开项目名称建议。"""
+                        try:  # t168u: 这一次的场景追加进生成历史
+                            from gui.dl import gen_history
+                            _sc = video_detail.get("scene_content")
+                            gen_history.record(
+                                video_detail, "scene_sets",
+                                gen_history.display_backend(scene_ui.get("last_text_backend") or "?"),
+                                _sc if isinstance(_sc, list) else [],
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"⚠️ 场景没有记进历史:{exc}")
                         if callable(on_saved):
                             on_saved()
                         sync_cast = scene_ui.get("sync_cast_from_scenes")
@@ -2889,6 +2913,7 @@ class SceneEditorImpl:
                         )
                         if not backend:
                             return  # 取消 / Esc
+                        scene_ui["last_text_backend"] = backend
                         self._run_scene_smart_generate_async(
                             dlg,
                             video_detail,
@@ -2997,6 +3022,41 @@ class SceneEditorImpl:
                     program_btn.pack(side=tk.LEFT, padx=(0, 6), after=_smart_sep)
                     smart_btn.pack(side=tk.LEFT, padx=(0, 6), after=program_btn)
 
+                    def _on_gen_review() -> None:
+                        """t168u: 生成查看：三步看历史的 名字 / 摘要 / 场景，各选一个。"""
+                        from gui.dl.gen_review import open_gen_review
+
+                        def _scenes_pick(scenes: list) -> None:
+                            try:
+                                tx.delete("1.0", tk.END)
+                                tx.insert("1.0", json.dumps(scenes, ensure_ascii=False, indent=2))
+                            except tk.TclError as exc:
+                                return False, str(exc)
+                            ok, msg = on_persist_keep_open()  # 与手改 JSON 后保存同一路径
+                            print(("✅ " if ok else "⚠️ ") + f"生成查看选定场景：{msg}")
+                            return ok, msg
+
+                        tv = scene_ui.get("title_var")
+                        sc_now = _parse_scene_json_list(tx.get("1.0", tk.END) or "") or []
+                        open_gen_review(
+                            dlg, video_detail,
+                            current_title=((tv.get() if tv is not None else "") or "").strip(),
+                            current_summary=str(video_detail.get("summary") or ""),
+                            current_scenes=sc_now,
+                            on_title=scene_ui.get("title_apply"),
+                            on_summary=scene_ui.get("summary_set"),
+                            on_scenes=_scenes_pick,
+                        )
+
+                    review_btn = ttk.Button(
+                        scene_ui["prompt_combo"].master,
+                        text="生成查看",
+                        command=_on_gen_review,
+                        style=smart_style,
+                        width=8,
+                    )
+                    review_btn.pack(side=tk.LEFT, padx=(0, 6), after=smart_btn)
+
                     # t112u: 「生成摘要」按钮去掉,场景生成后自动生成(见 _on_smart_saved)。
                     if callable(on_save_story):
                         title_host = scene_ui["prompt_row"]
@@ -3027,23 +3087,34 @@ class SceneEditorImpl:
                                 return
 
                             def _chosen(name: str) -> None:
-                                # 名称栏 → 外层 title；有项目时也改 project_profile.video_title（标题栏显示的就是它）
-                                # t110u: 记下选定的名称(没项目时存 project_title,创建项目时就用它)
-                                project_manager.apply_project_name_to_row(video_detail, name)
-                                _var.set(name)
-                                on_save_story()
-                                cfg = project_manager.PROJECT_CONFIG
-                                if isinstance(cfg, dict) and (cfg.get("pid") or "") and (
-                                    cfg.get("pid") == project_manager.list_json_row_workflow_pid(video_detail)
-                                ):
-                                    cfg["video_title"] = name  # 同一项目开着时，以后保存项目配置不会改回旧名
+                                _apply_title(name, _var)
+
+                            def _record_titles(names: list) -> None:
+                                from gui.dl import gen_history
+                                gen_history.record(video_detail, "titles", "Strata", names)  # 名称建议固定走本机 Strata
 
                             ask_project_title(
                                 dlg, current=(_var.get() or "").strip(), scenes=scenes_now,
                                 on_chosen=_chosen, source_text=text,
+                                summary=str(video_detail.get("summary") or ""),
+                                on_titles=_record_titles,
                             )
 
+                        def _apply_title(name: str, _var=title_var) -> None:
+                            # 名称栏 → 外层 title；有项目时也改 project_profile.video_title（标题栏显示的就是它）
+                            # t110u: 记下选定的名称(没项目时存 project_title,创建项目时就用它)
+                            project_manager.apply_project_name_to_row(video_detail, name)
+                            _var.set(name)
+                            on_save_story()
+                            cfg = project_manager.PROJECT_CONFIG
+                            if isinstance(cfg, dict) and (cfg.get("pid") or "") and (
+                                cfg.get("pid") == project_manager.list_json_row_workflow_pid(video_detail)
+                            ):
+                                cfg["video_title"] = name  # 同一项目开着时，以后保存项目配置不会改回旧名
+
                         scene_ui["offer_title_suggest"] = _offer_title_suggestions
+                        scene_ui["title_apply"] = _apply_title
+                        scene_ui["title_var"] = title_var
                     # 第 3 行：生成摘要 → 空一段 → 重新生成项目 → 保存（保存放最后）。
                     if callable(on_save_story):
                         ttk.Frame(scene_ui["smart_slot"], width=28).pack(side=tk.LEFT)

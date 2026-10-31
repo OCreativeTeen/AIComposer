@@ -504,7 +504,9 @@ class FfmpegProcessor:
             need_time_cut = (start_time > 0 or end_time < duration)
             need_speed = abs(speed - 1.0) > 0.001
 
-            if not need_time_cut and not need_speed and volume == 1.0:
+            # t177u: 整段、不变速时也要是标准帧率；MiniMax 等 24fps 原片直接拷贝进项目会和 60fps 的轨道错位（播放加速 / 末尾定格）。
+            same_fps = (self.get_video_fps(video_path) or 0) == STANDARD_FPS
+            if not need_time_cut and not need_speed and volume == 1.0 and same_fps:
                 output_path = config.get_temp_file(self.pid, "mp4")
                 shutil.copy2(video_path, output_path)
                 print(f"📋 No changes needed, copying file: {os.path.basename(video_path)}")

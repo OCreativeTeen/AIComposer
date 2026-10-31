@@ -215,6 +215,27 @@ class _ClipTrim:
         self.speed = 1.0
 
 
+def snap_to_frame(t: float, c) -> float:
+    """时间吸到帧：最多到最后一帧的起点 (frame_count-1)/fps（对话框的 _snap_time 也用它）。"""
+    t = max(0.0, min(float(t), c.duration))
+    frame = int(round(t * c.fps))
+    frame = max(0, min(frame, c.frame_count - 1))
+    return frame / c.fps
+
+
+def default_video_range(path: str) -> tuple:
+    """t179u: 刚打开导入视频、选中这个文件、不动起止时，「确定」交出去的区间 (start, end)。
+    和 _on_confirm → _save_trim 一样：终点吸到最后一帧的起点（例如 158 帧 24fps：6.583 → 6.542，显示 6.5）。"""
+    c = _ClipTrim(path)
+    s = snap_to_frame(c.start, c)
+    e = snap_to_frame(c.end, c)
+    if e < s + _PREVIEW_MIN_CLIP_SEC:
+        e = snap_to_frame(s + _PREVIEW_MIN_CLIP_SEC, c)
+    start = max(0.0, min(s, c.duration - _PREVIEW_MIN_CLIP_SEC))
+    end = max(start + _PREVIEW_MIN_CLIP_SEC, min(e, c.duration))
+    return start, end
+
+
 def ask_mp4_pick_with_trim_preview(
     title: str,
     choices: list,
@@ -652,10 +673,7 @@ def ask_mp4_pick_with_trim_preview(
         c = _ui_clip() if c is None else c
         if c is None:
             return max(0.0, float(t))
-        t = max(0.0, min(float(t), c.duration))
-        frame = int(round(t * c.fps))
-        frame = max(0, min(frame, c.frame_count - 1))
-        return frame / c.fps
+        return snap_to_frame(t, c)
 
     def _save_trim() -> None:
         c = _ui_clip()

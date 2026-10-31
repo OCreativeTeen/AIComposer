@@ -246,6 +246,7 @@ class TracksMixin:
         track_status: str,
         share_episode: bool | None = None,
         mix_volume: float = 0.5,
+        on_done=None,
     ):
         """在后台线程执行 ``video_simple_replacement``（内含 resize、混音等密集 FFmpeg），避免主界面假死。"""
         if share_episode is None:
@@ -266,6 +267,9 @@ class TracksMixin:
                 except tk.TclError:
                     pass
                 if err:
+                    if on_done:  # t179u: 全集提交自动导入：不弹窗，交回调
+                        on_done(False, f"替换失败：{err}")
+                        return
                     messagebox.showerror("错误", f"视频处理失败：{err}", parent=self.root)
                 else:
                     scene[track + "_status"] = track_status
@@ -278,6 +282,8 @@ class TracksMixin:
                         show_auto_close_popup(self.root, "Zero", f"已写入这一集的 {n} 个场景。")
                     elif track == "zero":
                         show_auto_close_popup(self.root, "Zero", "已写入这一场的 Zero。")
+                    if on_done:
+                        on_done(True, "")
 
             try:
                 self.root.after(0, done)

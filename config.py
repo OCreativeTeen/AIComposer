@@ -292,7 +292,7 @@ _DIALOGUE_MODE_PROMPTS = {
     ** This block overrides every host, actor, and speaking rule written above.
     ** There is no voiceover field.
     ** speaking is the whole conversation. <N> is the Nth person in actor, from 1, in the written order. Only one 讲员. actor holds at most four people, and 讲员 counts as one of them. At most three people speak. The fourth only appears and has no line. Never write <4>.
-    ** The same person keeps speaking until the next <N>. People may answer each other many times in one scene.
+    ** The same person keeps speaking until the next <N>. Keep it short: at most 3 speaker changes, each person at most twice, about 10 seconds in total.
     ** Example: "<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。"
     ** Most scenes hold one story person and the third-party narrator (讲员) together. List them in the order they should be numbered.
     ** A few scenes may be two story people talking, with no 讲员 in that scene.
@@ -303,8 +303,8 @@ _DIALOGUE_MODE_PROMPTS = {
     ** This block overrides every host, actor, and speaking rule written above.
     ** There is no voiceover field.
     ** speaking is the whole conversation. <N> is the Nth person in actor, from 1, in the written order. Only one 讲员. actor holds at most four people, and 讲员 counts as one of them. At most three people speak. The fourth only appears and has no line. Never write <4>.
-    ** The same person keeps speaking until the next <N>. Two or three people may trade lines many times inside one scene.
-    ** Example: "<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx。"
+    ** The same person keeps speaking until the next <N>. Usually two people; at most 3 speaker changes, each person at most twice, about 10 seconds in total.
+    ** Example: "<1> xxx。<2> xxx, xxx。<1> xxx。" The same person keeps the same number in every scene.
     ** Most scenes are two story people talking. Those scenes have no 讲员.
     ** A minority of scenes may be carried by the third-party narrator. Narrator alone: actor is exactly 讲员 plus the host look already named in this prompt, and speaking uses <1>.
     ** One story person plus the narrator: list both, in the order their <N> numbers should follow.
@@ -325,8 +325,8 @@ _DIALOGUE_MODE_PROMPTS = {
     ** This block overrides every host, actor, and speaking rule written above.
     ** There is no voiceover field. Do not write 讲员.
     ** speaking is the whole conversation. <N> is the Nth 人物 in actor, from 1. actor holds at most four 人物. At most three of them speak. The fourth only appears and has no line. Never write <4>.
-    ** The same person keeps speaking until the next <N>. They may answer each other many times in one scene.
-    ** Example: "<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。"
+    ** The same person keeps speaking until the next <N>. Keep it short: at most 3 speaker changes, each person at most twice, about 10 seconds in total.
+    ** Example: "<1> xxx。<2> xxx, xxx。<1> xxx。"
     ** One story person: that person says the whole speaking, as <1> or with no marker.
 """,
 }
@@ -943,6 +943,8 @@ SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
 COMFYUI_VIDEO_URL = _env("COMFYUI_VIDEO_URL", "http://192.168.1.36:8188")
 # t156u: MiniMax H3 分辨率分档（长边x短边，都要是 32 的倍数；方向按 16:9 / 9:16 自动换）。
 #   有场景音频，或时长 > 10 秒（15 秒）→ SMALL；≤ 6 秒且没有音频 → XLARGE（t157u）；其余（10 秒）→ LARGE。
+# t162u: 单画面时把起始图也接到 last_frame，锁住光线 / 环境（动作会更少）。设 1 打开。
+MINIMAX_LOCK_LAST_FRAME = _env("MINIMAX_LOCK_LAST_FRAME", "0").lower() in ("1", "true", "yes", "on")
 MINIMAX_SIZE_XLARGE = _env("MINIMAX_SIZE_XLARGE", "1280x704")
 MINIMAX_SIZE_LARGE = _env("MINIMAX_SIZE_LARGE", "1024x576")
 MINIMAX_SIZE_SMALL = _env("MINIMAX_SIZE_SMALL", "832x480")
