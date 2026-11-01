@@ -1575,7 +1575,8 @@ class LLMApi:
         _bk_key = "image_backend" if win_mode == "image" else "video_backend"
         video_backend_var = tk.StringVar(
             master=dialog,
-            value=(lambda b: b if b in ("gemini", "minimax") else "grok")(str(extra_params.get(_bk_key) or "").strip().lower()),
+            value=(lambda b: b if b == "gemini" else (__import__("config").minimax_variant_key(b) or "grok"))(
+                str(extra_params.get(_bk_key) or "").strip().lower()),
         )
         backend_radios = []
         if not manual_only:
@@ -1584,7 +1585,9 @@ class LLMApi:
             ttk.Label(vb_row, text=("图片生成：" if win_mode == "image" else "视频生成：")).pack(side=tk.LEFT)
             _bk_opts = (("grok", "Grok"), ("gemini", "Gemini"))
             if cli_kind == "video":
-                _bk_opts += (("minimax", "MiniMax"),)  # t152u: ComfyUI MiniMax H3（config.COMFYUI_VIDEO_URL）
+                import config as _cfgv  # t188u: 两台 ComfyUI：MiniMax 3090 / MiniMax 5070
+
+                _bk_opts += tuple((k, v["label"]) for k, v in _cfgv.MINIMAX_VARIANTS.items())
             for _v, _t in _bk_opts:
                 _rb = ttk.Radiobutton(vb_row, text=_t, value=_v, variable=video_backend_var)
                 _rb.pack(side=tk.LEFT, padx=(0, 4))
@@ -1716,7 +1719,7 @@ class LLMApi:
                     elif cli_kind == "video":
                         if not image_path:
                             raise RuntimeError("生成视频需要一张起始图")
-                        if video_backend == "minimax":
+                        if str(video_backend).startswith("minimax"):
                             # t152u: 另一台机器上的 ComfyUI 跑 MiniMax H3：同样的提示词 + 起始图；长边 1024，按方向；
                             # 每次（含重试）新的随机 seed。下载到和 Grok / Gemini 视频同一个目录，交给同一个「完成」流程。
                             from . import sd_image_processor as _sdp
@@ -1740,7 +1743,8 @@ class LLMApi:
                             mp4 = _sdp.generate_video_comfy(
                                 image_path, prompt, _secs, _w, _h,
                                 output_path=os.path.join(_dest, time.strftime("minimax_h3_%Y%m%d_%H%M%S.mp4")),
-                                server=getattr(_cfg, "COMFYUI_VIDEO_URL", None), status=_cli_set_status,
+                                server=_cfg.minimax_variant(video_backend)["url"], status=_cli_set_status,
+                                workflow_path=_cfg.minimax_variant(video_backend)["workflow"],
                                 audio_path=_audio, last_image_path=_last,
                             )
                         elif video_backend == "gemini":

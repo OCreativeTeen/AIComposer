@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import config as _cfg_mm  # t188u: is_minimax（MiniMax 3090 / 5070）
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -450,7 +451,7 @@ def open_video_prompt_dialog(
                 prompt = block + "\n\n" + prompt
         # t163u: 三个后端同一份提示词。要点放最前（OUTPUT FORMAT 之后），结尾再强调一次画面干净和光线。
         _scene_audio = bool(get_image("clip_audio")) if get_image is not None else False  # t172u: 每一场自己判断
-        _amode = audio_mode_var.get() if (backend == "minimax" and _scene_audio) else "none"
+        _amode = audio_mode_var.get() if (_cfg_mm.is_minimax(backend) and _scene_audio) else "none"
         _tr = transition if is_transition else None
         _start = images[0] if images else ""
         guard = config_prompt.video_guard_block(scenes, _tr, _start, audio_mode=_amode)
@@ -464,7 +465,7 @@ def open_video_prompt_dialog(
                 "Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).",
                 "Sound: the given song.")
         prompt = prompt + "\n\n" + config_prompt.video_closing_block(scenes, _tr, _start)
-        if backend == "minimax":
+        if _cfg_mm.is_minimax(backend):
             # t165u: 提交给 MiniMax 时把同样的场景内容换成 H3 官方格式（窗口里显示的就是实际发送的）
             _secs = float(str(duration_var.get()).rstrip("sS") or 6)
             try:
@@ -500,7 +501,7 @@ def open_video_prompt_dialog(
             "orientation": "portrait" if _size == "1080x1920" else "landscape",
             "frames": frames,  # t155u: MiniMax 用：two 时第二张图是结束图
         }
-        if backend == "minimax" and get_image is not None and _amode in ("talk", "sing"):
+        if _cfg_mm.is_minimax(backend) and get_image is not None and _amode in ("talk", "sing"):
             # t155u/t163u: 只有 MiniMax 且选了「作为说话 / 作为唱歌」才把当前场景音频送去对口型
             extra["scene_audio"] = get_image("clip_audio") or ""
             extra["audio_mode"] = _amode
@@ -608,14 +609,22 @@ def open_video_prompt_dialog(
         _last_submit = dict(_cfg_prefs.load_yt_tools_prefs().get("video_submit_choice") or {})
     except Exception:  # noqa: BLE001
         _last_submit = {}
-    _backends = ("grok", "gemini", "minimax")
-    _saved_backend = _sv.get("backend") if _sv.get("backend") in _backends else _last_submit.get("llm")
+    _backends = ("grok", "gemini") + tuple(_cfg_prefs.MINIMAX_VARIANTS)
+
+    def _norm_backend(b):  # t188u: 旧的「minimax」→ MiniMax 5070
+        b = str(b or "").strip().lower()
+        return _cfg_prefs.minimax_variant_key(b) or b
+
+    _saved_backend = _norm_backend(_sv.get("backend"))
+    if _saved_backend not in _backends:
+        _saved_backend = _norm_backend(_last_submit.get("llm"))
     backend_var = tk.StringVar(master=dlg, value=_saved_backend if _saved_backend in _backends else "grok")
     _has_audio = bool(get_image("clip_audio")) if get_image is not None else False
     audio_mode_var = tk.StringVar(master=dlg, value=_sv.get("audio_mode") if _sv.get("audio_mode") in ("none", "talk", "sing") else "talk")
     backend_box = ttk.LabelFrame(actions, text="生成", padding=(8, 4))
     backend_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
-    for value, label in (("grok", "Grok"), ("gemini", "Gemini"), ("minimax", "MiniMax（ComfyUI）")):
+    for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + tuple(
+            (k, v["label"]) for k, v in _cfg_prefs.MINIMAX_VARIANTS.items()):
         ttk.Radiobutton(backend_box, text=label, value=value, variable=backend_var).pack(anchor=tk.W)
     audio_box = ttk.LabelFrame(actions, text="场景音频" + ("" if _has_audio else "（这一场没有音频）"), padding=(8, 4))
     audio_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
@@ -630,7 +639,7 @@ def open_video_prompt_dialog(
     ttk.Checkbutton(backend_box, text="Strata 精简提示词", variable=polish_var).pack(anchor=tk.W, pady=(4, 0))
 
     def _sync_backend(*_a) -> None:
-        mm = backend_var.get() == "minimax"
+        mm = _cfg_prefs.is_minimax(backend_var.get())
         for rb in audio_radios:  # 只有 MiniMax 且这一场有音频才能选（选的值照样记着）
             rb.state(["!disabled"] if (mm and _has_audio) else ["disabled"])
         with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing")
@@ -647,13 +656,13 @@ def open_video_prompt_dialog(
         from gui.picture_prompt_dialog import ask_llm_and_account
 
         backend = backend_var.get()
-        if backend == "minimax":
+        if _cfg_prefs.is_minimax(backend):
             try:
-                _cfg_prefs.save_yt_tools_prefs({"video_submit_choice": {"llm": "minimax",
+                _cfg_prefs.save_yt_tools_prefs({"video_submit_choice": {"llm": backend,
                                                                         "account": _last_submit.get("account") or ""}})
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 提交选择没有记下：{exc}")
-            on_go("minimax", "")
+            on_go(backend, "")
             return
         picked = ask_llm_and_account(
             dlg, pref_key="video_submit_choice", title=("Grok" if backend == "grok" else "Gemini") + " 提交",
@@ -693,7 +702,7 @@ def open_video_prompt_dialog(
             return
         backend = backend_var.get()
         account = ""
-        if backend != "minimax":
+        if not _cfg_prefs.is_minimax(backend):
             picked = ask_llm_and_account(
                 dlg, pref_key="video_submit_choice",
                 title=("Grok" if backend == "grok" else "Gemini") + " 全集提交", fixed_backend=backend,

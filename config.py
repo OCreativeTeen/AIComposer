@@ -941,6 +941,36 @@ COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placehold
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
 # t148u: MiniMax H3 图生视频的 ComfyUI（192.168.1.36，启动要加 --listen 0.0.0.0）
 COMFYUI_VIDEO_URL = _env("COMFYUI_VIDEO_URL", "http://192.168.1.36:8188")
+# t188u: 两台 ComfyUI 跑 MiniMax H3：RTX 3090（192.168.1.36）和 RTX 5070（192.168.1.185），各用自己的工作流。
+# 地址可用 COMFYUI_VIDEO_URL_3090 / COMFYUI_VIDEO_URL_5070 覆盖（3090 没设时沿用 COMFYUI_VIDEO_URL）。
+MINIMAX_VARIANTS = {
+    "minimax_3090": {"label": "MiniMax 3090", "url": _env("COMFYUI_VIDEO_URL_3090", COMFYUI_VIDEO_URL),
+                     "workflow": "MiniMax_H3_api_3090.json"},
+    "minimax_5070": {"label": "MiniMax 5070", "url": _env("COMFYUI_VIDEO_URL_5070", "http://192.168.1.185:8188"),
+                     "workflow": "MiniMax_H3_api_5070.json"},
+}
+MINIMAX_DEFAULT_VARIANT = "minimax_5070"  # 旧的「minimax」（工作流已改名为 _5070）
+
+
+def is_minimax(backend) -> bool:
+    return str(backend or "").strip().lower().startswith("minimax")
+
+
+def minimax_variant_key(backend) -> str:
+    """'minimax' / 不认识的 minimax_* → 默认 5070；不是 MiniMax 返回 ''。"""
+    b = str(backend or "").strip().lower()
+    if not b.startswith("minimax"):
+        return ""
+    return b if b in MINIMAX_VARIANTS else MINIMAX_DEFAULT_VARIANT
+
+
+def minimax_variant(backend) -> dict:
+    """{'key', 'label', 'url', 'workflow'(绝对路径)}。"""
+    key = minimax_variant_key(backend) or MINIMAX_DEFAULT_VARIANT
+    v = dict(MINIMAX_VARIANTS[key])
+    v["key"] = key
+    v["workflow"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflow", v["workflow"])
+    return v
 # t156u: MiniMax H3 分辨率分档（长边x短边，都要是 32 的倍数；方向按 16:9 / 9:16 自动换）。
 #   有场景音频，或时长 > 10 秒（15 秒）→ SMALL；≤ 6 秒且没有音频 → XLARGE（t157u）；其余（10 秒）→ LARGE。
 # t162u: 单画面时把起始图也接到 last_frame，锁住光线 / 环境（动作会更少）。设 1 打开。

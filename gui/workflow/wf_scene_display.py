@@ -1,4 +1,5 @@
 """SceneDisplayMixin: methods moved verbatim from GUI_wf.py:WorkflowGUI."""
+import os
 import tkinter as tk
 import tkinter.messagebox as messagebox
 import time
@@ -198,11 +199,28 @@ class SceneDisplayMixin:
         prompt_tpl = remix_system_prompt or config_prompt.SPEAKING_CONCISE_PROMPT
         system_prompt = prompt_tpl.format(language=lang_label)
 
-        def _remix(t: str) -> str:
+        def _remix_text(t: str) -> str:
             out = self.llm_api_local.generate_text(
                 system_prompt, (t or "").strip()
             )
             return config.chinese_convert(out, lang)
+
+        def _remix(t: str) -> str:
+            if text_field != "visual" or remix_system_prompt:
+                return _remix_text(t)
+            # t187u: 视觉：带上这一场的起始图让 Strata 看图改写，去掉和画面冲突的动作；不行就退回纯文字
+            try:
+                from utility.file_util import get_file_path
+                from utility.visual_remix import remix_visual_with_image
+
+                image = get_file_path(scene, "clip_image")
+                names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
+                out = remix_visual_with_image(t, image, names=names, language_label=lang_label)
+                print(f"🖼 视觉 Remix：带起始图 {os.path.basename(image)} 交给 Strata 看图改写")
+                return config.chinese_convert(out, lang)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 视觉 Remix 看图失败，改用纯文字：{exc}")
+                return _remix_text(t)
 
         confirmed = ask_speaking_concise_review_dialog(
             self.root,

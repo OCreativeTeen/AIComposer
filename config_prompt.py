@@ -1613,6 +1613,100 @@ def flow_caption_rule(text: str) -> str:
     return "Keep any words already drawn in the picture. They stay part of the picture. Do not add a new caption."
 
 
+# t181u: 「把电脑转向 David」之类：方向写死在场景里，不要转向镜头 / 观众。
+_FACING_VERBS = (r"轉向|转向|面向|朝向|轉給|转给|遞給|递给|遞向|递向|推向|推給|推给|拿給|拿给|指給|指给|給|给"
+                 r"|toward|towards|faces|facing")
+IN_SCENE_FACING_MARK = "not toward the camera"
+NO_FOURTH_WALL_LINE = ("Everyone stays inside the scene: they look at each other or at what they are doing, and nothing "
+                       "is held up, turned or shown to the camera or the viewer.")
+
+
+_NUM_WORDS = {1: "1 person", 2: "2 people", 3: "3 people", 4: "4 people"}
+
+
+def cast_lock_lines(names) -> list:
+    """t182u: 人数锁：视频里正好这几个人，不加人、不复制；换姿势 / 位置都是同一个人自己走过去。"""
+    names = [str(n or "").strip() for n in (names or []) if str(n or "").strip()]
+    names = list(dict.fromkeys(names))
+    if not names:
+        return []
+    n = len(names)
+    who = names[0] if n == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    count = _NUM_WORDS.get(n, f"{n} people")
+    return [
+        f"Exactly {count} in the whole video, {who}: no one else appears, no one is duplicated, "
+        "and each person appears only once.",
+        "Any change of pose or place in the description, such as sitting down, standing up or walking to the window, "
+        "is made by that same person moving continuously from where they are in the start picture, never by a second copy.",
+    ]
+
+
+_POSE_PLACES = (("窗", "the window"), ("書架", "the bookshelf"), ("书架", "the bookshelf"), ("門口", "the door"),
+                ("门口", "the door"), ("門邊", "the door"), ("门边", "the door"), ("沙發", "the sofa"), ("沙发", "the sofa"),
+                ("床", "the bed"), ("椅子", "a chair"), ("椅", "a chair"), ("書桌", "the desk"), ("书桌", "the desk"),
+                ("桌", "the table"), ("牆", "the wall"), ("墙", "the wall"), ("陽台", "the balcony"), ("阳台", "the balcony"))
+
+
+def _pose_place(clause: str) -> str:
+    for key, en in _POSE_PLACES:
+        if key in clause:
+            return en
+    return ""
+
+
+def _pose_move(clause: str) -> str:
+    """一个小句里的姿势 / 位置变化 → 英文动作；没有返回空。"""
+    place = _pose_place(clause)
+    if "坐" in clause:
+        return "walks over and sits down" + (f" on {place}" if place in ("a chair", "the sofa", "the bed") else
+                                             f" at {place}" if place else "")
+    if "站起" in clause:
+        return "stands up"
+    if "躺" in clause:
+        return "lies down" + (f" on {place}" if place else "")
+    if any(k in clause for k in ("走到", "走向", "走過去", "走过去", "走近", "來到", "来到")):
+        return f"walks over to {place}" if place else "takes a few steps to a new spot in the room"
+    return ""
+
+
+def pose_move_lines(visual: str, names) -> list:
+    """t182u: visual 里某人换姿势 / 位置（坐、站起、走到…）：写成「就是起始图里那个人自己走过去」，尽量写出去哪里。"""
+    out, done = [], set()
+    for clause in re.split(r"[。！？!?，,；;]", str(visual or "")):
+        for nm in [str(n or "").strip() for n in (names or [])]:
+            if not nm or nm in done or nm not in clause:
+                continue
+            move = _pose_move(clause)
+            if move:
+                out.append(f"{nm} {move}, the same person as in the start picture moving there, never a second copy.")
+                done.add(nm)
+    return out
+
+
+def facing_targets(visual: str, names) -> list:
+    """visual 里「转向 / 递给 / 面向 + 人名」的人名（按出现顺序、去重）。"""
+    text = str(visual or "")
+    out = []
+    for nm in [str(n or "").strip() for n in (names or [])]:
+        if nm and nm not in out and re.search(rf"(?:{_FACING_VERBS})\s*(?:the\s+)?{re.escape(nm)}", text, re.I):
+            out.append(nm)
+    return out
+
+
+def in_scene_direction_lines(visual: str, names) -> list:
+    """视频提示词用：每个被「转向 / 递给」的人一句明确方向；有人时再加一句不对镜头。"""
+    names = [str(n or "").strip() for n in (names or []) if str(n or "").strip()]
+    lines = []
+    for nm in facing_targets(visual, names):
+        lines.append(
+            f"Whatever is turned, shown or handed to {nm} turns sideways inside the scene toward {nm}, the other person "
+            f"in the scene, {IN_SCENE_FACING_MARK}: its screen or front faces {nm} and turns away from the viewer."
+        )
+    if names:
+        lines.append(NO_FOURTH_WALL_LINE)
+    return lines
+
+
 def video_caption_rule(text: str) -> str:
     """t172u: 视频用。「关键字作背景」时关键词已经在起始图里，视频只保持原样，不再画新字。"""
     if text == "keywords":
@@ -3710,6 +3804,20 @@ def _video_form_line(narrative: str) -> str:
     }.get(narrative, "")
 
 
+def _video_direction_lines(scenes: list, use_visual: bool) -> list:
+    """t181u: Grok / Gemini 视频：场景里的人名 + visual → 方向句（见 in_scene_direction_lines）。"""
+    names, vis = [], []
+    for s in scenes or []:
+        for r in _scene_speakers(s):
+            nm = _speaker_identity(r)[0]
+            if nm and nm not in names:
+                names.append(nm)
+        if use_visual:
+            vis.append(str(s.get("visual") or ""))
+    return (cast_lock_lines(names) + pose_move_lines(" ".join(vis), names)
+            + in_scene_direction_lines(" ".join(vis), names))  # t182u
+
+
 def _video_text_line(text: str, background: str, narrative: str) -> str:
     """说明文字（画面上的字），只写一次。t163u: 短、正面，少用 caption / text 这类词。"""
     if text == "erase":
@@ -4043,6 +4151,8 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                     + " in the same place, preserving appearance, clothing, positions and the layout of the scene.")
     else:
         shot.append(f"The scene shown in {pic} stays the same place, preserving its layout, objects and colors.")
+    if rows:
+        shot += cast_lock_lines([_speaker_identity(r)[0] for r in rows])  # t182u
     visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip() if use_visual else ""
     vis_all = " ".join(str(s.get("visual") or "") for s in scs)
     if isinstance(transition, dict):
@@ -4053,6 +4163,8 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                 vis_all += " " + v
     if visual:
         shot.append(f"What happens: {visual.rstrip('。.')}.")
+        shot += pose_move_lines(visual, [_speaker_identity(r)[0] for r in rows])  # t182u
+        shot += in_scene_direction_lines(visual, [_speaker_identity(r)[0] for r in rows])  # t181u
     turns = _dialogue_turns(sc) if use_speaking else []
     story = str(sc.get("story_content") or "").strip()
     if not turns and use_speaking and story and project_manager.scene_is_story_act(sc):
@@ -4278,6 +4390,7 @@ def build_video_flow_prompt(
     instruction.append(_video_form_line(narrative))
     instruction += speech
     instruction += _video_people_lines(cast, frames, host_narrator, (actor_override or "").strip(), narrative)
+    instruction += _video_direction_lines(scenes, use_visual)  # t181u
     instruction.append(_video_text_line(text, background, narrative))
     instruction.append(_video_camera_short(camera))
     instruction.append("Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).")
@@ -4418,6 +4531,7 @@ def build_transition_video_prompt(
     if not silent:
         instruction += speech
     instruction += _video_people_lines(cast, "two", host_narrator, (actor_override or "").strip(), narrative)
+    instruction += _video_direction_lines(scenes, use_visual)  # t181u
     instruction.append(_video_text_line(text, "none", narrative))
     if str(chosen.get("对白") or "").strip() != "不说话":
         instruction.append("Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).")
@@ -6411,6 +6525,8 @@ SCENE_SPEAKER_ID_RULE = """
     ** Every later scene: the same person keeps the same number and the same description (gender / age / ethnicity / name), even when they speak first, so scene 2 may open with <2>.
     ** Only a genuinely new, different person gets the next unused number (人物3 ...). Keep a small fixed cast: a friend or family member who returns is the same 人物N as before.
     ** actor lists the people in that scene in number order (人物1 before 人物2), with the same 人物N as in speaking.
+*** 画面动作（visual）：一场大约 10 秒的对话，人物最多只做一个大的位置变化（例如走过去坐下），其余是表情和小动作；只写 actor 里的人，不另加人。
+    ** Visual: a ~10 s dialogue scene has at most one big change of position (e.g. walking over and sitting down); the rest is expression and small gestures. Only the people in actor appear; add nobody else.
 """
 
 

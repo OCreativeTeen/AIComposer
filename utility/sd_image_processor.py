@@ -749,7 +749,7 @@ call venv\\Scripts\\activate.bat
 # t155u: 可选 last_frame（结束图，新加 LoadImage）；可选配音：LoadAudio → PixaromaH3AudioSync（插在模型/latent 和
 #   采样之间，用工作流里的音频 VAE），把真实录音放进 H3 的声音部分、画面跟着对口型；CreateVideo 用它输出的音轨。
 MINIMAX_H3_API_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                       "workflow", "MiniMax_H3_api.json")
+                                       "workflow", "MiniMax_H3_api_5070.json")  # t188u: 默认 5070；按选项传 workflow_path
 MINIMAX_H3_FPS = 24
 
 
@@ -892,7 +892,7 @@ def crop_to_aspect(image_path: str, width: int, height: int, out_path: str) -> s
 def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: int, height: int,
                          negative=None, seed=None, fps=None, output_path=None, server=None,
                          timeout_s: float = 3600.0, status=None, crop: bool = True,
-                         audio_path=None, last_image_path=None) -> str:
+                         audio_path=None, last_image_path=None, workflow_path=None) -> str:
     """ComfyUI（MiniMax H3）图生视频：上传起始图 → POST /prompt → 轮询 /history → /view 下载 mp4。返回本地路径。
     server 默认 config.COMFYUI_VIDEO_URL；宽高要是 32 的倍数；seed 不给就随机。"""
     import random
@@ -912,7 +912,9 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         raise RuntimeError("没有设置 ComfyUI 地址（config.COMFYUI_VIDEO_URL）")
     if not (image_path and os.path.isfile(image_path)):
         raise FileNotFoundError(f"起始图不存在：{image_path}")
-    with open(MINIMAX_H3_API_WORKFLOW, encoding="utf-8-sig") as f:
+    wf_file = workflow_path or MINIMAX_H3_API_WORKFLOW
+    say(f"ComfyUI {base} · 工作流 {os.path.basename(wf_file)}")
+    with open(wf_file, encoding="utf-8-sig") as f:
         workflow = json.load(f)
     seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
