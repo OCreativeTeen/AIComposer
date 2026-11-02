@@ -423,6 +423,12 @@ def _build_notebooklm_prompt_for_row(
     setting_block = _story_setting_block(video_detail)
     if setting_block:
         prompt = (prompt or "").rstrip() + "\n\n" + setting_block + "\n"
+    # t191u: 故事舞台（红楼梦、水浒传……）：概要 + 用书里的人物和情节来讲；不限 = 不加
+    from utility import story_stage as _story_stage
+
+    stage_block = _story_stage.full_block(_story_stage.info_from(video_detail))
+    if stage_block:
+        prompt = (prompt or "").rstrip() + "\n\n" + stage_block + "\n"
     style_block = config_channel.visual_style_prompt_block(visual_style)
     if style_block and (visual_style or "").strip().lower() not in (prompt or "").lower():
         prompt = (prompt or "").rstrip() + "\n\n" + style_block + "\n"

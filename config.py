@@ -351,12 +351,12 @@ _CHARACTER_PERSON_OPTIONS_FALLBACK = [
     "",
     "woman/mature/chinese",
     "man/mature/chinese",
-    "woman/young/chinese",
-    "man/young/chinese",
+    "woman/youth/chinese",
+    "man/youth/chinese",
     "woman/mature/english",
     "man/mature/english",
-    "woman/young/english",
-    "man/young/english",
+    "woman/youth/english",
+    "man/youth/english",
     "woman/grok/chinese",
     "man/grok/chinese",
     "woman/grok/english",
@@ -935,21 +935,36 @@ def _env_list(name: str, default: str, sep: str = ",") -> list:
 # 本机 Strata（OpenAI 兼容）
 STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.227:8080/v1")
 # Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
-VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://192.168.1.30:17493")
+VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://127.0.0.1:17493")  # t195u: Voicebox 装在本机（原来在 192.168.1.30）
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
 COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placeholder
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
 # t148u: MiniMax H3 图生视频的 ComfyUI（192.168.1.36，启动要加 --listen 0.0.0.0）
 COMFYUI_VIDEO_URL = _env("COMFYUI_VIDEO_URL", "http://192.168.1.36:8188")
-# t188u: 两台 ComfyUI 跑 MiniMax H3：RTX 3090（192.168.1.36）和 RTX 5070（192.168.1.185），各用自己的工作流。
-# 地址可用 COMFYUI_VIDEO_URL_3090 / COMFYUI_VIDEO_URL_5070 覆盖（3090 没设时沿用 COMFYUI_VIDEO_URL）。
+# t194u: 两台 ComfyUI 跑 MiniMax H3：RTX 5070 Ti（192.168.1.36，原 3090 换掉了）和 RTX 5060（192.168.1.30）。
+# 地址可用 COMFYUI_VIDEO_URL_5070TI / COMFYUI_VIDEO_URL_5060 覆盖。旧的 COMFYUI_VIDEO_URL_3090 / _5070 不再读
+# （_5070 原来指向已经撤掉的 .185）。
+# workflow：每个选项用哪个 workflow/ 下的工作流。两台都是 Blackwell → 都用 _5070.json（nvfp4、exact_low_vram）；
+# MiniMax_H3_api_3090.json 留在仓库里，现在没有选项用它。
 MINIMAX_VARIANTS = {
-    "minimax_3090": {"label": "MiniMax 3090", "url": _env("COMFYUI_VIDEO_URL_3090", COMFYUI_VIDEO_URL),
-                     "workflow": "MiniMax_H3_api_3090.json"},
-    "minimax_5070": {"label": "MiniMax 5070", "url": _env("COMFYUI_VIDEO_URL_5070", "http://192.168.1.185:8188"),
+    "minimax_5070ti": {"label": "MiniMax 5070Ti", "url": _env("COMFYUI_VIDEO_URL_5070TI", "http://192.168.1.36:8188"),
+                       "workflow": "MiniMax_H3_api_5070.json"},
+    "minimax_5060": {"label": "MiniMax 5060", "url": _env("COMFYUI_VIDEO_URL_5060", "http://192.168.1.30:8188"),
                      "workflow": "MiniMax_H3_api_5070.json"},
 }
-MINIMAX_DEFAULT_VARIANT = "minimax_5070"  # 旧的「minimax」（工作流已改名为 _5070）
+# t194u: 旧的保存值 → 新键（.185 已撤，旧 minimax_5070 和 minimax_3090 都换成 .36 的 5070Ti）
+MINIMAX_LEGACY_KEYS = {"minimax": "minimax_5070ti", "minimax_3090": "minimax_5070ti", "minimax_5070": "minimax_5070ti"}
+# t190u: 「MiniMax 双机」：单场轮流挑空闲的一台，全集两台并行（utility/minimax_dual.py）
+MINIMAX_DUAL_KEY = "minimax_dual"
+MINIMAX_DUAL_LABEL = "MiniMax 双机"
+
+
+def minimax_backend_options() -> tuple:
+    """生成单选：MiniMax 5070Ti / MiniMax 5060 / MiniMax 双机。"""
+    return tuple((k, v["label"]) for k, v in MINIMAX_VARIANTS.items()) + ((MINIMAX_DUAL_KEY, MINIMAX_DUAL_LABEL),)
+
+
+MINIMAX_DEFAULT_VARIANT = "minimax_5070ti"  # t194u: 旧的「minimax」/ 不认识的 → 5070Ti（.36）
 
 
 def is_minimax(backend) -> bool:
@@ -957,21 +972,26 @@ def is_minimax(backend) -> bool:
 
 
 def minimax_variant_key(backend) -> str:
-    """'minimax' / 不认识的 minimax_* → 默认 5070；不是 MiniMax 返回 ''。"""
+    """'minimax' / 旧键 / 不认识的 minimax_* → 默认 5070Ti；不是 MiniMax 返回 ''。"""
     b = str(backend or "").strip().lower()
     if not b.startswith("minimax"):
         return ""
+    b = MINIMAX_LEGACY_KEYS.get(b, b)
+    if b == MINIMAX_DUAL_KEY:
+        return b
     return b if b in MINIMAX_VARIANTS else MINIMAX_DEFAULT_VARIANT
 
 
 def minimax_variant(backend) -> dict:
     """{'key', 'label', 'url', 'workflow'(绝对路径)}。"""
     key = minimax_variant_key(backend) or MINIMAX_DEFAULT_VARIANT
+    if key not in MINIMAX_VARIANTS:  # t190u: 双机要先挑好一台（utility.minimax_dual.pick_dual_server）
+        key = MINIMAX_DEFAULT_VARIANT
     v = dict(MINIMAX_VARIANTS[key])
     v["key"] = key
     v["workflow"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflow", v["workflow"])
     return v
-# t156u: MiniMax H3 分辨率分档（长边x短边，都要是 32 的倍数；方向按 16:9 / 9:16 自动换）。
+# t200u: 已不用（MiniMax 固定 1024x576 / 576x1024）。t156u: MiniMax H3 分辨率分档（长边x短边，都要是 32 的倍数；方向按 16:9 / 9:16 自动换）。
 #   有场景音频，或时长 > 10 秒（15 秒）→ SMALL；≤ 6 秒且没有音频 → XLARGE（t157u）；其余（10 秒）→ LARGE。
 # t162u: 单画面时把起始图也接到 last_frame，锁住光线 / 环境（动作会更少）。设 1 打开。
 MINIMAX_LOCK_LAST_FRAME = _env("MINIMAX_LOCK_LAST_FRAME", "0").lower() in ("1", "true", "yes", "on")

@@ -967,6 +967,30 @@ class FinalizePublishMixin:
         if era not in eras:
             era = eras[0] if eras else ""
         self.setting_era.set(era)
+        if callable(getattr(self, "_story_stage_sync", None)):
+            self._story_stage_sync()  # t191u
+
+    def _set_place_from_stage(self, region, era):
+        """t191u: 选了已知的故事舞台 → 地域 / 时代跟着设（还可以再改）。"""
+        self.setting_region.set(region)
+        eras = config_prompt.setting_era_labels(region)
+        self.setting_era["values"] = eras
+        self.setting_era.set(era if era in eras else (eras[0] if eras else ""))
+        self._save_project_look()
+
+    def _save_story_stage(self):
+        if isinstance(project_manager.PROJECT_CONFIG, dict):
+            save_project_config(parent=self.root)
+
+    def _story_stage_topic(self):
+        """t191u: 提炼舞台用的主题：视频标题 + 各场的标题 / 讲话（前 3000 字）。"""
+        pc = project_manager.PROJECT_CONFIG or {}
+        topic = str(pc.get("video_title") or pc.get("title") or "").strip()
+        parts = []
+        for sc in (getattr(getattr(self, "workflow", None), "scenes", None) or []):
+            if isinstance(sc, dict):
+                parts.append(" ".join(str(sc.get(k) or "").strip() for k in ("caption", "speaking") if sc.get(k)))
+        return topic, "\n".join(p for p in parts if p)[:3000], ""
 
     def _on_setting_region_selected(self, event=None):
         """换地域后，时代只保留这一地域里的项，并选中第一项。"""

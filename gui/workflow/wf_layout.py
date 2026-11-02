@@ -467,6 +467,17 @@ class LayoutMixin:
         ttk.Label(look_row1, text="时代").pack(side=tk.LEFT)
         self.setting_era = ttk.Combobox(look_row1, width=8, state="readonly")
         self.setting_era.pack(side=tk.LEFT, padx=(4, 0))
+        # t191u: 故事舞台（不限 / 红楼梦 / 水浒传 …，可以自己打字），存在项目配置里
+        from utility import story_stage as _story_stage
+
+        self.story_stage, self._story_stage_sync = _story_stage.build_controls(
+            look_row1,
+            get_owner=lambda: __import__("project_manager").PROJECT_CONFIG,
+            get_topic=self._story_stage_topic,
+            persist=self._save_story_stage,
+            set_place=self._set_place_from_stage,
+            get_place=lambda: ((self.setting_region.get() or "").strip(), (self.setting_era.get() or "").strip()),
+        )
         # 延长对所有场景生效（见 _on_extension_change），所以放在全场内容里。
         ttk.Label(look_row1, text="延长").pack(side=tk.LEFT, padx=(10, 0))
         self.extension_var = tk.StringVar(value="0")

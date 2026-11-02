@@ -1152,6 +1152,8 @@ class MediaGUIManager:
                 main_character="\n".join(x for x in (
                     _pnb.story_cast_summary(video_detail),
                     ("Setting: " + _pnb.story_setting_phrase(video_detail)) if _pnb.story_setting_phrase(video_detail) else "",
+                    __import__("utility.story_stage", fromlist=["short_line"]).short_line(  # t191u
+                        __import__("utility.story_stage", fromlist=["info_from"]).info_from(video_detail)),
                 ) if x),
             )
         if config_channel.is_scene_summary_image_label(lbl):
@@ -1162,7 +1164,10 @@ class MediaGUIManager:
             scenes = [s for s in (scenes or []) if isinstance(s, dict)] if isinstance(scenes, list) else []
             if not scenes:
                 return lbl, ""
-            return lbl, config_prompt.build_scene_summary_image_prompt(
+            from utility import story_stage as _story_stage  # t191u: 场景总图也加一句舞台
+
+            _stage_line = _story_stage.short_line(_story_stage.info_from(video_detail))
+            return lbl, (_stage_line + "\n\n" if _stage_line else "") + config_prompt.build_scene_summary_image_prompt(
                 scenes,
                 visual_style=str(params.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""),
                 host_narrator=_project_look_from_row(video_detail)[2],

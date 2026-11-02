@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import config as _cfg_mm  # t188u: is_minimax（MiniMax 3090 / 5070）
+import config as _cfg_mm  # t188u: is_minimax（t194u: MiniMax 5070Ti / 5060）
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -139,7 +139,7 @@ def open_video_prompt_dialog(
     actions = ttk.Frame(advanced)
     actions.pack(fill=tk.X)
 
-    saved_text = "erase"
+    saved_text = "keywords"  # t203u: 默认「关键字作背景」
     saved_fyi = clean_fyi_history(saved_choice)
     if isinstance(saved_choice, dict):
         picked_text = saved_choice.get("text")
@@ -151,7 +151,7 @@ def open_video_prompt_dialog(
     text_var = tk.StringVar(value=saved_text)
     # 视频长度：不进提示词，作为 extra 参数交给 CLI自动（Grok Imagine 视频时长）。记在 video_prompt["duration"]。
     saved_duration = saved_choice.get("duration") if isinstance(saved_choice, dict) else None
-    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s") else "15s")
+    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "13s") else "15s")
     saved_visual = True
     saved_speaking = True
     saved_actor = False
@@ -399,13 +399,13 @@ def open_video_prompt_dialog(
             return
         if fyi_only:
             # FYI 已作为「主要动作」写在最前；背景条件放在后面。
-            bg = config_prompt.background_condition_block(bg_region, bg_era, host_narrator) if bg_include_var.get() else ""
+            bg = config_prompt.background_condition_block(bg_region, bg_era, host_narrator, bg_stage) if bg_include_var.get() else ""
             if bg:
                 bg = bg.replace("(applies to everything below)", "(applies to the whole clip)")
                 prompt = prompt + "\n\n---\n\n" + bg
         else:
             prompt = config_prompt.prepend_background_condition(
-                prompt, bg_region, bg_era, host_narrator, include=bool(bg_include_var.get())
+                prompt, bg_region, bg_era, host_narrator, include=bool(bg_include_var.get()), stage=bg_stage,
             )
             prompt = prepend_fyi(  # t163u: FYI 里讲字幕 / 文字的句子不带
                 prompt, config_prompt.strip_caption_lines(get_fyi_text()), include=bool(fyi_include_var.get())
@@ -467,9 +467,11 @@ def open_video_prompt_dialog(
         prompt = prompt + "\n\n" + config_prompt.video_closing_block(scenes, _tr, _start)
         if _cfg_mm.is_minimax(backend):
             # t165u: 提交给 MiniMax 时把同样的场景内容换成 H3 官方格式（窗口里显示的就是实际发送的）
-            _secs = float(str(duration_var.get()).rstrip("sS") or 6)
+            _secs = 10.0
             try:
                 from utility import sd_image_processor as _sdp
+
+                _secs = float(_sdp.minimax_snap_seconds(duration_var.get()))  # t200u: 7 / 10 / 13
 
                 if _amode in ("talk", "sing"):
                     _secs = _sdp.minimax_audio_video_seconds(_sdp.h3_audio_seconds(get_image("clip_audio") or ""))
@@ -482,6 +484,7 @@ def open_video_prompt_dialog(
                 language=language or "", camera=camera_var.get(), audio_mode=_amode, start_image=_start,
                 seconds=_secs, use_visual=bool(visual_var.get()), use_speaking=bool(speaking_var.get()),
                 fyi=get_fyi_text() if fyi_include_var.get() else "",
+                stage=bg_stage if bg_include_var.get() else None,
             )
         if missing and quiet:
             print("视频提示：这一场没有" + "、".join(missing) + "，只发已有的图。")
@@ -567,6 +570,9 @@ def open_video_prompt_dialog(
             bg_region, bg_era = get_place()
         except (TypeError, ValueError):
             bg_region, bg_era = ("", "")
+    from utility import story_stage as _story_stage
+
+    bg_stage = _story_stage.capture()  # t191u: 故事舞台（get_place 来自哪里就用哪里的）
     from gui.prompt_fyi import pack_background_block
 
     _bg_box, bg_include_var = pack_background_block(
@@ -597,6 +603,9 @@ def open_video_prompt_dialog(
     length_box = ttk.LabelFrame(actions, text="长度", padding=(8, 4))
     length_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     length_radios = []
+    # t200u: Grok / Gemini 6/10/15 秒；MiniMax 7/10/13 秒（换后端时就地改字和值，6↔7、10↔10、15↔13）
+    _LEN_STD = ("6s", "10s", "15s")
+    _LEN_MM = ("7s", "10s", "13s")
     for value, label in (("6s", "6秒"), ("10s", "10秒"), ("15s", "15秒")):
         _rb = ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var)
         _rb.pack(anchor=tk.W)
@@ -609,7 +618,7 @@ def open_video_prompt_dialog(
         _last_submit = dict(_cfg_prefs.load_yt_tools_prefs().get("video_submit_choice") or {})
     except Exception:  # noqa: BLE001
         _last_submit = {}
-    _backends = ("grok", "gemini") + tuple(_cfg_prefs.MINIMAX_VARIANTS)
+    _backends = ("grok", "gemini") + tuple(k for k, _l in _cfg_prefs.minimax_backend_options())
 
     def _norm_backend(b):  # t188u: 旧的「minimax」→ MiniMax 5070
         b = str(b or "").strip().lower()
@@ -620,11 +629,10 @@ def open_video_prompt_dialog(
         _saved_backend = _norm_backend(_last_submit.get("llm"))
     backend_var = tk.StringVar(master=dlg, value=_saved_backend if _saved_backend in _backends else "grok")
     _has_audio = bool(get_image("clip_audio")) if get_image is not None else False
-    audio_mode_var = tk.StringVar(master=dlg, value=_sv.get("audio_mode") if _sv.get("audio_mode") in ("none", "talk", "sing") else "talk")
+    audio_mode_var = tk.StringVar(master=dlg, value=_sv.get("audio_mode") if _sv.get("audio_mode") in ("none", "talk", "sing") else "none")  # t202u: 默认不加；选了记在项目 video_prompt
     backend_box = ttk.LabelFrame(actions, text="生成", padding=(8, 4))
     backend_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
-    for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + tuple(
-            (k, v["label"]) for k, v in _cfg_prefs.MINIMAX_VARIANTS.items()):
+    for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + _cfg_prefs.minimax_backend_options():
         ttk.Radiobutton(backend_box, text=label, value=value, variable=backend_var).pack(anchor=tk.W)
     audio_box = ttk.LabelFrame(actions, text="场景音频" + ("" if _has_audio else "（这一场没有音频）"), padding=(8, 4))
     audio_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
@@ -640,6 +648,13 @@ def open_video_prompt_dialog(
 
     def _sync_backend(*_a) -> None:
         mm = _cfg_prefs.is_minimax(backend_var.get())
+        _vals = _LEN_MM if mm else _LEN_STD
+        for rb, v in zip(length_radios, _vals):
+            rb.configure(value=v, text=v[:-1] + "秒")
+        _cur = duration_var.get()
+        if _cur not in _vals:
+            _other = _LEN_STD if mm else _LEN_MM
+            duration_var.set(_vals[_other.index(_cur)] if _cur in _other else _vals[-1])
         for rb in audio_radios:  # 只有 MiniMax 且这一场有音频才能选（选的值照样记着）
             rb.state(["!disabled"] if (mm and _has_audio) else ["disabled"])
         with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing")
@@ -710,9 +725,12 @@ def open_video_prompt_dialog(
             if not picked:
                 return
             account = picked[1]
+        _dual = backend == _cfg_prefs.MINIMAX_DUAL_KEY and callable(episode.get("generate"))
         if not messagebox.askokcancel(
             "全集提交",
-            f"用现在的选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。\n一场做完、下载好再提交下一场。继续吗？",
+            f"用现在的选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。\n"
+            + ("MiniMax 双机：两台同时跑，先做完的接下一场，每场做完自动导入。继续吗？" if _dual
+               else "一场做完、下载好再提交下一场。继续吗？"),
             parent=dlg,
         ):
             return
@@ -812,6 +830,136 @@ def open_video_prompt_dialog(
             except Exception as exc:  # noqa: BLE001
                 finish(f"{label}：自动导入出错（{exc}），已停止。前面完成 {state['ok']} 场。", False)
 
+        def run_dual() -> None:
+            """t190u: MiniMax 双机全集：主线程一场一场准备提示词（切场景、精简），放进队列；
+            每台能连上的机器一个工人取场景生成，导入回主线程一场一场做。中途不弹窗，最后自动关闭的汇总。"""
+            import queue as _queue
+            import threading as _th
+
+            from utility import minimax_dual as _mmd
+
+            box = _queue.Queue()
+            post = box.put
+            lines = []
+
+            def log(msg: str) -> None:
+                print("🎬 双机全集：" + str(msg))
+                lines.append(str(msg))
+                del lines[:-10]
+                try:
+                    pvar.set("\n".join(lines))
+                except tk.TclError:
+                    pass
+
+            def pump() -> None:
+                while True:
+                    try:
+                        fn = box.get_nowait()
+                    except _queue.Empty:
+                        break
+                    try:
+                        fn()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"⚠️ 双机全集：{exc}")
+                if not state["done"]:
+                    dlg.after(150, pump)
+
+            def gen(job, key, status):
+                return episode["generate"](job["prompt"], job["images"], job["extra"], key, status)
+
+            def imp(scene, path, cb):
+                state["files"].append(path)
+                episode["import"](scene, path, cb)
+
+            def done(results) -> None:
+                if state["done"]:
+                    return
+                state["done"] = True
+                ok_n = sum(1 for r in results if r.get("ok"))
+                rows = [f"{r['label']} · {r.get('server') or '—'} · " + ("✅ " if r.get("ok") else "❌ ") + str(r.get("msg") or "")
+                        for r in results]
+                msg = f"MiniMax 双机全集：{ok_n}/{n} 场生成并导入。\n" + "\n".join(rows)
+                print("🎬 " + msg)
+                try:
+                    prog.destroy()
+                except tk.TclError:
+                    pass
+                if callable(episode.get("end")):
+                    try:
+                        episode["end"](list(state["files"]))
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"⚠️ 全集提交收尾失败：{exc}")
+                try:
+                    from utility.file_util import show_auto_close_popup
+
+                    show_auto_close_popup(parent, "全集提交", msg, kind="info" if ok_n == n else "warning",
+                                          duration_ms=12000)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 汇总没有显示：{exc}")
+                try:
+                    dlg.destroy()
+                except tk.TclError:
+                    pass
+
+            def start(loads) -> None:
+                up = [k for k, v in loads.items() if v is not None]
+                down = [k for k, v in loads.items() if v is None]
+                if not up:
+                    finish("MiniMax 双机：两台 ComfyUI 都连不上，没有提交。", False)
+                    return
+                if down:
+                    log("⚠️ " + "、".join(_mmd.server_label(k) for k in down) + " 连不上，只用 "
+                        + "、".join(_mmd.server_label(k) for k in up) + " 跑")
+                else:
+                    log("两台都在线：" + "，".join(f"{_mmd.server_label(k)} {v} 个任务" for k, v in loads.items()))
+                runner = _mmd.DualRunner(up, gen, post, imp, log, done, should_stop=lambda: state["stop"])
+                runner.start()
+                prep(0, runner)
+
+            def prep(i: int, runner) -> None:
+                if i >= n or state["stop"]:
+                    runner.close()
+                    return
+                label = f"第{k_no + i}场"
+                job = {"i": i, "label": label, "scene": todo[i]}
+                log(f"{label}：准备提示词…")
+
+                def nxt():
+                    dlg.after(50, lambda: prep(i + 1, runner))
+
+                try:
+                    episode["select"](todo[i])
+                except Exception as exc:  # noqa: BLE001
+                    runner.fail(job, f"切换场景失败：{exc}")
+                    nxt()
+                    return
+                _episode_state["started"] = False
+
+                def _one(final_prompt, images, extra) -> None:
+                    def _q():
+                        job.update(prompt=final_prompt, images=list(images or []), extra=dict(extra or {}))
+                        runner.add(job)
+                        log(f"{label}：提示词好了，排队等空闲的机器")
+                        nxt()
+                    post(_q)
+
+                try:
+                    on_go(backend, "", deliver=_one, quiet=True)
+                except Exception as exc:  # noqa: BLE001
+                    runner.fail(job, f"提示词出错：{exc}")
+                    nxt()
+                    return
+                if not _episode_state["started"]:
+                    runner.fail(job, "提示词没有做出来")
+                    nxt()
+
+            pvar.set("MiniMax 双机：检查两台 ComfyUI …")
+            _th.Thread(target=lambda: post(lambda l=_mmd.probe_servers(): start(l)), daemon=True).start()
+            pump()
+
+        if _dual:
+            run_dual()
+            return
         run(0)
 
     ep_btn = ttk.Button(actions, text="全集提交", command=on_episode_submit)
@@ -820,8 +968,10 @@ def open_video_prompt_dialog(
     # t155u/t161u: 说清楚声音输入只有 MiniMax 支持
     ttk.Label(
         advanced,
-        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，音频 ≤ 10 秒视频长度跟音频、至少 4 秒，> 10 秒按 15 秒；分辨率按音频长度：≤ 6 秒最高、≤ 10 秒中档、> 10 秒最低），"
-        "Grok / Gemini 不支持。" + ("" if _has_audio else "（这一场没有音频）"),
+        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 13 秒自动分成几段（每段 ≤ 13 秒、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）；MiniMax 长度 7 / 10 / 13 秒，分辨率固定 1024×576（竖屏 576×1024），，"
+        "Grok / Gemini 不支持。"
+        "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
+        + ("" if _has_audio else "（这一场没有音频）"),
         foreground="#b05a00", wraplength=620, justify=tk.LEFT,
     ).pack(anchor=tk.W, pady=(0, 6), before=lower)
     dlg.protocol("WM_DELETE_WINDOW", close)
@@ -834,5 +984,10 @@ def open_video_prompt_dialog(
     for _v in (duration_var, text_var, visual_var, speaking_var, actor_var, override_var, frame_var, bg_var,
                evolve_var, camera_var, fyi_include_var, bg_include_var, backend_var, audio_mode_var, polish_var):
         _v.trace_add("write", lambda *_a: remember())
+    # t203u: 交给 LLM 的图、注意 / FYI 文字也是一改就记（原来只在关窗 / 提交时记）
+    _img_var = getattr(_img_box, "_choice_var", None)
+    if _img_var is not None:
+        _img_var.trace_add("write", lambda *_a: remember())
+    dlg.bind("<KeyRelease>", lambda _e: dlg.after_idle(remember), add="+")
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

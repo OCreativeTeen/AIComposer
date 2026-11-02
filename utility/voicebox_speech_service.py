@@ -32,7 +32,7 @@ def _repo_media_voices_json_path() -> str:
 
 
 DEFAULT_BASE_URL = config.VOICEBOX_BASE_URL  # .env VOICEBOX_BASE_URL
-DEFAULT_PROFILE_ID = "5c3b89e6-7eab-4809-8145-ba1c995e8abe"
+DEFAULT_PROFILE_ID = "28c8eb08-95d5-439e-9e4e-681125db4faf"  # t196u: 本机 Voicebox 的 woman/mature/chinese
 
 
 def _transcribe_segments(data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -602,7 +602,7 @@ VOICES: List[Dict[str, Any]] = [
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "e42ef432-b8f4-4c8f-8b40-4f75fb9f0b6d",
+        "voice": "28c8eb08-95d5-439e-9e4e-681125db4faf",
     },
     {
         "name": "man/mature/chinese",
@@ -610,7 +610,7 @@ VOICES: List[Dict[str, Any]] = [
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "5f69a089-1fc5-4ba6-9dd8-60c809c25103",
+        "voice": "e84a20e0-ea8c-49b9-9b8a-7859f99ce09c",
     },
     {
         "name": "woman/mature/english",
@@ -618,7 +618,7 @@ VOICES: List[Dict[str, Any]] = [
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "24437748-b794-470d-a536-81c1e32ab64b",
+        "voice": "dcee99cb-c39f-4f11-af8f-7b63e448bcbe",
     },
     {
         "name": "man/mature/english",
@@ -626,39 +626,39 @@ VOICES: List[Dict[str, Any]] = [
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "9f308b2c-d55b-4434-b15e-9a83dbdb35b1",
+        "voice": "4c210629-b006-412d-b73e-92619c337d72",
     },
     {
-        "name": "woman/young/chinese",
+        "name": "woman/youth/chinese",
         "language": "chinese",
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "2cd0b3ec-b944-49f2-a621-fb60987aaa09",
+        "voice": "cff33c80-7fb8-409d-8263-28afc1ac3ea0",
     },
     {
-        "name": "man/young/chinese",
+        "name": "man/youth/chinese",
         "language": "chinese",
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "e01a9dad-d841-4c49-852b-fd0e161f7a37",
+        "voice": "4eda5c9b-be62-40df-8758-83dc29b393e7",
     },
     {
-        "name": "woman/young/english",
+        "name": "woman/youth/english",
         "language": "english",
         "volume": 1.0,  
         "speed": 1.0,
         "pitch": 0,
-        "voice": "8085c594-6931-43d0-bf07-6dc0dbba8bd1",
+        "voice": "9216f3f4-bb1c-4943-babd-fb7352425c4e",
     },
     {
-        "name": "man/young/english",
+        "name": "man/youth/english",
         "language": "english",
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "8ad21674-7919-49b4-9a3d-01171e9f47bd",
+        "voice": "60f8bcb0-a8d2-4791-974b-42187b39b005",
     },
 
 
@@ -676,7 +676,7 @@ VOICES: List[Dict[str, Any]] = [
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "5c3b89e6-7eab-4809-8145-ba1c995e8abe"
+        "voice": "77d74093-377c-498b-99ba-fd85820bddf5"
     },
     {
         "name": "woman/qin-fast/chinese",
@@ -700,7 +700,7 @@ VOICES: List[Dict[str, Any]] = [
         "volume": 1.0,
         "speed": 1.0,
         "pitch": 0,
-        "voice": "99a43f1a-3e8f-4823-841a-1cf7d5a79000"
+        "voice": "7fc95cf2-1d9c-45fc-9230-79ffa7591afe"
     },
     {
         "name": "man/trump/english",

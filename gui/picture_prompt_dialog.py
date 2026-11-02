@@ -260,6 +260,9 @@ def open_picture_prompt_dialog(
             region, era = get_place()
         except (TypeError, ValueError):
             region, era = ("", "")
+    from utility import story_stage as _story_stage
+
+    stage_info = _story_stage.capture()  # t191u: 故事舞台
     from gui.prompt_fyi import pack_background_block
 
     _bg_box, bg_include_var = pack_background_block(
@@ -464,14 +467,14 @@ def open_picture_prompt_dialog(
                 )
             if edit_only:
                 # 仅修改：FYI 已作为「主要修改要求」写在最前；背景条件放在后面。
-                bg = config_prompt.background_condition_block(region, era, host_narrator) if bg_include_var.get() else ""
+                bg = config_prompt.background_condition_block(region, era, host_narrator, stage_info) if bg_include_var.get() else ""
                 if bg:
                     bg = bg.replace("(applies to everything below)", "(applies to the whole edit)")
                     prompt = prompt + "\n\n---\n\n" + bg
             else:
                 prompt = config_prompt.prepend_background_condition(
                     prompt, region, era, host_narrator,
-                    include=bool(bg_include_var.get()) and not extract,
+                    include=bool(bg_include_var.get()) and not extract, stage=stage_info,
                 )
                 prompt = prepend_fyi(
                     prompt, get_fyi_text(), include=bool(fyi_include_var.get())

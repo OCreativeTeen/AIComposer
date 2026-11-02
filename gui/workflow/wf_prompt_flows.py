@@ -242,9 +242,11 @@ class PromptFlowsMixin:
                 jobs.append((sc, (aspect + "\n\n" + body) if aspect else body, [cover],
                              {"aspect": "", "actors": [], "base": cover}))
         print(f"🖼 从封面逐场提取第 1–{n} 步（{backend}）：{os.path.basename(cover)}")
-        self._run_picture_batch(jobs, backend, [], account, auto=True)
+        # t198u: 每一场的图一写回，就带着这张图让 Strata 看图调整这一场的视觉，直接写回（不弹审阅窗）
+        self._run_picture_batch(jobs, backend, [], account, auto=True, remix_visual=True)
 
-    def _run_picture_batch(self, jobs: list, backend: str, skipped: list, account: str = "", *, auto: bool = False) -> None:
+    def _run_picture_batch(self, jobs: list, backend: str, skipped: list, account: str = "", *, auto: bool = False,
+                           remix_visual: bool = False) -> None:
         """图片修改 · 本集所有场景：每一场单独走 CLI自动（Grok / Gemini 网页图生图），结果写回那一场。
 
         手动窗口只能一场一场贴，所以批量直接调 CLI自动 用的同一个 make_image。
@@ -285,6 +287,80 @@ class PromptFlowsMixin:
         updated: list = []
         rebuilt: list = []
         clip_q: queue.Queue = queue.Queue()
+        remix_q: queue.Queue = queue.Queue()  # t198u: 自动调整视觉（只有从封面逐场提取时用）
+        remixed: list = []
+        ends = {"n": 0}
+
+        def end_one():
+            """UI 线程：clip 视频工人（和调整视觉工人）都结束了才 finish。"""
+            ends["n"] += 1
+            if ends["n"] >= (2 if remix_visual else 1):
+                finish()
+
+        def queue_remix(scene, label):
+            """UI 线程：这一场的图刚写回 → 记下当时的视觉、图、人物，交给调整视觉工人。"""
+            from utility.file_util import get_file_path
+
+            image = get_file_path(scene, "clip_image")
+            visual = scene.get("visual") or ""
+            if not (visual.strip() and image and os.path.isfile(image)):
+                print(f"ℹ️ 调整视觉：{label} 没有视觉文字或没有图，跳过")
+                return
+            lang = getattr(self.workflow, "language", None) or "tw"
+            try:
+                names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
+            except Exception:  # noqa: BLE001
+                names = []
+            remix_q.put((scene, label, visual, image, names, lang, scene.get("speaking") or ""))  # t199u: 讲话也记下
+
+        def apply_visual(scene, label, old, new):
+            """UI 线程：看图改写的结果直接写进这一场的视觉；原文留在 visual_before_remix。"""
+            from utility.visual_remix import accept_auto_remix
+
+            if (scene.get("visual") or "") != old:
+                print(f"ℹ️ 调整视觉：{label} 的视觉在这期间被改过，不覆盖")
+                return
+            why = accept_auto_remix(old, new)
+            if why:
+                print(f"ℹ️ 调整视觉：{label} {why}，保留原文")
+                return
+            scene["visual_before_remix"] = old
+            scene["visual"] = new
+            remixed.append(scene)
+            print(f"🖼 调整视觉：{label} 已按图改写。原文：{old[:200]}")
+            try:
+                cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+                if cur is scene and getattr(self, "scene_visual", None) is not None:
+                    self.scene_visual.delete("1.0", tk.END)
+                    self.scene_visual.insert("1.0", new)
+                self.workflow.save_scenes_to_json()
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 调整视觉：{label} 写回界面 / 保存失败 {exc}")
+
+        def remix_worker():
+            """t198u: 一场一场地把视觉 + 刚写回的图交给 Strata 看图改写（和视觉双击 Remix 同一个函数）。
+            看图失败就不动视觉（不退回纯文字改写），只记日志。"""
+            from utility.visual_remix import remix_visual_with_image
+            import config
+
+            try:
+                while True:
+                    item = remix_q.get()
+                    if item is None:
+                        break
+                    scene, label, old, image, names, lang, speaking = item
+                    ui(lambda l=label: var.set(f"调整视觉（{l}，Strata 看图）…"))
+                    try:
+                        out = remix_visual_with_image(old, image, names=names,
+                                                      language_label=config.llm_language_label(lang), speaking=speaking)
+                        out = config.chinese_convert(out, lang)
+                    except Exception as exc:  # noqa: BLE001
+                        failed.append(f"{label}：调整视觉失败，保留原文（{exc}）")
+                        print(f"⚠️ 调整视觉：{label} 看图失败，保留原文：{exc}")
+                        continue
+                    ui(lambda s=scene, l=label, o=old, n=out: apply_visual(s, l, o, n))
+            finally:
+                ui(end_one)
 
         def apply(scene, img, label):
             """UI 线程：写回这一场的图，有 clip 音频就马上排队重做这一场的静态 clip 视频。"""
@@ -297,6 +373,8 @@ class PromptFlowsMixin:
                 return
             if self._stale_still_clip_scenes([scene]):
                 clip_q.put((scene, label))
+            if remix_visual:
+                queue_remix(scene, label)
 
         def clip_worker():
             """每换一张图就重做那一场的静态 clip 视频（一次一场，和生场视频共用忙碌标记）。"""
@@ -318,7 +396,7 @@ class PromptFlowsMixin:
                     else:
                         failed.append(f"{label}：静态 clip 视频没有重做（{out}）")
             finally:
-                ui(finish)
+                ui(end_one)
 
         def scene_status(head):
             def status(msg, h=head):
@@ -464,7 +542,7 @@ class PromptFlowsMixin:
                         per_call_worker()
             finally:
                 # 经 UI 线程排在最后一个 apply 之后：图都写回、clip 队列清空后才 finish
-                ui(lambda: clip_q.put(None))
+                ui(lambda: (clip_q.put(None), remix_q.put(None)))
 
         def finish():
             self._clip_video_worker_busy = False
@@ -479,6 +557,8 @@ class PromptFlowsMixin:
                 print(f"图片修改：刷新失败 {exc}")
             note = (f"图片修改完成（从当前场到本集结束）：{done[0]}/{len(jobs)} 场已换图，"
                     f"{len(rebuilt)} 场已重做静态 clip 视频。")
+            if remix_visual:
+                note += f"\n{len(remixed)} 场的视觉已按图调整（原文存在 visual_before_remix）。"
             if failed:
                 note += "\n\n没处理 / 失败：\n" + "\n".join(failed[:30])
             if auto:  # t176u: 自动提取不弹要按确定的窗，只显示几秒的提示
@@ -490,6 +570,8 @@ class PromptFlowsMixin:
             self._rebuild_still_clips_after_batch([], jobs, quiet=auto)
 
         threading.Thread(target=clip_worker, daemon=True).start()
+        if remix_visual:
+            threading.Thread(target=remix_worker, daemon=True).start()
         threading.Thread(target=worker, daemon=True).start()
 
     def _stale_still_clip_scenes(self, scenes: list) -> list:
@@ -742,6 +824,10 @@ class PromptFlowsMixin:
                 "begin": lambda: setattr(self, "_video_batch_files", []),
                 "end": _episode_done,
                 "import": self._auto_import_scene_video,
+                # t190u: MiniMax 双机全集：工人线程里直接生成（不开手动窗口），key = minimax_5070ti / minimax_5060
+                "generate": lambda prompt, images, extra, key, status: __import__(
+                    "utility.minimax_dual", fromlist=["minimax_generate"]).minimax_generate(
+                    prompt, None, images, extra, _video_download_dir(), "minimax_dual", status=status, server_key=key),
             },
             simple_actions=[
                 ("仅当前场景", lambda: self._run_clip_video("still", "single")),

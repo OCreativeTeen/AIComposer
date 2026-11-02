@@ -421,6 +421,9 @@ def open_slide_prompt_dialog(
             region, era = get_place()
         except (TypeError, ValueError):
             region, era = ("", "")
+    from utility import story_stage as _story_stage
+
+    stage_info = _story_stage.capture()  # t191u: 故事舞台
     from gui.prompt_fyi import pack_background_block
 
     _bg_box, bg_include_var = pack_background_block(
@@ -688,7 +691,7 @@ def open_slide_prompt_dialog(
         if cast_block.strip():
             prompt = cast_block.strip() + "\n\n---\n\n" + (prompt or "").strip()
         prompt = config_prompt.prepend_background_condition(
-            prompt, region, era, host_narrator, include=bool(bg_include_var.get())
+            prompt, region, era, host_narrator, include=bool(bg_include_var.get()), stage=stage_info,
         )
         prompt = prepend_fyi(prompt, get_fyi_text(), include=bool(fyi_include_var.get()))
         try:

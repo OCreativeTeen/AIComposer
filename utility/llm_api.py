@@ -1585,9 +1585,9 @@ class LLMApi:
             ttk.Label(vb_row, text=("图片生成：" if win_mode == "image" else "视频生成：")).pack(side=tk.LEFT)
             _bk_opts = (("grok", "Grok"), ("gemini", "Gemini"))
             if cli_kind == "video":
-                import config as _cfgv  # t188u: 两台 ComfyUI：MiniMax 3090 / MiniMax 5070
+                import config as _cfgv  # t188u: 两台 ComfyUI：MiniMax 5070Ti / MiniMax 5060（t194u）
 
-                _bk_opts += tuple((k, v["label"]) for k, v in _cfgv.MINIMAX_VARIANTS.items())
+                _bk_opts += _cfgv.minimax_backend_options()  # t190u: 加「MiniMax 双机」
             for _v, _t in _bk_opts:
                 _rb = ttk.Radiobutton(vb_row, text=_t, value=_v, variable=video_backend_var)
                 _rb.pack(side=tk.LEFT, padx=(0, 4))
@@ -1722,30 +1722,13 @@ class LLMApi:
                         if str(video_backend).startswith("minimax"):
                             # t152u: 另一台机器上的 ComfyUI 跑 MiniMax H3：同样的提示词 + 起始图；长边 1024，按方向；
                             # 每次（含重试）新的随机 seed。下载到和 Grok / Gemini 视频同一个目录，交给同一个「完成」流程。
-                            from . import sd_image_processor as _sdp
-                            import config as _cfg
+                            # t190u: 逻辑搬到 minimax_dual.minimax_generate（单场和双机全集共用）；双机在里面挑空闲的一台
+                            from . import minimax_dual as _mmd
 
-                            _secs = float(str(extra_params.get("duration") or "10s").rstrip("sS") or 10)
-                            # t155u: 双画面 / 转场：第二张图是结束图；有场景音频就一起送去对口型（长度跟音频走）
-                            _imgs = [p for p in (image_paths or []) if p] if isinstance(image_paths, (list, tuple)) else []
-                            _last = _imgs[1] if extra_params.get("frames") == "two" and len(_imgs) > 1 else None
-                            _audio = str(extra_params.get("scene_audio") or "").strip() or None
-                            # t156u: 分辨率按时长 / 有没有音频分档（每次含重试都重新算）
-                            # t158u: 有音频时先读音频长度，按它选分辨率和视频长度
-                            _adur = _sdp.h3_audio_seconds(_audio) if _audio and os.path.isfile(_audio) else 0.0
-                            _w, _h, _why = _sdp.minimax_size_for(
-                                str(extra_params.get("orientation") or "landscape"), _secs, bool(_audio), _adur)
-                            _vsecs = _sdp.minimax_audio_video_seconds(_adur) if _audio else _secs
-                            _cli_set_status(f"CLI自动：MiniMax（ComfyUI，实际发送=窗口里的 H3 格式提示词）生成视频 {_w}×{_h}（{_why}） "
-                                            + f"{_vsecs:g}秒" + ("（跟场景音频）" if _audio else "")
-                                            + ("，含结束图" if _last else "") + " …")
-                            _dest = file_dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
-                            mp4 = _sdp.generate_video_comfy(
-                                image_path, prompt, _secs, _w, _h,
-                                output_path=os.path.join(_dest, time.strftime("minimax_h3_%Y%m%d_%H%M%S.mp4")),
-                                server=_cfg.minimax_variant(video_backend)["url"], status=_cli_set_status,
-                                workflow_path=_cfg.minimax_variant(video_backend)["workflow"],
-                                audio_path=_audio, last_image_path=_last,
+                            mp4 = _mmd.minimax_generate(
+                                prompt, image_path, image_paths, extra_params,
+                                file_dest_dir or os.path.join(os.path.expanduser("~"), "Downloads"),
+                                video_backend, status=_cli_set_status,
                             )
                         elif video_backend == "gemini":
                             from . import gemini_cdp

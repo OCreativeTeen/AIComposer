@@ -940,6 +940,9 @@ class ChannelVideosDialogImpl:
 
                 launch_cfg = dict(cfg)
                 launch_cfg["topic_category"] = tc
+                from utility import story_stage as _story_stage
+
+                _story_stage.carry(vd, launch_cfg)  # t191u: STORY 选的故事舞台带进项目
                 if not (launch_cfg.get("channel") or "").strip():
                     launch_cfg["channel"] = os.path.basename(self.channel_path)
 
@@ -983,6 +986,19 @@ class ChannelVideosDialogImpl:
                     )
                     return
 
+                try:  # t191u: 工作流从分表这一行读配置：舞台写进这一行的 project_profile
+                    with open(target_path, "r", encoding="utf-8") as _f:
+                        _arr = json.load(_f)
+                    _row = _arr[target_ix] if isinstance(_arr, list) and 0 <= target_ix < len(_arr) else None
+                    _pp = _row.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(_row, dict) else None
+                    if isinstance(_pp, dict) and _story_stage.carry(vd, _pp):
+                        config.write_channel_list_json(target_path, _arr)
+                        print(f"🎭 故事舞台写进项目 {cfg_pid}：{_pp.get('story_stage')}")
+                    _vpp = vd.get(project_manager.PROJECT_PROFILE_KEY)
+                    if isinstance(_vpp, dict) and _vpp.get("pid") == cfg_pid:
+                        _story_stage.carry(vd, _vpp)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 故事舞台没有写进项目：{exc}")
                 opened = _launch_gui_wf_from_list_json(target_path, target_ix, parent=parent)
                 if not opened:
                     _launch_gui_wf_open_pid(cfg_pid, parent=parent)
@@ -995,6 +1011,9 @@ class ChannelVideosDialogImpl:
                 _pid = (selected_config.get("pid") or "").strip()
                 if not _pid:
                     return
+                from utility import story_stage as _story_stage
+
+                _story_stage.carry(vd, selected_config)  # t191u: 新项目带上 STORY 选的故事舞台和概要
                 ch_path = self.channel_path or ""
                 list_path = (self.downloader.channel_list_json or "").strip()
                 tc = (

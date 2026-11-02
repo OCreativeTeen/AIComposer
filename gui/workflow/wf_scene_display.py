@@ -215,12 +215,25 @@ class SceneDisplayMixin:
 
                 image = get_file_path(scene, "clip_image")
                 names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
-                out = remix_visual_with_image(t, image, names=names, language_label=lang_label)
+                # t199u: 讲话一起给，动作跟着对话走
+                out = remix_visual_with_image(t, image, names=names, language_label=lang_label,
+                                              speaking=scene.get("speaking") or "")
                 print(f"🖼 视觉 Remix：带起始图 {os.path.basename(image)} 交给 Strata 看图改写")
                 return config.chinese_convert(out, lang)
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 视觉 Remix 看图失败，改用纯文字：{exc}")
-                return _remix_text(t)
+                speaking = (scene.get("speaking") or "").strip()
+                if not speaking:
+                    return _remix_text(t)  # 没有讲话：和以前一样
+                try:  # t199u: 纯文字也按讲话同步
+                    from utility.visual_remix import remix_visual_text
+
+                    names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
+                    return config.chinese_convert(
+                        remix_visual_text(t, names=names, language_label=lang_label, speaking=speaking), lang)
+                except Exception as exc2:  # noqa: BLE001
+                    print(f"⚠️ 视觉 Remix 按讲话的纯文字改写失败，用原来的纯文字：{exc2}")
+                    return _remix_text(t)
 
         confirmed = ask_speaking_concise_review_dialog(
             self.root,

@@ -92,7 +92,7 @@ def _added_text_words(original: str, polished: str) -> str:
 
 
 _DIRECTION_RE = re.compile(
-    r"[^.\n]*(?:not toward the camera|Everyone stays inside the scene|in the whole video, |never by a second copy|the same person as in the start picture)[^.\n]*\."
+    r"[^.\n]*(?:not toward the camera|Everyone stays inside the scene|in the whole video, |never by a second copy|the same person as in the start picture|Story stage: )[^.\n]*\."
 )  # t181u 方向句 + t182u 人数锁
 
 
@@ -130,7 +130,7 @@ def restore_direction_lines(original: str, polished: str) -> str:
 
 def validate(original: str, polished: str, backend: str) -> str:
     """返回 '' 表示通过，否则是原因。"""
-    h3 = str(backend or "").startswith("minimax")  # t188u: minimax_3090 / minimax_5070
+    h3 = str(backend or "").startswith("minimax")  # t188u/t194u: minimax_5070ti / minimax_5060 / minimax_dual
     if not polished:
         return "Strata 返回空"
     added = _added_text_words(original, polished)

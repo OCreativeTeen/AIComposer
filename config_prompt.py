@@ -1230,6 +1230,7 @@ SETTING_PLACES: dict[str, dict] = {
         "en": "China",
         "eras": [
             ("唐朝", "the Tang dynasty"),
+            ("东汉末三国", "the late Eastern Han and Three Kingdoms period"),  # t191u: 舞台「三国演义」
             ("宋朝", "the Song dynasty"),
             ("明朝", "the Ming dynasty"),
             ("清朝", "the Qing dynasty"),
@@ -1262,11 +1263,23 @@ SETTING_PLACES: dict[str, dict] = {
             ("罗马帝国", "the Roman Empire"),
             ("中世纪", "the Middle Ages"),
             ("文艺复兴", "the Renaissance"),
+            ("摄政时期英国", "Regency England (early 19th century)"),  # t191u: 舞台「傲慢与偏见」
             ("维多利亚时代", "the Victorian era (19th century)"),
+            ("19世纪法国", "19th-century France"),  # t191u: 舞台「悲惨世界」
             ("二战时期", "the Second World War era (1940s)"),
             ("1960年代", "1960s Europe"),
             ("1980年代", "1980s Europe"),
             ("现代", "present-day Europe"),
+        ],
+    },
+    # t191u: 舞台「飘」
+    "美国": {
+        "en": "the United States",
+        "eras": [
+            ("南北战争", "the American Civil War era (1860s)"),
+            ("1920年代", "1920s America"),
+            ("1950-60年代", "1950s and 1960s America"),
+            ("现代", "present-day America"),
         ],
     },
     "埃及": {
@@ -1373,7 +1386,7 @@ def background_condition_label(region: str, era: str, person: str) -> str:
     return "背景：" + (" · ".join(parts) if parts else "（未选）")
 
 
-def background_condition_block(region: str, era: str, person: str) -> str:
+def background_condition_block(region: str, era: str, person: str, stage=None) -> str:
     """地域 / 时代 / 人物 写成提示词里的背景条件；缺的项跳过，全空返回空。
 
     图片、幻灯、视频三个提示都用这一段，放在 FYI 之后、场景内容之前。
@@ -1406,15 +1419,23 @@ def background_condition_block(region: str, era: str, person: str) -> str:
             f"- If people appear, they are {who}, with the clothing and hairstyles of this region and era. "
             "This is not a presenter: it adds no host, narrator, or speaker to the picture."
         )
+    try:  # t191u: 故事舞台（不限 = 不加）
+        from utility import story_stage as _ss
+
+        _st = _ss.short_line(stage)
+    except Exception:  # noqa: BLE001
+        _st = ""
+    if _st:
+        lines.append("- " + _st)
     if not lines:
         return ""
     return "BACKGROUND CONDITION (applies to everything below):\n" + "\n".join(lines)
 
 
-def prepend_background_condition(prompt: str, region: str, era: str, person: str, *, include: bool) -> str:
+def prepend_background_condition(prompt: str, region: str, era: str, person: str, *, include: bool, stage=None) -> str:
     """勾选时把背景条件放在提示词最前面（FYI 之后再由 prepend_fyi 加在它上面）。"""
     body = (prompt or "").strip()
-    block = background_condition_block(region, era, person) if include else ""
+    block = background_condition_block(region, era, person, stage) if include else ""
     if not block:
         return body
     return block + "\n\n---\n\n" + body if body else block
@@ -4121,8 +4142,9 @@ def _h3_speaker_phrase(row: dict) -> str:
 
 def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str = "", region: str = "", era: str = "",
                     language: str = "", camera: str = "none", audio_mode: str = "none", start_image: str = "",
-                    seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "") -> str:
-    """t165u: 场景内容 → MiniMax H3 官方格式提示词。"""
+                    seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "",
+                    stage=None) -> str:
+    """t165u: 场景内容 → MiniMax H3 官方格式提示词。t191u: stage = 故事舞台（一句 Story stage:）。"""
     scs = [s for s in (scenes or []) if isinstance(s, dict)]
     sc = scs[0] if scs else {}
     two = frames == "two" or isinstance(transition, dict)
@@ -4140,6 +4162,13 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     era_s, reg_s = str(era or "").strip(), str(region or "").strip()
     place = era_s if (reg_s and reg_s in era_s) else ", ".join(x for x in (era_s, reg_s) if x)
     shot = [f"[Shot 1] {_h3_style(style)}" + (f", set in {place}" if place else "") + "."]
+    try:
+        from utility import story_stage as _ss
+
+        if _ss.short_line(stage):
+            shot.append(_ss.short_line(stage))
+    except Exception:  # noqa: BLE001
+        pass
     rows = _scene_speakers(sc)
     names = [(_speaker_identity(r)[1] + " " + _speaker_identity(r)[0]).strip() for r in rows]
     pic = "<Picture 1>"
@@ -5116,8 +5145,8 @@ Video generation instruction:
 
 Audio generation / Words-in-image generation instruction: 
     ** Speaker:
-        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/young/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
-        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman/young/chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
+        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/youth/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
+        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman/youth/chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
 	    * if current scene has no 'actor' & no 'narrator' fields, no speak (sound effects that belong in the place are fine; no music; may generate some Word-in-image to the scene based on the 'speaking' content).
         * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
         * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
@@ -6517,9 +6546,9 @@ SCENE_SPEAKER_ID_RULE = """
     ** 只有真正新出场、不同的人才用下一个没用过的号（人物3…）。故事用一小组固定的人物：前面出现过的朋友、家人，后面再出现就还是原来那个号。
     ** actor 写这一场出现的人，按号从小到大排（人物1 在 人物2 前面），用和 speaking 一样的 人物N。
     ** 例子（同样两个人，三场）：
-       第1场 speaking："<1> 都兩點了，你還在滑？<2> 睡不著。"　actor："人物1：man/young/chinese/阿杰 | 人物2：man/mature/chinese/小林"
-       第2场 speaking："<2> 我是不是很失敗？<1> 你昨天還說要改履歷。"　actor："人物1：man/young/chinese/阿杰 | 人物2：man/mature/chinese/小林"
-       第3场 speaking："<1> 出來走走吧。<2> 好像輕鬆一點了。"　actor："人物1：man/young/chinese/阿杰 | 人物2：man/mature/chinese/小林"
+       第1场 speaking："<1> 都兩點了，你還在滑？<2> 睡不著。"　actor："人物1：man/youth/chinese/阿杰 | 人物2：man/mature/chinese/小林"
+       第2场 speaking："<2> 我是不是很失敗？<1> 你昨天還說要改履歷。"　actor："人物1：man/youth/chinese/阿杰 | 人物2：man/mature/chinese/小林"
+       第3场 speaking："<1> 出來走走吧。<2> 好像輕鬆一點了。"　actor："人物1：man/youth/chinese/阿杰 | 人物2：man/mature/chinese/小林"
 *** SPEAKER NUMBERS ARE FIXED FOR THE WHOLE STORY (overrides any earlier rule about <N> and actor numbering)
     ** Scene 1: number people by who speaks first: the first speaker is 人物1 (<1>), the second is 人物2 (<2>).
     ** Every later scene: the same person keeps the same number and the same description (gender / age / ethnicity / name), even when they speak first, so scene 2 may open with <2>.

@@ -158,6 +158,9 @@ def _story_video_size_choice(scene_ui: dict, video_detail: dict) -> str:
 
 def _pnb_story_setting(video_detail):
     from gui.dl.prompts_notebooklm import story_setting_region_era
+    from utility import story_stage as _story_stage
+
+    _story_stage.hint(video_detail)  # t191u: 提示窗口用这一条的故事舞台
     return story_setting_region_era(video_detail)
 
 
@@ -1837,6 +1840,36 @@ class SceneEditorImpl:
             _sync_setting_eras()
             setting_region_combo.bind("<<ComboboxSelected>>", _commit_setting_place)
             setting_era_combo.bind("<<ComboboxSelected>>", _commit_setting_place)
+
+            # t191u: 故事舞台（不限 / 红楼梦 / 水浒传 …，可以自己打字）；选了已知作品自动设地域 / 时代
+            from utility import story_stage as _story_stage
+
+            def _stage_set_place(region, era):
+                setting_region_var.set(region)
+                _sync_setting_eras()
+                setting_era_var.set(era)
+                _commit_setting_place()
+
+            def _stage_topic():
+                try:
+                    from gui.dl import prompts_notebooklm as _P
+
+                    topic = (_P._notebooklm_row_topic_fields(video_detail)[2]
+                             or _P._youtube_row_display_title(video_detail) or "")
+                except Exception:  # noqa: BLE001
+                    topic = str(video_detail.get("title") or "")
+                return topic, str(video_detail.get("analyzed_content") or ""), ""
+
+            def _stage_persist():
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            _story_stage.build_controls(
+                size_frm, get_owner=lambda: video_detail, get_topic=_stage_topic, persist=_stage_persist,
+                set_place=_stage_set_place, get_place=lambda: (setting_region_var.get(), setting_era_var.get()),
+            )
 
             ttk.Label(size_frm, text="风格").pack(side=tk.LEFT, padx=(12, 2))
             visual_style_combo = ttk.Combobox(

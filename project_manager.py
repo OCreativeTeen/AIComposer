@@ -1204,6 +1204,11 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "title_font",
     "setting_region",
     "setting_era",
+    "story_stage",  # t191u: 故事舞台 + 提炼好的概要
+    "story_stage_brief",
+    "story_stage_visual",
+    "story_stage_key",
+    "story_stage_source",
     "scene_style",
     "story_style",
     "pid",

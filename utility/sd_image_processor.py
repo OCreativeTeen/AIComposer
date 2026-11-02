@@ -838,37 +838,39 @@ def _parse_size(text: str, fallback: tuple) -> tuple:
         return fallback
 
 
+MINIMAX_LENGTHS = (7, 10, 13)  # t200u: MiniMax 只给 7 / 10 / 13 秒
+MINIMAX_MAX_SECONDS = 13.0
+
+
+def minimax_snap_seconds(seconds) -> int:
+    """t200u: 任意秒数（含 Grok 的 6 / 15）→ 最近的 7 / 10 / 13：6→7，10→10，15→13。"""
+    try:
+        s = float(str(seconds).strip().rstrip("sS") or 10)
+    except Exception:  # noqa: BLE001
+        s = 10.0
+    return min(MINIMAX_LENGTHS, key=lambda x: (abs(x - s), x))
+
+
 def minimax_audio_video_seconds(audio_seconds) -> float:
-    """t158u: 有音频时的视频长度：> 10 秒（或读不到）按 15 秒；否则跟音频走，至少 4 秒。"""
+    """t200u: 有音频时的视频长度：跟音频走（至少 4 秒），最长 13 秒；> 13 秒或读不到按 13 秒。"""
     a = float(audio_seconds or 0)
-    if a <= 0 or a > 10:
-        return 15.0
+    if a <= 0 or a > MINIMAX_MAX_SECONDS:
+        return MINIMAX_MAX_SECONDS
     return max(4.0, a)
 
 
 def minimax_size_for(orientation: str, seconds: float, has_audio: bool, audio_seconds=None) -> tuple:
-    """返回 (宽, 高, 说明)，尺寸见 config.MINIMAX_SIZE_*。
-    t158u 有音频：按音频长度 ≤ 6 秒 XLARGE，≤ 10 秒 LARGE，> 10 秒或读不到 SMALL。
-    t156u/t157u 没音频：≤ 6 秒 XLARGE，≤ 10 秒 LARGE，> 10 秒（15 秒）SMALL。"""
+    """返回 (宽, 高, 说明)。t200u: 分辨率固定 1024x576（竖屏 576x1024），不再按长度 / 音频加减。
+    seconds / has_audio / audio_seconds 只用来写说明。"""
     if has_audio:
         a = float(audio_seconds or 0)
-        tier = "small" if a <= 0 or a > 10 else ("xlarge" if a <= 6 else "large")
         what = f"音频 {a:.1f} 秒" if a > 0 else "音频时长读不到"
-        if a > 10:
-            what += "，按 15 秒"
+        if a <= 0 or a > MINIMAX_MAX_SECONDS:
+            what += "，按 13 秒"
     else:
-        s = float(seconds or 0)
-        tier = "small" if s > 10 else ("xlarge" if s <= 6 else "large")
-        what = f"{int(round(s))}秒"
-    if tier == "small":
-        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_SMALL", "832x480"), (832, 480))
-        why = what + "，用小分辨率"
-    elif tier == "xlarge":
-        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_XLARGE", "1280x704"), (1280, 704))
-        why = what + "，用高分辨率"
-    else:
-        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_LARGE", "1024x576"), (1024, 576))
-        why = what + "，用大分辨率"
+        what = f"{int(round(float(seconds or 0)))}秒"
+    long_e, short_e = 1024, 576
+    why = what + "，固定 1024x576"
     w, h = (short_e, long_e) if str(orientation or "").lower() == "portrait" else (long_e, short_e)
     return w, h, why
 
@@ -936,13 +938,13 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
 
     import tempfile
 
-    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–15 秒，H3 训练长度），音频按这个长度截好转 wav 再上传
+    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–13 秒），音频按这个长度截好转 wav 再上传
     audio_local = None
     if audio_path and os.path.isfile(audio_path):
         dur = h3_audio_seconds(audio_path)
-        seconds = minimax_audio_video_seconds(dur)  # t158u: > 10 秒按 15 秒；否则跟音频（至少 4 秒）
-        if dur > 15.0:
-            say(f"场景音频 {dur:.1f} 秒，超过 H3 的 15 秒，只用前 15 秒")
+        seconds = minimax_audio_video_seconds(dur)  # t200u: 跟音频（至少 4 秒），最长 13 秒
+        if dur > MINIMAX_MAX_SECONDS:
+            say(f"场景音频 {dur:.1f} 秒，超过 13 秒，只用前 13 秒")
         audio_local = os.path.join(tempfile.gettempdir(), f"h3_{stamp}_audio.wav")
         # apad + -t：音频不够长就补静音，正好和视频一样长（后面换音轨用 -shortest 不会截掉画面）
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", audio_path, "-af", "apad", "-t", f"{float(seconds):.3f}",
