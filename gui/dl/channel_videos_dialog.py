@@ -1498,8 +1498,8 @@ class ChannelVideosDialogImpl:
                 ] = refresh_title_fields
 
             # 保存按钮
-            def save_story_info():
-                """保存主题信息"""
+            def save_story_info(quiet=False):
+                """保存主题信息。t212: 返回 True/False; quiet=True 时失败用 messagebox、成功不弹窗。"""
                 drop_ctx = getattr(summary_window, "_summary_drop_ctx", None)
                 if isinstance(drop_ctx, dict):
                     read_analyzed = drop_ctx.get("read_analyzed_draft")
@@ -1573,10 +1573,19 @@ class ChannelVideosDialogImpl:
                 if callable(save_scene):
                     ok, msg = save_scene()
                     if not ok:
-                        show_auto_close_popup(summary_window, "场景内容", msg or "没有写回场景内容。", kind="error")
-                        return
+                        if quiet:
+                            messagebox.showerror(
+                                "场景内容无效",
+                                (msg or "没有写回场景内容。") + "\n\n已取消操作，请改正 JSON 后再试。",
+                                parent=summary_window,
+                            )
+                        else:
+                            show_auto_close_popup(summary_window, "场景内容", msg or "没有写回场景内容。", kind="error")
+                        return False
 
-                show_auto_close_popup(summary_window, "成功", "名称、分析报告和场景内容已保存")
+                if not quiet:
+                    show_auto_close_popup(summary_window, "成功", "名称、分析报告和场景内容已保存")
+                return True
 
 
             publish_info_var = tk.StringVar(value="发布: …")
@@ -1803,6 +1812,13 @@ class ChannelVideosDialogImpl:
 
             def _project_menu_from_summary():
                 """t107u: 一个「打开项目」按钮 → 小窗选「打开已有项目」/「重建项目」(或「创建新项目」)。"""
+                # t212: 先按「保存」写回所有可编辑字段(含手改的 scene_content JSON),无效则中止
+                try:
+                    if not save_story_info(quiet=True):
+                        return
+                except Exception as e:
+                    messagebox.showerror("保存失败", f"保存失败，已取消打开项目：{e}", parent=summary_window)
+                    return
                 has_pid = bool((_video_detail_project_pid(video_detail) or "").strip())
                 win = tk.Toplevel(summary_window)
                 win.title("打开项目")

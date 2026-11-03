@@ -145,7 +145,8 @@ def story_text_for_titles(scenes, summary: str = "", max_chars: int = SCENE_TEXT
     return (head + "\n".join(rows))[:max_chars].rstrip()
 
 
-def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: str = "", summary: str = "") -> list[str]:
+def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: str = "", summary: str = "",
+                           avoid=()) -> list[str]:
     """本机 Strata（llm_api.MODEL_SIMPLE）出 n 个项目名。失败或没内容就抛 RuntimeError。不开手动窗口。
 
     给了 ``source_text``（分析报告）就用它，否则用场景内容。
@@ -161,8 +162,16 @@ def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: s
 
     api = llm_api.LLMApi(llm_api.MODEL_SIMPLE)
     api.manual_fallback = False
-    answer = api.generate_text(_title_prompt(content_is_chinese(text), content_is_traditional(text)), text)
+    prompt = _title_prompt(content_is_chinese(text), content_is_traditional(text))
+    avoid = [a for a in (avoid or []) if str(a or "").strip()]
+    if avoid:  # t208u: 重新生成：不要重复已经被否掉的名字
+        prompt += ("\nThe user rejected these titles; do NOT repeat them or close variants of them, "
+                   "give 3 clearly different ones: " + json.dumps(avoid, ensure_ascii=False))
+    answer = api.generate_text(prompt, text)
     titles = parse_title_suggestions(answer or "", n=n, exclude=current)
+    if avoid:
+        _bad = {str(a).strip().casefold() for a in avoid}
+        titles = [x for x in titles if x.casefold() not in _bad]
     if not titles:
         raise RuntimeError("Strata 没有返回可用的项目名称。")
     return titles
@@ -206,84 +215,133 @@ def ask_project_title(
     entry = ttk.Entry(main, textvariable=name_var, width=58, font=_big)
     entry.pack(fill=tk.X)
     _from_report = bool((source_text or "").strip())
-    status = tk.Label(
-        main,
-        text="正在根据分析报告生成建议…" if _from_report else "正在根据场景内容生成建议…",
-        fg="#1a4fa0",
-        anchor="w",
-        justify=tk.LEFT,
-    )
+    _loading_text = "正在根据分析报告生成建议…" if _from_report else "正在根据场景内容生成建议…"
+    status = tk.Label(main, text=_loading_text, fg="#1a4fa0", anchor="w", justify=tk.LEFT)
     status.pack(fill=tk.X, pady=(6, 0))
     bar = ttk.Frame(main)
     bar.pack(fill=tk.X, pady=(10, 0))
     done = [False]
+    # t208u: 重新生成：gen 是请求号（旧请求的结果丢掉）；rejected 是本窗口里被替换掉的建议（只拿来提示 Strata，
+    # 不记历史）；auto 是程序放进输入框的值（用户没改过时，换建议会把输入框退回当前名称）
+    st = {"gen": 0, "busy": False, "rejected": [], "auto": current, "recorded": False}
+
+    def _shown() -> list:
+        return list(choices[1:])
+
+    def _record_final():
+        # t208u: 只在关窗时记一次「最后显示的那 3 个」；被重新生成替换掉的不记
+        if st["recorded"]:
+            return
+        st["recorded"] = True
+        got = _shown()
+        if got and callable(on_titles):
+            try:
+                on_titles(got)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 名字没有记进历史：{exc}")
 
     def _pick(_e=None):
         sel = listbox.curselection()
         if not sel:
             return
         i = sel[0]
-        name_var.set(current if i == 0 else choices[i])
+        val = current if i == 0 else choices[i]
+        st["auto"] = val
+        name_var.set(val)
+
+    def _close():
+        done[0] = True
+        st["gen"] += 1  # 还在跑的请求回来也不用了
+        _record_final()
+        try:
+            dlg.destroy()
+        except tk.TclError:
+            pass
 
     def _ok(_e=None):
         name = (name_var.get() or "").strip()
-        done[0] = True
-        dlg.destroy()
+        _close()
         if name and name != current:
             on_chosen(name)
 
     def _cancel(_e=None):
-        done[0] = True
-        dlg.destroy()
+        _close()
 
     listbox.bind("<<ListboxSelect>>", _pick)
     listbox.bind("<Double-Button-1>", lambda e: (_pick(), _ok()))
     ttk.Button(bar, text="确定", command=_ok).pack(side=tk.RIGHT)
     ttk.Button(bar, text="取消", command=_cancel).pack(side=tk.RIGHT, padx=(0, 6))
+    regen_btn = ttk.Button(bar, text="重新生成", command=lambda: _start(regen=True))
+    regen_btn.pack(side=tk.RIGHT, padx=(0, 6))
     dlg.bind("<Return>", _ok)
     dlg.bind("<Escape>", _cancel)
     dlg.protocol("WM_DELETE_WINDOW", _cancel)
-    try:
-        dlg.config(cursor="watch")
-    except tk.TclError:
-        pass
 
     results: queue.Queue = queue.Queue()
 
-    def _work():
+    def _work(gen: int, avoid: list):
         try:
-            got = suggest_project_titles(scenes, current, source_text=source_text, summary=summary)
-            if callable(on_titles):
-                try:
-                    on_titles(list(got))  # t168u: 记进生成历史
-                except Exception as exc:  # noqa: BLE001
-                    print(f"⚠️ 名字没有记进历史：{exc}")
-            results.put(("ok", got))
+            got = suggest_project_titles(scenes, current, source_text=source_text, summary=summary, avoid=avoid)
+            results.put((gen, "ok", got))
         except Exception as exc:  # noqa: BLE001
-            results.put(("err", str(exc)))
+            results.put((gen, "err", str(exc)))
 
-    def _poll():
-        if done[0]:
+    def _apply(kind, payload, regen):
+        dlg.config(cursor="")
+        if kind != "ok":
+            status.config(text=f"建议没有生成：{payload}\n可以保留当前名称、直接改写，或再点「重新生成」。", fg="#b00020")
+            return
+        old = _shown()
+        if regen:
+            st["rejected"].extend(x for x in old if x not in st["rejected"])
+        listbox.delete(1, tk.END)
+        del choices[1:]
+        for x in payload:
+            choices.append(x)
+            listbox.insert(tk.END, x)
+        if (name_var.get() or "").strip() == (st["auto"] or "").strip() and st["auto"] in old:
+            name_var.set(current)  # 没改过、原来选的是被替换掉的建议 → 退回当前名称
+            st["auto"] = current
+        listbox.selection_clear(0, tk.END)
+        _now = (name_var.get() or "").strip()
+        listbox.selection_set(choices.index(_now) if _now in choices[1:] else 0)
+        status.config(text=f"已{'重新' if regen else ''}生成 {len(payload)} 个建议（本机 Strata）。", fg="#0a6b0a")
+
+    def _poll(gen: int, regen: bool):
+        if done[0] or gen != st["gen"]:
             return
         try:
-            kind, payload = results.get_nowait()
+            rgen, kind, payload = results.get_nowait()
         except queue.Empty:
-            dlg.after(150, _poll)
+            dlg.after(150, lambda: _poll(gen, regen))
             return
+        if rgen != st["gen"]:  # 过时的结果
+            dlg.after(150, lambda: _poll(gen, regen))
+            return
+        st["busy"] = False
         try:
-            dlg.config(cursor="")
-            if kind == "ok":
-                for t in payload:
-                    choices.append(t)
-                    listbox.insert(tk.END, t)
-                status.config(text=f"已生成 {len(payload)} 个建议（本机 Strata）。", fg="#0a6b0a")
-            else:
-                status.config(text=f"建议没有生成：{payload}\n可以保留当前名称，或直接改写。", fg="#b00020")
+            regen_btn.state(["!disabled"])
+            _apply(kind, payload, regen)
         except tk.TclError:
             pass
 
-    threading.Thread(target=_work, daemon=True, name="title-suggest").start()
-    dlg.after(150, _poll)
+    def _start(regen: bool = False):
+        if done[0] or st["busy"]:
+            return
+        st["gen"] += 1
+        st["busy"] = True
+        gen = st["gen"]
+        avoid = list(st["rejected"]) + (_shown() if regen else [])
+        try:
+            regen_btn.state(["disabled"])
+            dlg.config(cursor="watch")
+            status.config(text=("正在重新生成建议…" if regen else _loading_text), fg="#1a4fa0")
+        except tk.TclError:
+            pass
+        threading.Thread(target=_work, args=(gen, avoid), daemon=True, name="title-suggest").start()
+        dlg.after(150, lambda: _poll(gen, regen))
+
+    _start()
     try:
         dlg.update_idletasks()
         x = parent.winfo_rootx() + 120
@@ -292,5 +350,7 @@ def ask_project_title(
     except tk.TclError:
         pass
     entry.focus_set()
-    dlg._title_suggest = {"choices": choices, "name_var": name_var, "listbox": listbox, "pick": _pick, "ok": _ok, "cancel": _cancel, "status": status}
+    dlg._title_suggest = {"choices": choices, "name_var": name_var, "listbox": listbox, "pick": _pick, "ok": _ok,
+                          "cancel": _cancel, "status": status, "regen": lambda: _start(regen=True),
+                          "regen_btn": regen_btn, "state": st}
     return dlg

@@ -772,13 +772,22 @@ def _one_node(prompt: Dict[str, Any], class_type: str) -> str:
 
 def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt: str, seconds: float,
                             width: int, height: int, seed: int, fps=None, filename_prefix: str = "video/MiniMax_H3",
-                            negative=None, last_image_name=None, audio_name=None) -> Dict[str, Any]:
-    """把 API 格式工作流复制一份并填入参数（纯函数，可离线测）。image_name 是 /upload/image 返回的文件名。"""
+                            negative=None, last_image_name=None, audio_name=None,
+                            ref_image_names=None) -> Dict[str, Any]:
+    """把 API 格式工作流复制一份并填入参数（纯函数，可离线测）。image_name 是 /upload/image 返回的文件名。
+    t216u: 工作流里是 MiniMaxH3ReferenceToVideo（R2V）时：场景图 = ref_image_0（<Picture 1>），
+    ref_image_names（人物肖像）依次接 ref_image_1..（<Picture 2>..），最多共 9 张；
+    再用 MiniMaxH3AddGuide 把场景图钉在第 0 帧（有结束图就钉在最后一帧）。"""
     import copy
 
     wf = copy.deepcopy(workflow)
     if width % 32 or height % 32:
         raise ValueError(f"MiniMax H3 的宽高必须是 32 的倍数（给的是 {width}x{height}）")
+    if _find_nodes(wf, "MiniMaxH3ReferenceToVideo"):
+        return _build_minimax_h3_r2v(wf, image_name=image_name, prompt=prompt, seconds=seconds, width=width,
+                                     height=height, seed=seed, fps=fps, filename_prefix=filename_prefix,
+                                     last_image_name=last_image_name, audio_name=audio_name,
+                                     ref_image_names=list(ref_image_names or []))
     i2v = _one_node(wf, "MiniMaxH3ImageToVideo")
     text = (prompt or "").strip()
     # t162u: H3 只有正面条件（BasicGuider，没有负面 / CFG），「Avoid: 字幕, 日夜变化」写进去反而会被画出来，所以不加
@@ -838,12 +847,12 @@ def _parse_size(text: str, fallback: tuple) -> tuple:
         return fallback
 
 
-MINIMAX_LENGTHS = (7, 10, 13)  # t200u: MiniMax 只给 7 / 10 / 13 秒
-MINIMAX_MAX_SECONDS = 13.0
+MINIMAX_LENGTHS = (7, 10, 12)  # t200u: MiniMax 只给 7 / 10 / 12 秒
+MINIMAX_MAX_SECONDS = 12.0
 
 
 def minimax_snap_seconds(seconds) -> int:
-    """t200u: 任意秒数（含 Grok 的 6 / 15）→ 最近的 7 / 10 / 13：6→7，10→10，15→13。"""
+    """t200u: 任意秒数（含 Grok 的 6 / 15）→ 最近的 7 / 10 / 12：6→7，10→10，15→12。"""
     try:
         s = float(str(seconds).strip().rstrip("sS") or 10)
     except Exception:  # noqa: BLE001
@@ -852,7 +861,7 @@ def minimax_snap_seconds(seconds) -> int:
 
 
 def minimax_audio_video_seconds(audio_seconds) -> float:
-    """t200u: 有音频时的视频长度：跟音频走（至少 4 秒），最长 13 秒；> 13 秒或读不到按 13 秒。"""
+    """t200u: 有音频时的视频长度：跟音频走（至少 4 秒），最长 12 秒；> 12 秒或读不到按 12 秒。"""
     a = float(audio_seconds or 0)
     if a <= 0 or a > MINIMAX_MAX_SECONDS:
         return MINIMAX_MAX_SECONDS
@@ -860,17 +869,17 @@ def minimax_audio_video_seconds(audio_seconds) -> float:
 
 
 def minimax_size_for(orientation: str, seconds: float, has_audio: bool, audio_seconds=None) -> tuple:
-    """返回 (宽, 高, 说明)。t200u: 分辨率固定 1024x576（竖屏 576x1024），不再按长度 / 音频加减。
+    """返回 (宽, 高, 说明)。t200u: 分辨率固定 1120x640（竖屏 640x1120），不再按长度 / 音频加减。
     seconds / has_audio / audio_seconds 只用来写说明。"""
     if has_audio:
         a = float(audio_seconds or 0)
         what = f"音频 {a:.1f} 秒" if a > 0 else "音频时长读不到"
         if a <= 0 or a > MINIMAX_MAX_SECONDS:
-            what += "，按 13 秒"
+            what += "，按 12 秒"
     else:
         what = f"{int(round(float(seconds or 0)))}秒"
-    long_e, short_e = 1024, 576
-    why = what + "，固定 1024x576"
+    long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_LARGE", "1120x640"), (1120, 640))  # t252u
+    why = what + f"，固定 {long_e}x{short_e}"
     w, h = (short_e, long_e) if str(orientation or "").lower() == "portrait" else (long_e, short_e)
     return w, h, why
 
@@ -894,7 +903,7 @@ def crop_to_aspect(image_path: str, width: int, height: int, out_path: str) -> s
 def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: int, height: int,
                          negative=None, seed=None, fps=None, output_path=None, server=None,
                          timeout_s: float = 3600.0, status=None, crop: bool = True,
-                         audio_path=None, last_image_path=None, workflow_path=None) -> str:
+                         audio_path=None, last_image_path=None, workflow_path=None, ref_image_paths=None) -> str:
     """ComfyUI（MiniMax H3）图生视频：上传起始图 → POST /prompt → 轮询 /history → /view 下载 mp4。返回本地路径。
     server 默认 config.COMFYUI_VIDEO_URL；宽高要是 32 的倍数；seed 不给就随机。"""
     import random
@@ -920,6 +929,9 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         workflow = json.load(f)
     seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    is_r2v = bool(_find_nodes(workflow, "MiniMaxH3ReferenceToVideo"))
+    if is_r2v:  # t216u: 先确认这台机器有 Ref2VA 权重，没有就说清楚，不提交
+        check_comfy_unet_available(base, workflow)
 
     upload_path = image_path
     if crop:  # t152u: 居中裁到目标比例并缩小，避免拉伸、减小上传
@@ -938,13 +950,13 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
 
     import tempfile
 
-    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–13 秒），音频按这个长度截好转 wav 再上传
+    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–12 秒），音频按这个长度截好转 wav 再上传
     audio_local = None
     if audio_path and os.path.isfile(audio_path):
         dur = h3_audio_seconds(audio_path)
-        seconds = minimax_audio_video_seconds(dur)  # t200u: 跟音频（至少 4 秒），最长 13 秒
+        seconds = minimax_audio_video_seconds(dur)  # t200u: 跟音频（至少 4 秒），最长 12 秒
         if dur > MINIMAX_MAX_SECONDS:
-            say(f"场景音频 {dur:.1f} 秒，超过 13 秒，只用前 13 秒")
+            say(f"场景音频 {dur:.1f} 秒，超过 12 秒，只用前 12 秒")
         audio_local = os.path.join(tempfile.gettempdir(), f"h3_{stamp}_audio.wav")
         # apad + -t：音频不够长就补静音，正好和视频一样长（后面换音轨用 -shortest 不会截掉画面）
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", audio_path, "-af", "apad", "-t", f"{float(seconds):.3f}",
@@ -965,6 +977,14 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
                                      os.path.join(tempfile.gettempdir(), f"h3_{stamp}_last_frame.png"))
         say(f"上传结束图 {os.path.basename(last_image_path)}")
         last_image_name = upload(last_up, f"h3_{stamp}_last_{os.path.basename(last_image_path)}")
+    ref_image_names = []
+    if is_r2v:
+        refs = [p for p in (ref_image_paths or []) if p and os.path.isfile(p)][:R2V_MAX_REFS - 1]
+        for k, rp in enumerate(refs, 2):
+            say(f"上传人物肖像 <Picture {k}> {os.path.basename(rp)}")
+            ref_image_names.append(upload(rp, f"h3_{stamp}_ref{k}_{os.path.basename(rp)}"))
+    elif ref_image_paths:
+        say("原工作流没有参考图输入，人物肖像不使用")
     audio_name = None
     if audio_local:
         say(f"上传场景音频 {os.path.basename(audio_path)}（{float(seconds):.1f} 秒，对口型）")
@@ -972,7 +992,8 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
 
     wf = build_minimax_h3_prompt(workflow, image_name=image_name, prompt=prompt, seconds=seconds, width=width,
                                  height=height, seed=seed, fps=fps, filename_prefix=f"video/H3_{stamp}",
-                                 negative=negative, last_image_name=last_image_name, audio_name=audio_name)
+                                 negative=negative, last_image_name=last_image_name, audio_name=audio_name,
+                                 ref_image_names=ref_image_names)
     client_id = str(uuid.uuid4())
     r = requests.post(f"{base}/prompt", json={"prompt": wf, "client_id": client_id}, timeout=60)
     if r.status_code != 200:
@@ -1043,3 +1064,109 @@ def h3_audio_seconds(path: str) -> float:
         return float((out.stdout or "").strip() or 0)
     except Exception:  # noqa: BLE001
         return 0.0
+
+
+# ---------------------------------------------------------------------------
+# t216u: MiniMax H3 参考图工作流（R2V，Ref2VA 权重）
+R2V_MAX_REFS = 9  # MiniMaxH3ReferenceToVideo 的 ref_images 最多 9 张（场景图 + 8 张肖像）
+MINIMAX_H3_R2V_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                       "workflow", "MiniMax_H3_R2V_5070.json")
+# t228u: FastH3 OmniRef（FastVideo 8 步蒸馏的 Ref2VA，euler / simple，SigmaShift 12/3），参考图接法和 R2V 一样
+MINIMAX_H3_FAST8_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                         "workflow", "MiniMax_H3_FastH3_8step_5070.json")
+MINIMAX_MODEL_SOURCE_HINT = {  # 缺模型时提示：从 5070Ti（.36）这个位置拷
+    "fasth3_omniref_qad_nvfp4_comfy.safetensors":
+        r"D:\ComfyUI-Easy-Install\ComfyUI-Easy-Install\ComfyUI\models\diffusion_models\fasth3_omniref_qad_nvfp4_comfy.safetensors",
+    "MiniMax-H3_Ref2VA-NVFP4.safetensors":
+        r"D:\ComfyUI-Easy-Install\ComfyUI-Easy-Install\ComfyUI\models\diffusion_models\MiniMax-H3_Ref2VA-NVFP4.safetensors",
+}
+
+
+def minimax_workflow_for(choice: str) -> str:
+    """t228u: h3_workflow 选项 → 工作流文件（i2v 返回空 = 用服务器选项里的原工作流）。"""
+    return {"r2v": MINIMAX_H3_R2V_WORKFLOW, "r2v_fast8": MINIMAX_H3_FAST8_WORKFLOW}.get(str(choice or ""), "")
+
+
+def _build_minimax_h3_r2v(wf, *, image_name, prompt, seconds, width, height, seed, fps, filename_prefix,
+                          last_image_name, audio_name, ref_image_names):
+    r2v = _one_node(wf, "MiniMaxH3ReferenceToVideo")
+    vae = wf[r2v]["inputs"].get("vae") or wf[_one_node(wf, "VAEDecode")]["inputs"]["vae"]
+    wf[r2v]["inputs"].update({"prompt": (prompt or "").strip(), "width": int(width), "height": int(height)})
+    for k in [k for k in wf[r2v]["inputs"] if k.startswith("ref_images.")]:
+        wf[r2v]["inputs"].pop(k)
+    nid = [max(int(k) for k in wf if str(k).isdigit())]
+
+    def new(node):
+        nid[0] += 1
+        wf[str(nid[0])] = node
+        return str(nid[0])
+
+    names = [image_name] + list(ref_image_names or [])
+    if len(names) > R2V_MAX_REFS:
+        print(f"[ComfyUI H3] 参考图 {len(names)} 张，只用前 {R2V_MAX_REFS} 张")
+        names = names[:R2V_MAX_REFS]
+    first_id = None
+    for i, nm in enumerate(names):
+        lid = new({"class_type": "LoadImage", "inputs": {"image": nm},
+                   "_meta": {"title": "scene (first frame)" if i == 0 else f"portrait <Picture {i + 1}>"}})
+        if i == 0:
+            first_id = lid
+        wf[r2v]["inputs"][f"ref_images.ref_image_{i}"] = [lid, 0]
+    # 场景图钉在第 0 帧（MiniMaxH3AddGuide 只改 positive，latent 照旧）
+    pos = new({"class_type": "MiniMaxH3AddGuide",
+               "inputs": {"positive": [r2v, 0], "latent": [r2v, 1], "frame_idx": 0, "vae": vae,
+                          "image": [first_id, 0]}, "_meta": {"title": "anchor first frame"}})
+    if last_image_name:
+        last_id = new({"class_type": "LoadImage", "inputs": {"image": last_image_name}, "_meta": {"title": "last_frame"}})
+        pos = new({"class_type": "MiniMaxH3AddGuide",
+                   "inputs": {"positive": [pos, 0], "latent": [r2v, 1], "frame_idx": -1, "vae": vae,
+                              "image": [last_id, 0]}, "_meta": {"title": "anchor last frame"}})
+    guider = _one_node(wf, "BasicGuider")
+    # t221u: 工作流里有 purge_before_sampling 节点时，条件先经过它（文字编码器 / VAE 编码完、采样前清显存）
+    purge = next((k for k, v in wf.items() if isinstance(v, dict) and (v.get("_meta") or {}).get("title") == "purge_before_sampling"), None)
+    if purge:
+        wf[purge]["inputs"]["anything"] = [pos, 0]
+        pos = purge
+    wf[guider]["inputs"]["conditioning"] = [pos, 0]
+    if audio_name:  # 和原工作流一样：PixaromaH3AudioSync 插在模型 / latent 和采样之间
+        audio_vae = wf[_one_node(wf, "VAEDecodeAudio")]["inputs"]["vae"]
+        sampler = _one_node(wf, "SamplerCustomAdvanced")
+        la_id = new({"class_type": "LoadAudio", "inputs": {"audio": audio_name}, "_meta": {"title": "scene_audio"}})
+        sync_id = new({"class_type": "PixaromaH3AudioSync",
+                       "inputs": {"model": wf[guider]["inputs"]["model"], "latent": [r2v, 1],
+                                  "audio_vae": audio_vae, "track": [la_id, 0]}, "_meta": {"title": "lip sync"}})
+        wf[guider]["inputs"]["model"] = [sync_id, 0]
+        wf[sampler]["inputs"]["latent_image"] = [sync_id, 1]
+        wf[_one_node(wf, "CreateVideo")]["inputs"]["audio"] = [sync_id, 2]
+    wf[_one_node(wf, "PrimitiveFloat")]["inputs"]["value"] = float(seconds)
+    wf[_one_node(wf, "RandomNoise")]["inputs"]["noise_seed"] = int(seed)
+    if fps:
+        wf[_one_node(wf, "CreateVideo")]["inputs"]["fps"] = float(fps)
+    wf[_one_node(wf, "SaveVideo")]["inputs"]["filename_prefix"] = filename_prefix
+    return wf
+
+
+def workflow_unet_names(workflow) -> list:
+    return [str(v["inputs"].get("unet_name")) for v in workflow.values()
+            if isinstance(v, dict) and v.get("class_type") == "UNETLoader" and v.get("inputs", {}).get("unet_name")]
+
+
+def check_comfy_unet_available(base: str, workflow, get=None) -> None:
+    """t216u: GET /object_info/UNETLoader（只读），工作流要的模型这台没有就抛出清楚的错误。"""
+    get = get or (lambda url: requests.get(url, timeout=30).json())
+    try:
+        info = get(f"{base}/object_info/UNETLoader")
+        spec = info["UNETLoader"]["input"]["required"]["unet_name"]
+        opts = spec[0] if isinstance(spec[0], list) else (spec[1] or {}).get("options", [])
+    except Exception as e:  # noqa: BLE001
+        print(f"[ComfyUI H3] 读不到 {base} 的模型列表，照常提交：{e}")
+        return
+    missing = [n for n in workflow_unet_names(workflow) if n not in opts]
+    if missing:
+        src = "；".join(f"{n}（5070Ti 上在 {MINIMAX_MODEL_SOURCE_HINT[n]}）" for n in missing if n in MINIMAX_MODEL_SOURCE_HINT)
+        raise RuntimeError(
+            f"这台 ComfyUI（{base}）没有这个工作流要的模型：{', '.join(missing)}。\n"
+            "请把这个文件拷到这台服务器的 ComfyUI\\models\\diffusion_models\\ 文件夹（拷完在 ComfyUI 里刷新或重启）"
+            + (f"。来源：{src}" if src else "")
+            + "；或者在生场视频窗口选「原工作流（无参考图）」/ 另一台机器。")
+

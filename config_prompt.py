@@ -6520,17 +6520,34 @@ def build_analysis_flow_prompt(
 
 # t167u: 场景对话的长度和人数（Grok / Gemini / DeepSeek / Strata 场景生成共用，追加在提示词最后）
 SCENE_DIALOGUE_BUDGET_RULE = """
-*** 每一场的对话要短（这一条优先于上面所有关于 speaking 的写法）
-    ** 每一场开口说话的人很少：通常 1 到 2 人，最多 2 人。其他人只出现在画面里，不说话。
-    ** 每一场最多换 3 次说话人。句子很短时最多 3 次交换；句子稍长时 2 次；一问一答（1 次交换）也很好。
-    ** 每个人在一场里最多说 2 次话。
-    ** 整场 speaking 从从容容地说，大约 10 秒内说完：一共约 20 到 30 个汉字（英文约 25 到 35 个词）。
-    ** 句子精炼、口语化，只留最要紧的一两句意思；更多内容放到下一场，或放进 visual 里演出来。
-    ** 例子（两人，2 次交换）："<1> 这是好机会，你去试试。<2> 万一搞砸了呢？<1> 那就再来一次。"
-*** SCENE DIALOGUE BUDGET (overrides any earlier speaking rule)
-    ** 1-2 speakers per scene, never more. Others may appear silently.
-    ** At most 3 speaker changes per scene (short lines: up to 3; slightly longer lines: 2; one question and one answer is fine). Each person speaks at most twice.
-    ** The whole speaking is said unhurriedly in about 10 seconds: about 20-30 Chinese characters (about 25-35 English words) in total.
+*** 对话要把整个故事讲清楚（t211u：这一条优先于上面所有关于 speaking 长度和写法的规则）
+    ** 听众只听得到 speaking。几场听下来，要知道：谁、遇到什么事、为什么难受（前因），问题怎么表现出来，
+       哪里转折、为什么转，最后怎么解决、得到什么领悟或有什么改变（后果）。
+    ** 按场分配故事线：
+       - 第一场：铺垫 + 问题。说清人物是谁、彼此什么关系、发生了什么具体的事、为什么这件事让他痛。
+       - 中间各场：挣扎 + 转折。问题怎么变严重或卡在哪里；转折要用话明明白白说出来（谁点破了什么、他意识到了什么），不能只靠画面。
+       - 最后一场：解决 + 领悟。说出他具体怎么做、哪里变了，以及这个故事想告诉听众的那句意思。
+       - 只有一场时，这一场里依次交代问题、转折、解决。
+    ** 每一场的话接着上一场刚发生的事往下说（提到上一场的事或说过的话），不要像换了一个故事。
+    ** 说具体的事和细节（发生了什么、哪句话、哪件事），不要空泛的感叹；不要没头没尾的半句；不要提听众没听过的人或事。
+    ** 每场开口说话的人通常 1 到 2 人，最多 2 人；2 到 4 次一来一往都可以；每个人一场最多说 3 次。
+    ** 长度：每场大约 10 秒，中文约 40 到 55 个字（英文约 25 到 35 个词）；为了说清楚可以到约 12 秒（中文约 60 字、英文约 40 词），不要再长。
+       宁可把情节删减、合并，也不要把交代删掉：故事可以简单，但前因后果必须听得懂。
+    ** 动作、表情、地点写在 visual 里，不写进 speaking。
+    ** 例子（两人，同一个故事的三场，每场约 45 到 55 字）：
+       第1场："<1> 她三天沒回我訊息，我打了二十通電話，她說我讓她喘不過氣。<2> 所以你越怕她走，就抓得越緊？<1> 對，我一停下來就慌。"
+       第2场："<2> 你說她喘不過氣，那你有沒有問過她需要什麼？<1> 沒有……我只想確定她還愛我。<2> 原來你要的是安全感，不是她。"
+       第3场："<1> 我昨天跟她說，我會給你空間，有事我先跟自己待一下。<2> 她怎麼說？<1> 她說謝謝，晚上主動打給我了。"
+*** DIALOGUE CARRIES THE WHOLE STORY (overrides any earlier speaking length rule)
+    ** The audience only hears speaking. After all scenes they must know who, what happened, why it hurts, how the problem shows,
+       the turning point and why, and how it is resolved / what changes.
+    ** Arc by scene: first = setup + problem (who, relationship, the concrete event, why it hurts); middle = struggle + a turning point
+       SAID IN WORDS; last = resolution, what he does differently, the insight. One scene only: problem, turn and resolution in order.
+    ** Each scene picks up what just happened in the previous one. Concrete details, no vague fragments, no unexplained references.
+    ** 1-2 speakers per scene; 2-4 exchanges; each person at most 3 times.
+    ** Length: about 10 seconds per scene, about 40-55 Chinese characters (25-35 English words); up to about 12 seconds
+       (about 60 characters / 40 words) when needed for clarity, never longer. Condense the story, never the clarity.
+    ** Actions, expressions and places go in visual, not in speaking.
 """
 
 
@@ -6561,3 +6578,73 @@ SCENE_SPEAKER_ID_RULE = """
 
 def scene_speaker_id_block() -> str:
     return SCENE_SPEAKER_ID_RULE
+
+
+def h3_portrait_reference_block(refs: list) -> str:
+    """t216u: MiniMax H3 参考图工作流：<Picture 1> 是场景 / 首帧，<Picture 2>.. 是说话人肖像（认脸和衣服）。"""
+    if not refs:
+        return ""
+    lines = ["REFERENCE PICTURES:", "- <Picture 1> is the scene and the first frame of the video."]
+    for k, (n, name, _path) in enumerate(refs, 2):
+        lines.append(f"- <Picture {k}> is the portrait of Speaker {n} {name}: their face, hair and clothing.")
+    lines += [
+        "The portraits are identity and clothing references only. Each speaker looks exactly like their portrait "
+        "(same face, hair and clothes), even if their face is hidden or unclear in <Picture 1>.",
+        "The video starts from <Picture 1>'s composition, place, light and art style. Do not paste a portrait "
+        "into the frame and do not copy a portrait's background or pose.",
+        "A speaker who is not visible in <Picture 1> enters the scene naturally only when the dialogue brings them "
+        "in, and then looks like their portrait. Do not add anyone else.",
+        "Each spoken line is delivered by the speaker marked by its <1>/<2>/<N> tag: lip movement and voice on that "
+        "exact person; the others stay silent while someone else speaks.",
+    ]
+    return "\n".join(lines)
+
+
+# t225u: 长度「自动」：按 speaking 估算说话时长，再挑长度选项（短 → 最小，中 → 10 秒，长 → 最大）
+# 估算 = 汉字 / 5.5 字每秒 + 英文等词 / 2.5 词每秒 + 停顿：句末（。？！）0.25 秒、逗号顿号等 0.1 秒、
+#        省略号 0.4 秒、换人说话 0.3 秒；<1>/<2> 标签不算字。和场景对白规则一致：40–55 字 ≈ 10 秒，约 60 字 ≈ 12 秒。
+SPEECH_CJK_PER_SEC = 5.5
+SPEECH_WORDS_PER_SEC = 2.5
+SPEECH_PAUSE_END = 0.25
+SPEECH_PAUSE_COMMA = 0.1
+SPEECH_PAUSE_ELLIPSIS = 0.4
+SPEECH_PAUSE_SWITCH = 0.3
+AUTO_LENGTH_SLACK = 0.5  # 估算比选项多不到 0.5 秒仍算放得下
+
+
+def speaking_seconds_estimate(text: str) -> tuple:
+    """返回 (秒数, {cjk, words, ends, commas, ellipsis, switches})。"""
+    import re as _re
+
+    t = str(text or "")
+    tags = _re.findall(r"<\d+>", t)
+    body = _re.sub(r"<\d+>", " ", t)
+    ell = len(_re.findall(r"……|…|\.\.\.", body))
+    body2 = _re.sub(r"……|…|\.\.\.", " ", body)
+    cjk = len(_re.findall(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]", body2))
+    words = len(_re.findall(r"[A-Za-z0-9\u00c0-\u024f']+", body2))
+    ends = len(_re.findall(r"[。？！?!]|(?<=[A-Za-z])\.(?=\s|$)", body2))
+    commas = len(_re.findall(r"[，、,;；：:]", body2))
+    switches = 0
+    last = None
+    for tag in tags:
+        if last is not None and tag != last:
+            switches += 1
+        last = tag
+    secs = (cjk / SPEECH_CJK_PER_SEC + words / SPEECH_WORDS_PER_SEC + ends * SPEECH_PAUSE_END
+            + commas * SPEECH_PAUSE_COMMA + ell * SPEECH_PAUSE_ELLIPSIS + switches * SPEECH_PAUSE_SWITCH)
+    return round(secs, 1), {"cjk": cjk, "words": words, "ends": ends, "commas": commas,
+                            "ellipsis": ell, "switches": switches}
+
+
+def auto_length_choice(text: str, options) -> tuple:
+    """options 如 ("7s","10s","12s")。返回 (选中的值, 日志一句)。没有讲话 → 最小。"""
+    opts = sorted(options, key=lambda v: float(str(v).rstrip("sS")))
+    secs, d = speaking_seconds_estimate(text)
+    if d["cjk"] + d["words"] == 0:
+        return opts[0], f"没有讲话 → {opts[0][:-1]}秒"
+    pick = next((o for o in opts if secs <= float(o[:-1]) + AUTO_LENGTH_SLACK), opts[-1])
+    size = " ".join(x for x in (f"{d['cjk']}字" if d["cjk"] else "", f"{d['words']}词" if d["words"] else "") if x)
+    note = "（偏长，超过最长选项）" if secs > float(opts[-1][:-1]) + AUTO_LENGTH_SLACK else ""
+    return pick, f"讲话 {size} ≈ {secs:.1f}s → {pick[:-1]}秒{note}"
+

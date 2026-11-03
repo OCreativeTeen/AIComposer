@@ -1745,7 +1745,7 @@ class LLMApi:
                             mp4 = grok_cdp.make_video(
                                 prompt, grok_imgs, dest_dir=file_dest_dir or "", status=_cli_set_status,
                                 resolution=str(extra_params.get("resolution") or "720p"),
-                                duration=str(extra_params.get("duration") or "15s"),
+                                duration=str(extra_params.get("duration") or "10s"),  # t209u
                             )
 
                         def _apply_file():

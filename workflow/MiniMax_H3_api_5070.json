@@ -137,7 +137,7 @@
         0
       ],
       "conditioning": [
-        "104",
+        "130",
         0
       ]
     },
@@ -177,7 +177,7 @@
     "class_type": "VAEDecode",
     "inputs": {
       "samples": [
-        "14",
+        "131",
         0
       ],
       "vae": [
@@ -193,7 +193,7 @@
     "class_type": "VAEDecodeAudio",
     "inputs": {
       "samples": [
-        "14",
+        "131",
         0
       ],
       "vae": [
@@ -235,6 +235,34 @@
     },
     "_meta": {
       "title": "SaveVideo"
+    }
+  },
+  "130": {
+    "class_type": "LayerUtility: PurgeVRAM V2",
+    "inputs": {
+      "anything": [
+        "104",
+        0
+      ],
+      "purge_cache": true,
+      "purge_models": true
+    },
+    "_meta": {
+      "title": "purge_before_sampling"
+    }
+  },
+  "131": {
+    "class_type": "LayerUtility: PurgeVRAM V2",
+    "inputs": {
+      "anything": [
+        "14",
+        0
+      ],
+      "purge_cache": true,
+      "purge_models": true
+    },
+    "_meta": {
+      "title": "purge_before_decode"
     }
   }
 }

@@ -151,7 +151,9 @@ def open_video_prompt_dialog(
     text_var = tk.StringVar(value=saved_text)
     # 视频长度：不进提示词，作为 extra 参数交给 CLI自动（Grok Imagine 视频时长）。记在 video_prompt["duration"]。
     saved_duration = saved_choice.get("duration") if isinstance(saved_choice, dict) else None
-    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "13s") else "15s")
+    if saved_duration == "13s":  # t255u: MiniMax 13 秒改成 12 秒，旧项目存的 13s 当 12s
+        saved_duration = "12s"
+    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "12s", "auto") else "auto")  # t227u: 默认「自动」（存过的长度照旧恢复）
     saved_visual = True
     saved_speaking = True
     saved_actor = False
@@ -294,6 +296,7 @@ def open_video_prompt_dialog(
             "backend": backend_var.get(),
             "audio_mode": audio_mode_var.get(),
             "strata_polish": bool(polish_var.get()),  # t166u
+            "h3_workflow": h3_wf_var.get(),  # t216u: MiniMax 工作流 i2v / r2v
         }
 
     def remember() -> None:
@@ -343,6 +346,14 @@ def open_video_prompt_dialog(
         if not scenes:
             messagebox.showwarning("视频提示", "没有可用场景", parent=dlg)
             return
+        # t225u: 长度「自动」：每一场按自己的 speaking 估算（全集 / 本集从这一场起也是一场一场算）
+        _dur = duration_var.get()
+        if _dur == "auto":
+            _opts = _LEN_MM if _cfg_mm.is_minimax(backend) else _LEN_STD
+            _sp = " ".join(str(s.get("speaking") or "") for s in scenes)
+            _dur, _why = config_prompt.auto_length_choice(_sp, _opts)
+            _cap = str(scenes[0].get("caption") or scenes[0].get("title") or "").strip()
+            print(f"⏱ 自动长度：{_cap[:20] or '这一场'} {_why}")
         style = (get_style() or "").strip()
         if not style:
             style = (project_manager.LAST_VISUAL_STYLE or "").strip() or config.VISUAL_STYLE_OPTIONS[0]
@@ -363,7 +374,7 @@ def open_video_prompt_dialog(
                     visual_style=style,
                     camera=camera_var.get(),
                     text=text_var.get(),
-                    duration=duration_var.get(),
+                    duration=_dur,
                     fyi=fyi_now,
                 )
             elif is_transition:
@@ -435,13 +446,17 @@ def open_video_prompt_dialog(
                     missing.append("终止画面")
         # t123u: Grok 单画面：场景图后面按说话人顺序附上有形象图的人，提示词里说明每张图是谁。
         portrait_refs = []
-        if backend == "grok" and frames != "two" and images and callable(get_actor_portraits):
+        # t216u: MiniMax 选了「参考图工作流」时也附肖像（最多 8 张；场景图 + 8 = R2V 的 9 张上限）
+        _mm_r2v = _cfg_mm.is_minimax(backend) and h3_wf_var.get() in ("r2v", "r2v_fast8")  # t228u: FastH3 同样附肖像
+        if (backend == "grok" or _mm_r2v) and frames != "two" and images and callable(get_actor_portraits):
             try:
-                portrait_refs = list(get_actor_portraits(scenes[0]) or [])[:4]  # Grok 最多 5 张输入图
+                portrait_refs = list(get_actor_portraits(scenes[0]) or [])[: (8 if _mm_r2v else 4)]  # Grok 最多 5 张输入图
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 人物形象图没取到：{exc}")
                 portrait_refs = []
-        if portrait_refs:
+        if portrait_refs and _mm_r2v:
+            images = images[:1] + [p for _n, _name, p in portrait_refs]  # 提示词段落在 build_h3_prompt 之后加
+        elif portrait_refs:
             images = images[:1] + [p for _n, _name, p in portrait_refs]
             block = config_prompt.portrait_reference_block(portrait_refs)
             if "OUTPUT FORMAT" in prompt:
@@ -471,7 +486,7 @@ def open_video_prompt_dialog(
             try:
                 from utility import sd_image_processor as _sdp
 
-                _secs = float(_sdp.minimax_snap_seconds(duration_var.get()))  # t200u: 7 / 10 / 13
+                _secs = float(_sdp.minimax_snap_seconds(_dur))  # t200u: 7 / 10 / 12
 
                 if _amode in ("talk", "sing"):
                     _secs = _sdp.minimax_audio_video_seconds(_sdp.h3_audio_seconds(get_image("clip_audio") or ""))
@@ -486,6 +501,8 @@ def open_video_prompt_dialog(
                 fyi=get_fyi_text() if fyi_include_var.get() else "",
                 stage=bg_stage if bg_include_var.get() else None,
             )
+            if portrait_refs and _mm_r2v:  # t216u: <Picture k> = 谁的肖像
+                prompt = config_prompt.h3_portrait_reference_block(portrait_refs) + "\n\n" + prompt
         if missing and quiet:
             print("视频提示：这一场没有" + "、".join(missing) + "，只发已有的图。")
         elif missing:
@@ -496,11 +513,12 @@ def open_video_prompt_dialog(
             )
         remember()
         extra = {
-            "duration": duration_var.get(),
+            "duration": _dur,
             "resolution": "720p",
             "video_backend": backend,
             "chrome_account": account or "",  # t133u: LLM 窗口的 CLI自动 / 重试 都用这个账户
             "portrait_refs": len(portrait_refs),
+            "h3_workflow": h3_wf_var.get() if _cfg_mm.is_minimax(backend) else "i2v",  # t216u
             "orientation": "portrait" if _size == "1080x1920" else "landscape",
             "frames": frames,  # t155u: MiniMax 用：two 时第二张图是结束图
         }
@@ -603,13 +621,17 @@ def open_video_prompt_dialog(
     length_box = ttk.LabelFrame(actions, text="长度", padding=(8, 4))
     length_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     length_radios = []
-    # t200u: Grok / Gemini 6/10/15 秒；MiniMax 7/10/13 秒（换后端时就地改字和值，6↔7、10↔10、15↔13）
+    # t200u: Grok / Gemini 6/10/15 秒；MiniMax 7/10/12 秒（换后端时就地改字和值，6↔7、10↔10、15↔12）
     _LEN_STD = ("6s", "10s", "15s")
-    _LEN_MM = ("7s", "10s", "13s")
+    _LEN_MM = ("7s", "10s", "12s")
     for value, label in (("6s", "6秒"), ("10s", "10秒"), ("15s", "15秒")):
         _rb = ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var)
         _rb.pack(anchor=tk.W)
         length_radios.append(_rb)
+    # t225u: 自动 = 每一场按讲话长度挑（不加音频时）；加了音频整组灰掉
+    _rb = ttk.Radiobutton(length_box, text="自动", value="auto", variable=duration_var)
+    _rb.pack(anchor=tk.W)
+    length_radios.append(_rb)
 
     # t161u/t163u: 后端选在对话框里（Grok / Gemini / MiniMax）；场景音频：不加 / 作为说话 / 作为唱歌（只有 MiniMax）
     import config as _cfg_prefs
@@ -634,6 +656,16 @@ def open_video_prompt_dialog(
     backend_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + _cfg_prefs.minimax_backend_options():
         ttk.Radiobutton(backend_box, text=label, value=value, variable=backend_var).pack(anchor=tk.W)
+    # t216u: MiniMax 工作流：原工作流（无参考图，FL2VA）/ 参考图工作流（人物肖像，Ref2VA），记在项目 video_prompt
+    h3_wf_var = tk.StringVar(master=dlg, value=_sv.get("h3_workflow") if _sv.get("h3_workflow") in ("i2v", "r2v", "r2v_fast8") else "i2v")
+    h3_wf_box = ttk.LabelFrame(actions, text="MiniMax 工作流", padding=(8, 4))
+    h3_wf_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
+    h3_wf_radios = []
+    for value, label in (("i2v", "原工作流（无参考图）"), ("r2v", "参考图工作流（人物肖像）"),
+                         ("r2v_fast8", "参考图·8步快速（FastH3）")):  # t228u
+        _rb = ttk.Radiobutton(h3_wf_box, text=label, value=value, variable=h3_wf_var)
+        _rb.pack(anchor=tk.W)
+        h3_wf_radios.append(_rb)
     audio_box = ttk.LabelFrame(actions, text="场景音频" + ("" if _has_audio else "（这一场没有音频）"), padding=(8, 4))
     audio_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     audio_radios = []
@@ -652,9 +684,11 @@ def open_video_prompt_dialog(
         for rb, v in zip(length_radios, _vals):
             rb.configure(value=v, text=v[:-1] + "秒")
         _cur = duration_var.get()
-        if _cur not in _vals:
+        if _cur not in _vals and _cur != "auto":
             _other = _LEN_STD if mm else _LEN_MM
-            duration_var.set(_vals[_other.index(_cur)] if _cur in _other else _vals[-1])
+            duration_var.set(_vals[_other.index(_cur)] if _cur in _other else "auto")
+        for rb in h3_wf_radios:  # t216u: 只有 MiniMax 能选工作流
+            rb.state(["!disabled"] if mm else ["disabled"])
         for rb in audio_radios:  # 只有 MiniMax 且这一场有音频才能选（选的值照样记着）
             rb.state(["!disabled"] if (mm and _has_audio) else ["disabled"])
         with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing")
@@ -968,7 +1002,7 @@ def open_video_prompt_dialog(
     # t155u/t161u: 说清楚声音输入只有 MiniMax 支持
     ttk.Label(
         advanced,
-        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 13 秒自动分成几段（每段 ≤ 13 秒、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）；MiniMax 长度 7 / 10 / 13 秒，分辨率固定 1024×576（竖屏 576×1024），，"
+        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 12 秒自动分成几段（每段 ≤ 12 秒、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）；MiniMax 长度 7 / 10 / 12 秒，分辨率固定 1120×640（竖屏 640×1120），，"
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         + ("" if _has_audio else "（这一场没有音频）"),

@@ -1261,8 +1261,8 @@ You are a psychological counselor and master of high-empathy storytelling.
         * Show, Don't Tell: Events are just vehicles; the emotional pattern is the destination. 
 			* NO clinical or academic language. NO therapy speeches, counseling notes.
 			* NO summarizing the "lesson," "moral," or the psychological insight at the end.
-        * Subtextual Dialogue: Keep conversations natural. Characters should talk around their issues.
-        * If two people are in the life, most scenes are both of them. Both people speak inside ``speaking``, each with their own ``<N>``, said aloud, not as a private thought. They may trade a few short lines (at most 3 speaker changes, about 10 seconds). Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
+        * Natural Dialogue: keep conversations natural and spoken, but clear: across the scenes the lines themselves must make the cause, the problem, the turning point and the resolution understandable.
+        * If two people are in the life, most scenes are both of them. Both people speak inside ``speaking``, each with their own ``<N>``, said aloud, not as a private thought. They trade 2 to 4 lines, about 10 seconds per scene (up to about 13 seconds when needed so the story stays clear). Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
 
 ## STEP 3 - (Json structure)
 """ + STORY_SPEAK_CAST_RULES + """

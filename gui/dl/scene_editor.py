@@ -522,6 +522,8 @@ class SceneEditorImpl:
                      if config_prompt.normalize_story_style(opt[0]) == _want),
                     _saved_prompt_label,
                 )
+            if not _saved_prompt_label:  # t224u: 这一条没选过 → 用频道偏好
+                _saved_prompt_label = str(project_manager.channel_pref_get(channel_key, "scene_prompt_label") or "")
             if _saved_prompt_label in [opt[0] for opt in nb_prompt_choices]:
                 default_prompt_label = _saved_prompt_label
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
@@ -616,6 +618,8 @@ class SceneEditorImpl:
 
             def _commit_prompt_label(_e=None):
                 lbl = (prompt_combo_var.get() or "").strip()
+                if lbl:
+                    project_manager.channel_pref_set(channel_key, scene_prompt_label=lbl)  # t224u
                 if not lbl or video_detail.get("scene_prompt_label") == lbl:
                     return
                 video_detail["scene_prompt_label"] = lbl
@@ -1147,10 +1151,11 @@ class SceneEditorImpl:
             _last_material = [None]
 
             def _open_path(path: str) -> None:
-                try:
-                    os.startfile(path)  # type: ignore[attr-defined]
-                except (OSError, AttributeError) as exc:
-                    messagebox.showerror("打开", f"打不开：\n{exc}", parent=dlg)
+                from gui.dl.materials_panel import open_with_default_app
+
+                why = open_with_default_app(path)  # t206u: 文件不在 / 打不开时一句话提示
+                if why:
+                    messagebox.showerror("打开", why, parent=dlg)
 
             def _material_images() -> list:
                 project_manager.ensure_cover_newest_first(video_detail)  # t128u: 旧数据一次性改成最新在前
@@ -1207,7 +1212,7 @@ class SceneEditorImpl:
                     n_lines = len([x for x in (ttext or "").splitlines() if x.strip()])
                     out.append({"kind": "transcript", "path": transcript_path, "select": "media", "analyze": True,
                                 "title": f"文字稿：{os.path.basename(transcript_path)}",
-                                "detail": f"{n_lines} 行。双击把文字稿文件拷到剪贴板"})
+                                "detail": f"{n_lines} 行。双击打开文字稿（右键可拷到剪贴板）"})
                 else:
                     out.append({"kind": "transcript", "path": "", "select": "", "placeholder": True,
                                 "tile": "无文字稿", "title": "（没有文字稿）",
@@ -1311,6 +1316,16 @@ class SceneEditorImpl:
                         dlg, "已复制", f"文件已拷到剪贴板，可以粘贴到别处：\n{os.path.basename(path)}"
                     )
 
+            def _material_double(entry: dict) -> None:
+                """t206u: 双击：有文件的行用默认程序打开；没有文件的行照旧（选文件 / 转录）。拷到剪贴板在右键菜单。"""
+                if entry.get("placeholder") or not (entry.get("path") or ""):
+                    _material_pick(entry)
+                    return
+                path = entry.get("path") or ""
+                if (entry.get("kind") or "") == "transcript" and not os.path.isfile(path):
+                    path = _find_item_transcript_file(video_detail) or path
+                _open_path(path)
+
             def _material_select(entry: dict) -> None:
                 sel = entry.get("select") or ""
                 if sel:
@@ -1406,7 +1421,7 @@ class SceneEditorImpl:
                     imgs = _material_images()
                     key = os.path.normcase(os.path.abspath(path))
                     rest = [p for p in imgs if os.path.normcase(os.path.abspath(p)) != key]
-                    menu.add_command(label="设为第一张（封面）", command=lambda: _set_cover_list([path] + rest))
+                    menu.add_command(label="设为封面（移到第一）", command=lambda: _set_cover_list([path] + rest))
                     menu.add_command(label="从列表移除（不删文件）", command=lambda: _set_cover_list(rest))
                 if kind in ("audio", "video", "media", ""):
                     menu.add_command(label="选择 / 换一个音频或 mp4 …", command=_pick_item_media)
@@ -1550,11 +1565,12 @@ class SceneEditorImpl:
                 # 5 rows x ROW_H plus a little margin, so nothing scrolls.
                 height=5 * ROW_H + 12,
                 on_select=_material_select,
-                on_copy=_material_copy,
+                on_copy=_material_double,  # t206u: 双击 = 打开
                 build_menu=_material_menu,
                 on_rebuilt=_walk_materials_drop,
                 on_analyze=_material_analyze,
                 on_delete=_material_delete,
+                on_reorder_images=lambda paths: _set_cover_list(list(paths)),  # t214u: 拖动排序，第一张 = 封面
             )
             scene_ui["materials_panel"] = materials_panel
 
@@ -1740,6 +1756,9 @@ class SceneEditorImpl:
 
             _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
             _vs_cur, _talk_cur, _ = _project_look_from_row(video_detail)
+            _ch_key = self._channel_config_key()  # t224u: 频道偏好（这一条自己没存过时用）
+            if not _row_has_pref(video_detail, "visual_style"):
+                _vs_cur = config.match_visual_style(str(project_manager.channel_pref_get(_ch_key, "visual_style") or "")) or _vs_cur
             visual_style_var = tk.StringVar(value=_vs_cur)
             visual_style_combo_opts = list(_vs_opts)
             dialogue_mode_var = tk.StringVar(value=_talk_cur)
@@ -1749,6 +1768,9 @@ class SceneEditorImpl:
             # 单独放在最上面。STORY 窗只有 1100 宽，挤在标题那一行里会被裁掉，所以之前看不见。
             # 在这里改会记住，并用于节目生成（视频概览 / 信息图）和从这里新建 / 重新生成项目；不改已经建好的项目。
             _vsize_cur, _vsize_project = _story_video_size(video_detail)
+            if not _row_has_pref(video_detail, "story_video_size"):
+                _vsize_cur = (lambda v: v if v in ("1920x1080", "1080x1920") else _vsize_cur)(
+                    project_manager.channel_pref_get(_ch_key, "video_size"))
             video_size_var = tk.StringVar(value=_vsize_cur)
             scene_ui["video_size_var"] = video_size_var
             size_frm = ttk.Frame(frm)
@@ -1769,6 +1791,7 @@ class SceneEditorImpl:
 
             def _commit_video_size():
                 project_manager.remember_video_size(video_size_var.get())
+                project_manager.channel_pref_set(_ch_key, video_size=video_size_var.get())  # t224u
                 _sync_video_size_note()
                 video_detail["story_video_size"] = video_size_var.get()
                 pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
@@ -1800,6 +1823,12 @@ class SceneEditorImpl:
             # 地域 / 时代：和魔法工作流「全场内容」同一组。跟在画面比例后面。
             # 这一条有项目就用项目的；没有就用上次选择。创建 / 重新生成项目时传进去。
             _set_region, _set_era = _story_setting_place(video_detail)
+            if not _row_has_pref(video_detail, "setting_region"):
+                _cr = str(project_manager.channel_pref_get(_ch_key, "setting_region") or "")
+                if _cr in config_prompt.SETTING_PLACES:
+                    _ce = str(project_manager.channel_pref_get(_ch_key, "setting_era") or "")
+                    _eras = config_prompt.setting_era_labels(_cr)
+                    _set_region, _set_era = _cr, (_ce if _ce in _eras else (_eras[0] if _eras else ""))
             setting_region_var = tk.StringVar(value=_set_region)
             setting_era_var = tk.StringVar(value=_set_era)
             ttk.Label(size_frm, text="地域").pack(side=tk.LEFT, padx=(12, 4))
@@ -1826,6 +1855,8 @@ class SceneEditorImpl:
             def _commit_setting_place(_e=None):
                 _sync_setting_eras()
                 project_manager.remember_setting_place(setting_region_var.get(), setting_era_var.get())
+                project_manager.channel_pref_set(  # t224u
+                    _ch_key, setting_region=setting_region_var.get(), setting_era=setting_era_var.get())
                 video_detail["setting_region"] = (setting_region_var.get() or "").strip()
                 video_detail["setting_era"] = (setting_era_var.get() or "").strip()
                 pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
@@ -1894,6 +1925,8 @@ class SceneEditorImpl:
                 if isinstance(_ss_src, dict) and "scene_style" in _ss_src:
                     _ss_raw = _ss_src.get("scene_style")
                     break
+            if _ss_raw is None:  # t224u: 频道偏好 → 上次选择
+                _ss_raw = project_manager.channel_pref_get(_ch_key, "scene_style", None)
             if _ss_raw is None:
                 _ss_raw = project_manager.LAST_SCENE_STYLE
             scene_style_var = tk.StringVar(value=_scene_style_label(_ss_raw))
@@ -1908,6 +1941,7 @@ class SceneEditorImpl:
 
             def _commit_scene_style(_e=None):
                 key = project_manager.remember_scene_style(scene_style_var.get())
+                project_manager.channel_pref_set(_ch_key, scene_style=key or "none")  # t224u
                 video_detail["scene_style"] = key
                 pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
                 if isinstance(pp, dict):
@@ -1942,6 +1976,7 @@ class SceneEditorImpl:
                 if isinstance(pp, dict):
                     pp["visual_style"] = vs
                 project_manager.LAST_VISUAL_STYLE = vs
+                project_manager.channel_pref_set(_ch_key, visual_style=vs)  # t224u
                 try:
                     persist(video_detail, parent=dlg)
                 except Exception:
@@ -3040,6 +3075,9 @@ class SceneEditorImpl:
                     _smart_sep = ttk.Separator(scene_ui["prompt_combo"].master, orient="vertical")
                     _smart_sep.pack(side=tk.LEFT, fill=tk.Y, padx=14, after=scene_ui["prompt_combo"])
                     def _on_program_btn() -> None:
+                        # t213: 先按「保存」写回 STORY 所有字段(含手改的场景 JSON);JSON 无效就报错中止
+                        if not _presave_story_before_action(on_save_story, on_persist_keep_open, dlg):
+                            return
                         if not (_story_analysis_text(video_detail, scene_ui) or _story_scene_list(video_detail, scene_ui)):
                             messagebox.showwarning("生成节目", "还没有分析报告。", parent=dlg)
                             return
@@ -3804,3 +3842,41 @@ class SceneEditorImpl:
 
         parent.after(1, _build_editor_ui_guarded)
         return result_holder[0]
+
+
+def _presave_story_before_action(on_save_story, persist_scene, parent) -> bool:
+    """t213: 生成节目等动作前先保存。返回 False 表示已弹窗报错、应中止。"""
+    import inspect
+
+    try:
+        if callable(on_save_story):
+            try:
+                takes_quiet = "quiet" in inspect.signature(on_save_story).parameters
+            except (TypeError, ValueError):
+                takes_quiet = False
+            if takes_quiet:
+                return bool(on_save_story(quiet=True))
+        if callable(persist_scene):
+            ok, msg = persist_scene()
+            if not ok:
+                messagebox.showerror(
+                    "场景内容无效",
+                    (msg or "没有写回场景内容。") + "\n\n请改正 JSON 后再试。",
+                    parent=parent,
+                )
+                return False
+            if callable(on_save_story):
+                on_save_story()
+        return True
+    except Exception as e:
+        messagebox.showerror("保存失败", f"保存失败，已取消：{e}", parent=parent)
+        return False
+
+
+def _row_has_pref(video_detail, key: str) -> bool:
+    """t224u: 这一条（或它的项目）自己存过这个选项吗？存过就用它，没存过才用频道偏好。"""
+    if not isinstance(video_detail, dict):
+        return False
+    pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+    return any(isinstance(src, dict) and str(src.get(key) or "").strip() for src in (video_detail, pp))
+

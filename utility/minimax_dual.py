@@ -104,11 +104,20 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     else:
         key = config.minimax_variant_key(backend) or config.MINIMAX_DEFAULT_VARIANT
     v = config.minimax_variant(key)
-    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t200u: 7 / 10 / 13（6→7，15→13）
+    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t200u: 7 / 10 / 12（6→7，15→12）
     _imgs = [p for p in (image_paths or []) if p] if isinstance(image_paths, (list, tuple)) else []
     if not image_path and _imgs:
         image_path = _imgs[0]
     _last = _imgs[1] if extra.get("frames") == "two" and len(_imgs) > 1 else None
+    # t216u: 「参考图工作流（人物肖像）」：换 R2V 工作流，起始图后面的图是人物肖像（最多 8 张）
+    _refs = None
+    _wf_choice = str(extra.get("h3_workflow") or "")
+    if _sdp.minimax_workflow_for(_wf_choice):  # t228u: r2v / r2v_fast8（FastH3 8 步）
+        v = dict(v)
+        v["workflow"] = _sdp.minimax_workflow_for(_wf_choice)
+        if extra.get("frames") != "two":
+            _n = int(extra.get("portrait_refs") or 0)
+            _refs = list(_imgs[1:1 + _n])[: _sdp.R2V_MAX_REFS - 1]
     _audio = str(extra.get("scene_audio") or "").strip() or None
     _adur = _sdp.h3_audio_seconds(_audio) if _audio and os.path.isfile(_audio) else 0.0
     _w, _h, _why = _sdp.minimax_size_for(str(extra.get("orientation") or "landscape"), _secs, bool(_audio), _adur)
@@ -118,25 +127,26 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     _dest = dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
     _name = time.strftime("minimax_h3_%Y%m%d_%H%M%S") + "_" + key.replace("minimax_", "") + ".mp4"
     if _audio and _adur > _sdp.MINIMAX_MAX_SECONDS:
-        # t201u: 音频 > 13 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入
+        # t201u: 音频 > 12 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入
         from utility import minimax_segments as _seg
 
         def _one(img, p, secs, aud, last, out, st):
-            return _generate_one(_sdp, img, p, secs, _w, _h, out, v, st, aud, last)
+            return _generate_one(_sdp, img, p, secs, _w, _h, out, v, st, aud, last, refs=_refs)
 
         return _seg.run_segmented(
             gen_one=_one, image_path=image_path, prompt=prompt, audio_path=_audio, audio_seconds=_adur,
             dest_dir=_dest, base_name=_name[:-4], last_image_path=_last, status=_st, is_unreachable=is_unreachable)
-    return _generate_one(_sdp, image_path, prompt, _secs, _w, _h, os.path.join(_dest, _name), v, _st, _audio, _last)
+    return _generate_one(_sdp, image_path, prompt, _secs, _w, _h, os.path.join(_dest, _name), v, _st, _audio, _last,
+                         refs=_refs)
 
 
-def _generate_one(_sdp, image_path, prompt, secs, w, h, out_path, v, status, audio, last):
-    """一次 ComfyUI 生成（离线测试里换成假的）。"""
+def _generate_one(_sdp, image_path, prompt, secs, w, h, out_path, v, status, audio, last, refs=None):
+    """一次 ComfyUI 生成（离线测试里换成假的）。refs: t216u 参考图工作流的人物肖像。"""
     return _sdp.generate_video_comfy(
         image_path, prompt, secs, w, h,
         output_path=out_path,
         server=v["url"], status=status, workflow_path=v["workflow"],
-        audio_path=audio, last_image_path=last,
+        audio_path=audio, last_image_path=last, ref_image_paths=refs,
     )
 
 

@@ -2928,3 +2928,40 @@ def apply_actor_delete(scene: dict, actor_text: str, deleted_index: int) -> bool
             sec["speaker"] = mapping.get(sp, sp)
         record["text"] = new_speaking.strip()
     return True
+
+
+# t224u: 频道（节目）级的 STORY 选项偏好：YT_tools_prefs.json 里 channel_prefs[<频道 key>] = {...}
+CHANNEL_PREFS_KEY = "channel_prefs"
+
+
+def channel_pref_get(channel: str, key: str, default=None):
+    ch = (channel or "").strip()
+    if not ch:
+        return default
+    try:
+        allp = (config.load_yt_tools_prefs() or {}).get(CHANNEL_PREFS_KEY) or {}
+        val = (allp.get(ch) or {}).get(key)
+    except Exception:  # noqa: BLE001
+        return default
+    return default if val in (None, "") else val
+
+
+def channel_pref_set(channel: str, **values) -> bool:
+    """改一个就立刻存（不用点保存）。只更新传入的键。"""
+    ch = (channel or "").strip()
+    if not ch or not values:
+        return False
+    try:
+        allp = dict((config.load_yt_tools_prefs() or {}).get(CHANNEL_PREFS_KEY) or {})
+        cur = dict(allp.get(ch) or {})
+        new = dict(cur)
+        new.update({k: v for k, v in values.items() if v not in (None, "")})
+        if new == cur:
+            return False
+        allp[ch] = new
+        config.save_yt_tools_prefs({CHANNEL_PREFS_KEY: allp})
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 频道偏好没有记下：{exc}")
+        return False
+

@@ -1230,7 +1230,7 @@ def _save_video(page, st: dict, dest_dir: str, status: Status = None) -> str:
 
 
 def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
-                      resolution: str = "720p", duration: str = "15s") -> str:
+                      resolution: str = "720p", duration: str = "10s") -> str:
     """Prepared Imagine tab (image attached): prompt, 视频 mode 720p/15s, submit, wait, save mp4 → path."""
     bt = _bt()
     prompt = (prompt or "").strip()
@@ -1260,7 +1260,7 @@ def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
 
 
 def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = None, *,
-               resolution: str = "720p", duration: str = "15s") -> str:
+               resolution: str = "720p", duration: str = "10s") -> str:
     """Grok Imagine image→video: attach ``image_path`` + ``prompt``; returns the saved mp4 path."""
     prepare_imagine(image_path, status)
     return run_imagine_video(prompt, dest_dir, status, resolution=resolution, duration=duration)

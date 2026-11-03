@@ -1338,9 +1338,10 @@ class MediaGUIManager:
                     )
                     return
                 scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
+                _old_sc = video_detail.get("scene_content")
                 video_detail["scene_content"] = scenes
                 new_title = project_manager.caption_from_scene_content_item(scenes[0])
-                if new_title:
+                if new_title and _scene_caption_may_replace_title(video_detail, _old_sc):
                     _apply_project_video_title(video_detail, new_title)
                     ch_path = self.channel_path or ""
                     _normalize_channel_list_item_for_storage(video_detail, ch_path)
@@ -1911,3 +1912,16 @@ class MediaGUIManager:
             self.root.update()
         except Exception:
             self.root.after(0, _finish_download_ui)
+
+
+def _scene_caption_may_replace_title(video_detail: dict, old_scene_content) -> bool:
+    """t210u: 场景生成后能不能用新首场 caption 当成片名：只有成片名是空的 / 占位，或者本来就是旧首场 caption
+    （上次自动填的）才换；用户选定 / 改过的名称（项目名称建议、手改）不覆盖。"""
+    prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
+    vt = (prof.get("video_title") or "").strip() if isinstance(prof, dict) else ""
+    if not vt or vt in {"新项目", "未命名", "default_title", "默认标题", "默认视频标题"}:
+        return True
+    old_cap = ""
+    if isinstance(old_scene_content, list) and old_scene_content and isinstance(old_scene_content[0], dict):
+        old_cap = (project_manager.caption_from_scene_content_item(old_scene_content[0]) or "").strip()
+    return bool(old_cap) and vt == old_cap

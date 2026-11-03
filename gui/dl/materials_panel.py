@@ -1,7 +1,7 @@
 """STORY 窗口「材料」区：一个列表显示这一条的 PDF、全部图片、音频/视频、文字稿。
 
 每一项有小预览（图片缩略图、视频一帧、音频波形、PDF 第一页），单击选中（作为生成场景的材料），
-双击拷到剪贴板，右键有这一项的操作菜单；音频 / 视频有 ▶ 播放按钮。
+双击用 Windows 默认程序打开（没有文件的行 = 选文件），右键有这一项的操作菜单（含拷到剪贴板）；音频 / 视频有 ▶ 播放按钮。
 条目由调用方给（``get_entries``），动作由调用方的回调完成，这里只管画和交互。
 """
 from __future__ import annotations
@@ -156,6 +156,26 @@ def make_preview(kind: str, path: str) -> Image.Image | None:
     return img
 
 
+# ---------------------------------------------------------------- open
+def open_with_default_app(path: str, *, startfile=None, popen=None, platform=None) -> str:
+    """t206u: 用系统默认程序打开 path（Windows os.startfile；macOS open；其它 xdg-open）。
+    成功返回 ""，否则返回一句给用户看的原因。startfile / popen / platform 给测试替换用。"""
+    import sys
+
+    p = os.path.abspath(path) if path else ""
+    if not p or not os.path.isfile(p):
+        return f"文件不在磁盘上了：\n{path or '（没有路径）'}"
+    plat = platform or sys.platform
+    try:
+        if plat.startswith("win"):
+            (startfile or os.startfile)(p)  # type: ignore[attr-defined]
+        else:
+            (popen or subprocess.Popen)(["open" if plat == "darwin" else "xdg-open", p])
+        return ""
+    except (OSError, AttributeError) as exc:
+        return f"打不开：\n{p}\n{exc}"
+
+
 # ---------------------------------------------------------------- playback
 class Player:
     """One playback at a time: ffplay (``-nodisp`` for audio) if present, else ``os.startfile``."""
@@ -222,8 +242,12 @@ class MaterialsPanel(ttk.Frame):
         height: int = 190,
         on_analyze: Callable[[dict], None] | None = None,
         on_delete: Callable[[dict], None] | None = None,
+        on_reorder_images: Callable[[list[str]], None] | None = None,
     ) -> None:
         super().__init__(master)
+        self._on_reorder_images = on_reorder_images
+        self._drag: dict | None = None  # t214u: 图片行拖动排序
+        self._drop_line: tk.Frame | None = None
         self._on_analyze = on_analyze
         self._on_delete = on_delete
         self.focused_entry: dict | None = None  # 最后单击的那一行（Delete 键删它）
@@ -238,11 +262,12 @@ class MaterialsPanel(ttk.Frame):
         self._rows: list[tuple[dict, list[tk.Widget]]] = []
         self.selected = ""
         self.player = Player()
+        self._last_click = (None, 0.0)  # t207u: (行的 key, 时间) —— 单击会重建列表，双击靠时间判断
 
         ttk.Label(
             self,
             text="把 PDF、图片、音频或 mp4 拖到这里：PDF 换掉原来的，图片加进列表，音频/视频换掉原来的。"
-            "单击选作生成材料，双击拷到剪贴板，右键更多操作；选中后按 Delete 删除（文件保留）。",
+            "单击选作生成材料，双击用默认程序打开（看图 / PDF / 播放音视频 / 文字稿），右键更多操作（拷到剪贴板等）；选中后按 Delete 删除（文件保留）。",
             font=("TkDefaultFont", 8),
             foreground="gray30",
         ).pack(anchor=tk.W, pady=(0, 2))
@@ -262,6 +287,10 @@ class MaterialsPanel(ttk.Frame):
             w.bind("<Button-3>", lambda e: self._popup(e, {"kind": "", "path": "", "placeholder": True}))
             w.bind("<Delete>", self._delete_key)
         self.bind("<Destroy>", lambda e: self.player.stop() if e.widget is self else None)
+        # t214u: 单击会重建列表（按下的控件被销毁），拖动/松开改挂在顶层窗口上（add，不顶掉别的绑定）
+        top = self.winfo_toplevel()
+        top.bind("<B1-Motion>", self._drag_motion, add="+")
+        top.bind("<ButtonRelease-1>", self._drag_release, add="+")
 
     def _wheel(self, event):
         self.canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -321,11 +350,20 @@ class MaterialsPanel(ttk.Frame):
             play_btn.pack(side=tk.RIGHT, padx=(4, 2))
             if self.player.playing(entry["path"]):
                 play_btn.configure(text="■")
-        for w in widgets:
-            w.bind("<Button-1>", lambda _e, en=entry: self._click(en))
-            w.bind("<Double-Button-1>", lambda _e, en=entry: self._double(en))
+        # t207u: 单击选材料会让调用方 refresh() 整个列表（控件全重建），Tk 的 <Double-Button-1> 永远到不了
+        # 新控件；所以双击在 _click 里按时间 + 同一行判断。所有子控件都绑上（缩略图、标题、说明、行本身）。
+        def _bind_all(w):
+            if isinstance(w, ttk.Button):
+                return
+            w.bind("<Button-1>", lambda e, en=entry: self._click(en, e))
+            # 控件没被重建时，第二下会匹配 <Double-Button-1>（不再触发 <Button-1>），同样交给 _click 计时判断
+            w.bind("<Double-Button-1>", lambda e, en=entry: self._click(en, e))
             w.bind("<Button-3>", lambda e, en=entry: self._popup(e, en))
             w.bind("<MouseWheel>", self._wheel)
+            for c in w.winfo_children():
+                _bind_all(c)
+
+        _bind_all(row)
         self._rows.append((entry, widgets))
         if entry.get("path") and kind in ("pdf", "image", "audio", "video"):
             self._load_thumb_async(kind, entry["path"], thumb)
@@ -383,8 +421,33 @@ class MaterialsPanel(ttk.Frame):
             self._on_delete(entry)
         return "break"
 
-    def _click(self, entry: dict):
+    DOUBLE_MS = 500
+
+    @staticmethod
+    def _entry_key(entry: dict) -> tuple:
+        return (entry.get("kind") or "", os.path.normcase(entry.get("path") or ""), entry.get("title") or "")
+
+    def _click(self, entry: dict, event=None):
+        import time
+
+        now = time.monotonic()
+        key = self._entry_key(entry)
+        last_key, last_t = self._last_click
+        if last_key == key and (now - last_t) * 1000 <= self.DOUBLE_MS:
+            self._last_click = (None, 0.0)
+            return self._double(entry)
+        self._last_click = (key, now)
         self.focused_entry = entry
+        if (
+            self._on_reorder_images
+            and entry.get("kind") == "image"
+            and entry.get("path")
+            and not entry.get("placeholder")
+            and event is not None
+        ):
+            self._drag = {"path": entry["path"], "x": event.x_root, "y": event.y_root, "active": False}
+        else:
+            self._drag = None
         try:
             self.canvas.focus_set()  # 让 Delete 键落到这个面板
         except tk.TclError:
@@ -397,6 +460,7 @@ class MaterialsPanel(ttk.Frame):
         return "break"
 
     def _double(self, entry: dict):
+        print(f"📂 材料双击：{entry.get('kind') or '?'} · {entry.get('path') or '（没有文件）'}")
         self._on_copy(entry)
         return "break"
 
@@ -424,3 +488,93 @@ class MaterialsPanel(ttk.Frame):
                         w.configure(bg=bg)
                     except tk.TclError:
                         pass
+
+
+    # ------------------------------------------------------------ t214u drag reorder
+    DRAG_PX = 6
+
+    def _image_paths_and_rows(self) -> tuple[list[str], list[tk.Widget]]:
+        paths, rows = [], []
+        for entry, widgets in self._rows:
+            if entry.get("kind") == "image" and entry.get("path") and not entry.get("placeholder"):
+                paths.append(entry["path"])
+                rows.append(widgets[0])
+        return paths, rows
+
+    def _insert_index(self, y_root: int, rows: list) -> int:
+        idx = 0
+        for r in rows:
+            try:
+                mid = r.winfo_rooty() + r.winfo_height() / 2
+            except tk.TclError:
+                continue
+            if y_root > mid:
+                idx += 1
+        return idx
+
+    def _drag_motion(self, event):
+        d = self._drag
+        if not d:
+            return None
+        if not d["active"]:
+            if abs(event.x_root - d["x"]) < self.DRAG_PX and abs(event.y_root - d["y"]) < self.DRAG_PX:
+                return None
+            d["active"] = True
+            self._last_click = (None, 0.0)  # 拖动不算双击
+            try:
+                self.winfo_toplevel().configure(cursor="sb_v_double_arrow")
+            except tk.TclError:
+                pass
+        paths, rows = self._image_paths_and_rows()
+        if not rows:
+            return None
+        idx = self._insert_index(event.y_root, rows)
+        try:
+            if self._drop_line is None or not self._drop_line.winfo_exists():
+                self._drop_line = tk.Frame(self.inner, bg="#1e6fd9", height=3)
+            if idx < len(rows):
+                y = rows[idx].winfo_y()
+            else:
+                y = rows[-1].winfo_y() + rows[-1].winfo_height() - 2
+            self._drop_line.place(x=0, y=max(0, y - 1), relwidth=1.0, height=3)
+            self._drop_line.lift()
+        except tk.TclError:
+            pass
+        return None
+
+    def _hide_drop_line(self) -> None:
+        try:
+            if self._drop_line is not None and self._drop_line.winfo_exists():
+                self._drop_line.place_forget()
+        except tk.TclError:
+            pass
+        try:
+            self.winfo_toplevel().configure(cursor="")
+        except tk.TclError:
+            pass
+
+    def _drag_release(self, event):
+        d, self._drag = self._drag, None
+        if not d or not d.get("active"):
+            return None
+        self._hide_drop_line()
+        paths, rows = self._image_paths_and_rows()
+        new = reorder_paths(paths, d["path"], self._insert_index(event.y_root, rows))
+        if new != paths and self._on_reorder_images:
+            print(f"🖼 图片排序：{os.path.basename(d['path'])} → 第 {new.index(d['path']) + 1} 张")
+            self._on_reorder_images(new)
+        return "break"
+
+
+def reorder_paths(paths: list[str], moving: str, insert_idx: int) -> list[str]:
+    """t214u: 把 ``moving`` 挪到插入位置 ``insert_idx``（按原列表的行间位置算，0 = 最前）。"""
+    key = os.path.normcase(os.path.abspath(moving))
+    keys = [os.path.normcase(os.path.abspath(p)) for p in paths]
+    if key not in keys:
+        return list(paths)
+    src = keys.index(key)
+    rest = [p for i, p in enumerate(paths) if i != src]
+    dst = insert_idx - (1 if insert_idx > src else 0)
+    dst = max(0, min(dst, len(rest)))
+    rest.insert(dst, paths[src])
+    return rest
