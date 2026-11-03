@@ -4333,7 +4333,7 @@ def h3_on_camera_line(names: list) -> str:
 def h3_speech_pace_line(speed: float, seconds: float) -> str:
     """t151u: 不加音频时让模型说快一点（导入时按同一档放慢还原）。没有句号，Strata 原样保留。"""
     x = 1.0 / max(0.5, float(speed or 1.0))
-    return (f"Speech pace: everyone speaks fast, about {x:.1f} times normal conversational speed, brisk and clear "
+    return (f"Speech pace: everyone speaks fast, about {x:.2f} times normal conversational speed, brisk and clear "
             f"with only very short pauses, so that all the lines fit into the {round(float(seconds or 0)):d} seconds; "
             "the lip movements stay exactly in sync with this faster speech.")
 
@@ -6947,6 +6947,31 @@ def auto_length_choice(text: str, options) -> tuple:
     return pick, f"讲话 {size} ≈ {secs:.1f}s → {pick[:-1]}秒{note}"
 
 
+def _minimax_real_seconds(n: float) -> float:
+    """t166u: MiniMax 名义秒数 → 实际秒数（17k+5 帧 / 24fps，和 sd_image_processor.minimax_h3_frames 一致）。"""
+    f = max(5, int(round(float(n) * 24)))
+    f += (5 - f) % 17
+    return f / 24
+
+
+def _is_minimax_opts(opts) -> bool:
+    return "7s" in opts or "13s" in opts
+
+
+def _len_real(o, opts) -> float:
+    n = float(str(o)[:-1])
+    return _minimax_real_seconds(n) if _is_minimax_opts(opts) else n
+
+
+def _len_cap(o, opts) -> float:
+    """放得下的上限：名义 + 0.5 秒容差；MiniMax 实际帧长更长时用实际长度（13 秒档 = 13.67）。"""
+    return max(float(str(o)[:-1]) + AUTO_LENGTH_SLACK, _len_real(o, opts))
+
+
+AUTO_COMPRESS_MAX = 1.15  # t169u: 讲话最多比实际长度长 15% 仍用这一档（压缩）
+AUTO_SPEED_FLOOR = 0.7  # t169u: 最多说快 1/0.7 ≈ 1.43 倍（和导入「区间速度」下限一致），再长就警告
+
+
 # t151u: 语速档 = 导入视频「区间速度」的档（0.05 一档）。生成时说快 1/s 倍，导入时按 s 放慢还原（输出 = 区间 / s）。
 SPEECH_SPEED_STEPS = (0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0)
 SPEECH_SPEED_TARGET = 0.7  # 默认按说快 30% 估算
@@ -6954,7 +6979,7 @@ SPEECH_SPEED_TARGET = 0.7  # 默认按说快 30% 估算
 
 def auto_length_speed_choice(text: str, options, normal_secs=None) -> tuple:
     """t151u: 返回 (长度, 语速档 s, 正常语速秒数, 说明)。
-    t154u: 正常语速放得下 7/10/12（容差 AUTO_LENGTH_SLACK）→ 最短放得下的，s=1.0（不说快）；
+    t154u: 正常语速放得下 7/10/13（容差 AUTO_LENGTH_SLACK）→ 最短放得下的，s=1.0（不说快）；
     超过最长才用最长 + 放得下的最慢档（最低 0.7，0.7 也放不下就 0.7 并提示）。
     normal_secs = 场景音频长度 > 配音时间轴 > 按字数估算。"""
     opts = sorted(options, key=lambda v: float(str(v).rstrip("sS")))
@@ -6978,16 +7003,58 @@ def auto_length_speed_choice(text: str, options, normal_secs=None) -> tuple:
     else:
         src = "估算"
     src += note
-    fit = next((o for o in opts if secs <= float(o[:-1]) + AUTO_LENGTH_SLACK), None)
-    if fit:
-        return fit, 1.0, secs, f"正常语速约 {secs:.1f} 秒（{src}）→ {fit[:-1]}秒，正常语速（不加速）"
-    pick = opts[-1]
-    cap = float(pick[:-1]) + AUTO_LENGTH_SLACK
-    s = max((x for x in SPEECH_SPEED_STEPS if secs * x <= cap), default=SPEECH_SPEED_TARGET)
-    over = f"（⚠️ 太长：说快到 0.7 档也要约 {secs * s:.1f} 秒，超过 {pick[:-1]} 秒，尾巴可能说不完）" if secs * s > cap else ""
-    out = float(pick[:-1]) / s
-    return pick, s, secs, (f"正常语速约 {secs:.1f} 秒（{src}），超过最长 {pick[:-1]} 秒 → {pick[:-1]}秒，语速档 {s:g}"
-                           f"（说快约 {1 / s:.2f} 倍；导入时速度 {s:g} → 约 {out:.1f} 秒）{over}")
+    # t169u: 最短的 L，满足 T ≤ 实际长度 D × 1.15；T ≤ D 不加速，否则按准确比例 s = D / T 压缩（不吸档）
+    fit = next((o for o in opts if secs <= _len_real(o, opts) * AUTO_COMPRESS_MAX), None)
+    pick = fit or opts[-1]
+    D = _len_real(pick, opts)
+    if secs <= D:
+        return pick, 1.0, secs, f"正常语速约 {secs:.1f} 秒（{src}）→ {pick[:-1]}秒（实际 {D:.2f} 秒），正常语速"
+    raw = D / secs
+    s = round(max(AUTO_SPEED_FLOOR, raw), 3)
+    over = (f"（⚠️ 太长：压到下限 {AUTO_SPEED_FLOOR:g} 也要约 {secs * s:.1f} 秒，超过 {D:.2f} 秒，尾巴可能说不完）"
+            if raw < AUTO_SPEED_FLOOR else "")
+    return pick, s, secs, (f"正常语速约 {secs:.1f} 秒（{src}）→ {pick[:-1]}秒（实际 {D:.2f} 秒），说快 {1 / s:.2f} 倍"
+                           f"（导入时速度 {s:.3f} → 约 {D / s:.1f} 秒）{over}")
+
+
+def auto_info_text(length: str, speed: float) -> str:
+    """t169u: 生场视频「自动」下面那行。"""
+    t = f"自动: {str(length)[:-1]}秒"
+    if float(speed) < 0.9995:
+        t += f"，说快 {1 / float(speed):.2f} 倍（导入时放慢到 {float(speed):.3f}）"
+    return t
+
+
+AUTO_LEN_MINIMAX = ("7s", "10s", "13s")
+AUTO_LEN_STD = ("6s", "10s", "15s")  # Grok / Gemini 的长度选项（和生场视频窗口一致）
+
+
+def auto_length_for_backend(text: str, minimax: bool, normal_secs=None) -> tuple:
+    """t165u: 生场视频「自动」和本场内容里的讲话估算共用：(长度, 语速档, 正常语速秒数, 说明)。
+    MiniMax 7/10/13（实际 7.29/10.13/13.67 秒），Grok / Gemini 6/10/15；超过最长 + 0.5 秒才说快一档，导入时按同一档放慢。"""
+    return auto_length_speed_choice(text, AUTO_LEN_MINIMAX if minimax else AUTO_LEN_STD, normal_secs)
+
+
+def speech_pace_line(speed: float) -> str:
+    """t165u: Grok / Gemini 不加音频时说快的提示（MiniMax 的在 H3 提示词里）。1.0 返回空。"""
+    s = float(speed or 1.0)
+    if s >= 0.999:
+        return ""
+    return (f"PACE: the dialogue is long for this clip. Deliver every spoken line about {1 / s:.2f}x faster "
+            f"(about {round((1 / s - 1) * 100)}% faster) than a normal conversational pace (brisk but clear, no skipped words, short pauses) so all lines "
+            "finish before the clip ends.")
+
+
+def scene_speech_label(scene) -> str:
+    """t165u: 本场内容工具栏的讲话长度估算（和「自动」用的同一个数、同一个函数）。"""
+    text = str((scene or {}).get("speaking") or "") if isinstance(scene, dict) else ""
+    _, d = speaking_seconds_estimate(text)
+    if not (d.get("cjk") or d.get("words")):
+        return "讲话 —"
+    tl = h3_speaker_timeline(scene) if isinstance(scene, dict) else []
+    norm = tl[-1][1] if tl else None
+    _l, _s, secs, _w = auto_length_for_backend(text, True, norm)
+    return f"讲话≈{secs:.1f}秒"  # t169u: 只显示讲话长度
 
 
 def recorded_speech_speed(scene, path: str):
@@ -7003,7 +7070,7 @@ def recorded_speech_speed(scene, path: str):
         at = float(rec.get("at") or 0)
     except (TypeError, ValueError):
         return None
-    if not any(abs(s - x) < 1e-6 for x in SPEECH_SPEED_STEPS):
+    if not (0.5 <= s <= 1.0):  # t169u: 准确比例（不一定在 0.05 档上）
         return None
     fn = str(rec.get("file") or "")
     if fn:

@@ -1617,8 +1617,10 @@ class MediaDownloader:
         progress_cb=None,
         cancel_event=None,
         chunksize=UPLOAD_CHUNK_SIZE,
+        playlist_topic=None,
     ):
         """
+        playlist_topic: t171u 分类「EnglishKey_中文描述」；None = 当前项目的 topic_category；"" = 不放播放列表。
         publish_at: 若为 datetime，则定时公开（YouTube 要求 privacy 为 private，并设置 status.publishAt，UTC RFC3339）。
         若为 None，则按 privacy 立即上传（如 unlisted）。
         progress_cb(sent_bytes, total_bytes)：每传完一块调一次（在调用者的线程里）。
@@ -1749,6 +1751,20 @@ class MediaDownloader:
             except Exception as e:
                 print(f"⚠️ 字幕上传失败: {e}")
 
+        # t171u: 按分类放进播放列表（失败只记日志，不影响上传结果）
+        try:
+            topic = playlist_topic
+            if topic is None:
+                import project_manager as _pm
+
+                topic = str((_pm.PROJECT_CONFIG or {}).get("topic_category") or "")
+            if topic:
+                pl_priv = "public" if publish_at is not None else (privacy or "public")
+                add_video_to_topic_playlist(youtube, video_id, topic, privacy=pl_priv, cache_key=str(channel_id),
+                                            channel_id=str(channel_id))
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 加入播放列表失败（视频已上传）: {e}")
+
         return video_id, (published_at_iso or "").strip()
 
 
@@ -1842,3 +1858,146 @@ class MediaDownloader:
         response = request.execute()
         print(f"✅ 字幕上传成功! Caption ID: {response['id']}")
         return response["id"]
+
+
+# ---------------------------------------------------------------------------
+# t171u/t172u: 分类播放列表。分类 = list_by_topic/<EnglishKey__中文名>.json（和 topics.json 的 topic_category 一致）。
+# 列表标题 = 中文名；描述 = topics.json 里这个分类的 description + 一行 "topic: EnglishKey"（固定标记）。
+# 找到 / 建好的 playlist id 记在 program/<channel>/topic_playlists.json（{key: {id, title}}），下次直接用。
+_TOPIC_PLAYLIST_CACHE: dict = {}  # cache_key -> [playlist dict...]（本次运行里 playlists.list 的结果）
+TOPIC_PLAYLIST_FILE = "topic_playlists.json"
+
+
+def split_topic_category(topic: str) -> tuple:
+    """'Love__亲密关系与依附困境' -> ('Love', '亲密关系与依附困境')；也认单个 '_'；没有 '_' 时两部分相同。"""
+    t = str(topic or "").strip()
+    if "_" in t:
+        k, _sep, zh = t.partition("_")
+        k, zh = k.strip(), zh.strip().lstrip("_").strip()
+        return (k or zh), (zh or k)
+    return t, t
+
+
+def _topic_marker(key: str) -> str:
+    return f"topic: {key}"
+
+
+def _channel_dir(channel_id: str) -> str:
+    try:
+        return config.get_channel_path(channel_id) if channel_id else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def topic_playlist_description(channel_id: str, topic: str) -> str:
+    """topics.json 里这个分类的 description（没有就空）+ 固定标记。"""
+    key, _zh = split_topic_category(topic)
+    desc = ""
+    d = _channel_dir(channel_id)
+    try:
+        with open(os.path.join(d, "topics.json"), "r", encoding="utf-8") as f:
+            arr = json.load(f)
+        for it in arr if isinstance(arr, list) else [arr]:
+            if isinstance(it, dict) and str(it.get("topic_category") or it.get("category") or "").strip() == str(topic).strip():
+                desc = str(it.get("description") or "").strip()
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    marker = _topic_marker(key)
+    return ((desc[: 4900 - len(marker)] + "\n\n") if desc else "") + marker
+
+
+def _load_playlist_map(channel_id: str) -> dict:
+    p = os.path.join(_channel_dir(channel_id), TOPIC_PLAYLIST_FILE)
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            m = json.load(f)
+        return m if isinstance(m, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _save_playlist_map(channel_id: str, key: str, pid: str, title: str) -> None:
+    d = _channel_dir(channel_id)
+    if not d or not os.path.isdir(d):
+        return
+    m = _load_playlist_map(channel_id)
+    if (m.get(key) or {}).get("id") == pid:
+        return
+    m[key] = {"id": pid, "title": title}
+    p = os.path.join(d, TOPIC_PLAYLIST_FILE)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, p)
+
+
+def _list_my_playlists(youtube, cache_key: str = "") -> list:
+    c = _TOPIC_PLAYLIST_CACHE.get(cache_key)
+    if c is not None:
+        return c
+    items, token = [], None
+    while True:
+        kw = {"part": "snippet,status", "mine": True, "maxResults": 50}
+        if token:
+            kw["pageToken"] = token
+        resp = youtube.playlists().list(**kw).execute() or {}
+        items.extend(resp.get("items") or [])
+        token = resp.get("nextPageToken")
+        if not token:
+            break
+    _TOPIC_PLAYLIST_CACHE[cache_key] = items
+    return items
+
+
+def find_or_create_topic_playlist(youtube, topic: str, privacy: str = "public", cache_key: str = "",
+                                  channel_id: str = "") -> str:
+    """顺序：topic_playlists.json 记的 id（频道里还在）→ 描述里的 "topic: Key" → 标题 = 中文名 → 新建。"""
+    key, zh = split_topic_category(topic)
+    if not key or key.upper() == "UNKNOWN":
+        return ""
+    items = _list_my_playlists(youtube, cache_key)
+    saved = str((_load_playlist_map(channel_id).get(key) or {}).get("id") or "") if channel_id else ""
+    hit = next((p for p in items if saved and p.get("id") == saved), None)
+    if hit is None:
+        marker = _topic_marker(key).lower()
+        hit = next((p for p in items if marker in str((p.get("snippet") or {}).get("description") or "").lower()), None)
+    if hit is None:
+        hit = next((p for p in items if str((p.get("snippet") or {}).get("title") or "").strip() == zh), None)
+    if hit is None:
+        body = {"snippet": {"title": zh[:150], "description": topic_playlist_description(channel_id, topic)},
+                "status": {"privacyStatus": privacy if privacy in ("public", "unlisted", "private") else "public"}}
+        hit = youtube.playlists().insert(part="snippet,status", body=body).execute()
+        items.append(hit)
+        print(f"📂 新建播放列表「{zh}」（{_topic_marker(key)}）: {hit.get('id')}")
+    pid = hit["id"]
+    if channel_id:
+        try:
+            _save_playlist_map(channel_id, key, pid, zh)
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 播放列表 id 没记下: {e}")
+    return pid
+
+
+def add_video_to_topic_playlist(youtube, video_id: str, topic: str, privacy: str = "public", cache_key: str = "",
+                                channel_id: str = "") -> str:
+    """返回 playlist_id。已在列表里就不重复加。UNKNOWN / 空分类不放。"""
+    pid = find_or_create_topic_playlist(youtube, topic, privacy=privacy, cache_key=cache_key, channel_id=channel_id)
+    if not pid or not video_id:
+        return ""
+    token = None
+    while True:
+        kw = {"part": "snippet", "playlistId": pid, "maxResults": 50, "videoId": video_id}
+        if token:
+            kw["pageToken"] = token
+        resp = youtube.playlistItems().list(**kw).execute() or {}
+        if any(((i.get("snippet") or {}).get("resourceId") or {}).get("videoId") == video_id for i in resp.get("items") or []):
+            print(f"📂 视频 {video_id} 已在播放列表 {pid}，跳过")
+            return pid
+        token = resp.get("nextPageToken")
+        if not token:
+            break
+    youtube.playlistItems().insert(part="snippet", body={
+        "snippet": {"playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
+    print(f"📂 已加入播放列表「{split_topic_category(topic)[1]}」: {pid}")
+    return pid

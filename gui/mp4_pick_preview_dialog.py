@@ -693,7 +693,8 @@ def ask_mp4_pick_with_trim_preview(
         try:
             c = _ui_clip()
             if c is not None:
-                speed_lbl.config(text=(f"{c.speed:.1f}×" if abs(c.speed * 10 - round(c.speed * 10)) < 1e-6 else f"{c.speed:.2f}×"))
+                speed_lbl.config(text=(f"{c.speed:.1f}×" if abs(c.speed * 10 - round(c.speed * 10)) < 1e-6
+                               else f"{c.speed:.2f}×" if abs(c.speed * 100 - round(c.speed * 100)) < 1e-6 else f"{c.speed:.3f}×"))  # t169u
                 ok = _target_ok()
                 lock_chk.state(["!disabled"] if ok else ["disabled"])
                 fit_btn.state(["!disabled"] if ok else ["disabled"])
@@ -1844,7 +1845,8 @@ def ask_mp4_pick_with_trim_preview(
         except Exception as exc:
             rec["on"] = False
             print(f"录音线程错误: {exc}")
-            dlg.after(0, lambda: messagebox.showerror("录音", f"录音失败: {exc}", parent=dlg))
+            _err = str(exc)  # t170u: exc 在 except 结束后会被删掉，先存下来给延后的 lambda 用
+            dlg.after(0, lambda m=_err: messagebox.showerror("录音", f"录音失败: {m}", parent=dlg))
 
     def _tick_recording() -> None:
         rec_dlg = rec.get("dialog")

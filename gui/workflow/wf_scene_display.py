@@ -158,7 +158,19 @@ class SceneDisplayMixin:
         #    self.scene_cinematography.insert("1.0", cinematography_value)
         status = scene_data.get("clip_status", "")
         self._scene_title_label.config(text=f"本场内容: {status}" if status else "本场内容")
+        self._refresh_speech_estimate(scene_data)
         self.video_edit_frame.update()
+
+    def _refresh_speech_estimate(self, scene=None) -> None:
+        """t165u: 工具栏「音频转录」后面的讲话长度估算。"""
+        lbl = getattr(self, "_speech_est_label", None)
+        if lbl is None:
+            return
+        try:
+            lbl.config(text=config_prompt.scene_speech_label(scene) if isinstance(scene, dict) else "")
+        except Exception as exc:  # noqa: BLE001
+            lbl.config(text="")
+            print(f"⚠️ 讲话长度估算失败：{exc}")
 
     def clear_scene_fields(self):
         self._scene_widgets_loading = True
@@ -302,6 +314,7 @@ class SceneDisplayMixin:
             scene["extension"] = ext_val
 
         project_manager.store_speaking_box_text(scene, self.scene_speaking.get("1.0", tk.END))
+        self._refresh_speech_estimate(scene)  # t165u
         scene.update({
             "actor": (self._actor_text or "").strip(),
             "visual": self.scene_visual.get("1.0", tk.END).strip(),

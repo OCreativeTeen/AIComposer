@@ -1,6 +1,6 @@
-"""t201u: MiniMax 带场景音频（作为说话 / 作为唱歌）时，音频 > 12 秒就分段生成再接起来。
+"""t201u: MiniMax 带场景音频（作为说话 / 作为唱歌）时，音频 > 13.67 秒（13 秒档 328 帧）就分段生成再接起来。
 
-每段 ≤ 12 秒、≥ 4 秒，切点尽量平均、并挪到附近的静音（ffmpeg silencedetect）里，不切断字；切点对齐到 1/24 秒。
+每段 ≤ 13.67 秒、≥ 4 秒，切点尽量平均、并挪到附近的静音（ffmpeg silencedetect）里，不切断字；切点对齐到 1/24 秒。
 第 1 段用场景起始图，第 k 段用第 k-1 段（裁好后）的最后一帧当起始图；所有段在同一台机器上依次跑。
 每段视频裁到正好是这段音频的长度，统一重编码接起来，再换上原始完整的场景音频 → 一个 mp4，交给原来的导入流程。
 """
@@ -11,7 +11,7 @@ import subprocess
 import threading
 
 FPS = 24
-SEG_MAX = 12.0
+SEG_MAX = 328 / 24  # t166u: 13 秒档的实际长度 13.667 秒
 SEG_MIN = 4.0
 SNAP_WINDOW = 2.5  # 理想切点前后多少秒内找静音
 
@@ -69,7 +69,7 @@ def _q(t: float) -> float:
 
 
 def plan_segments(duration: float, silences=None) -> list:
-    """把 duration 秒分成 N=ceil(dur/12) 段（不够就加段）：[(开始, 结束, 是否落在静音里)]，切点在 1/24 秒格上。"""
+    """把 duration 秒分成 N=ceil(dur/SEG_MAX) 段（不够就加段）：[(开始, 结束, 是否落在静音里)]，切点在 1/24 秒格上。"""
     dur = float(duration)
     if dur <= SEG_MAX:
         return [(0.0, dur, False)]
@@ -214,7 +214,7 @@ def run_segmented(*, gen_one, image_path, prompt, audio_path, audio_seconds, des
     sil = detect_silences(audio_path)
     plan = plan_segments(audio_seconds, sil)
     m = len(plan)
-    say(f"场景音频 {audio_seconds:.2f} 秒 > 12 秒，分 {m} 段："
+    say(f"场景音频 {audio_seconds:.2f} 秒 > {SEG_MAX:.2f} 秒，分 {m} 段："
         + "，".join(f"{a:.2f}–{b:.2f}" + ("" if s or i == 0 else "（附近没静音）") for i, (a, b, s) in enumerate(plan)))
     seg_dir = os.path.join(dest_dir, base_name + "_segments")
     os.makedirs(seg_dir, exist_ok=True)

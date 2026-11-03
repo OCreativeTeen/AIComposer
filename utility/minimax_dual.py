@@ -104,7 +104,7 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     else:
         key = config.minimax_variant_key(backend) or config.MINIMAX_DEFAULT_VARIANT
     v = config.minimax_variant(key)
-    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t200u: 7 / 10 / 12（6→7，15→12）
+    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t166u: 7 / 10 / 13（6→7，15→13）
     _imgs = [p for p in (image_paths or []) if p] if isinstance(image_paths, (list, tuple)) else []
     if not image_path and _imgs:
         image_path = _imgs[0]
@@ -129,7 +129,7 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     _dest = dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
     _name = time.strftime("minimax_h3_%Y%m%d_%H%M%S") + "_" + key.replace("minimax_", "") + ".mp4"
     if _audio and _adur > _sdp.MINIMAX_MAX_SECONDS:
-        # t201u: 音频 > 12 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入
+        # t201u: 音频 > 13.67 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入
         from utility import minimax_segments as _seg
 
         def _one(img, p, secs, aud, last, out, st):

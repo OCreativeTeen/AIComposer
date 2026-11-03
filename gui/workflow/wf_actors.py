@@ -2,6 +2,7 @@
 import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.messagebox as messagebox
+import tkinter.font as tkfont
 import os
 import threading
 import pygame
@@ -13,6 +14,8 @@ import project_manager
 from utility.file_util import safe_copy_overwrite, show_auto_close_popup
 from utility.voicebox_speech_service import VoiceboxService, _VB_SPEAKER_MARK_RE
 from gui.choice_dialog import askchoice
+
+ACTOR_ROWS = 4  # t164u: 本场内容 人物 固定 4 行，一个人一行
 
 
 # t116u: 人物编辑可选值（与 project_manager._ACTOR_AGE / config_prompt.ACTOR_VOICE_NAMES 一致）
@@ -80,35 +83,102 @@ class ActorsMixin:
         self._actor_drag_index = None
         self._actor_drag_moved = False
         if not entries:
-            ttk.Label(row, text="（没有人物）").pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Label(row, text="（没有人物）").pack(side=tk.TOP, anchor=tk.W)
         for entry in entries:
             if entry.get("role") == "host" and project_manager.actor_is_absent(entry.get("body") or ""):
                 continue
             self._pack_actor_button(row, entry)
+        # t164u: 固定 4 行（一场最多 4 个说话人），一个人一行
+        shown = len(self._actor_buttons) + (0 if entries else 1)
+        self._actor_fillers = []
+        for _ in range(max(0, ACTOR_ROWS - shown)):
+            filler = tk.Frame(row, height=self._actor_row_height())
+            filler.pack(side=tk.TOP, fill=tk.X, pady=(0, 2))
+            self._actor_fillers.append(filler)
+        if not getattr(row, "_actor_fit_bound", False):
+            row._actor_fit_bound = True
+            row.bind("<Configure>", lambda _e: self._fit_actor_labels(), add="+")
+        self._fit_actor_labels()
+
+    def _actor_row_height(self) -> int:
+        try:
+            return tkfont.nametofont("TkDefaultFont").metrics("linespace") + 10
+        except tk.TclError:
+            return 24
+
+    def _fit_actor_labels(self) -> None:
+        """t164u: 每行显示完整原文（人物N：性别/年龄/族裔/名字（…）），放不下就在最后省略。"""
+        row = getattr(self, "scene_actor_row", None)
+        if row is None:
+            return
+        width = row.winfo_width()
+        if width <= 1:
+            return
+        avail = max(40, width - 24)
+        for chip in getattr(self, "_actor_buttons", None) or []:
+            label = getattr(chip, "_actor_text_label", None)
+            full = getattr(chip, "_actor_label", "")
+            if label is None:
+                continue
+            try:
+                font = tkfont.Font(font=label.cget("font"))
+                text = full
+                if font.measure(text) > avail:
+                    while text and font.measure(text + "…") > avail:
+                        text = text[:-1]
+                    text += "…"
+                if label.cget("text") != text:
+                    label.configure(text=text)
+            except tk.TclError:
+                pass
+
+    def _actor_tip(self, widget, chip, show: bool) -> None:
+        tip = getattr(self, "_actor_tip_win", None)
+        if tip is not None:
+            try:
+                tip.destroy()
+            except tk.TclError:
+                pass
+            self._actor_tip_win = None
+        if not show:
+            return
+        try:
+            label = chip._actor_text_label
+            if label.cget("text") == chip._actor_label:
+                return
+            tip = tk.Toplevel(widget)
+            tip.wm_overrideredirect(True)
+            tk.Label(tip, text=chip._actor_label, bg="#ffffe0", relief="solid", bd=1,
+                     wraplength=520, justify=tk.LEFT).pack()
+            tip.wm_geometry(f"+{chip.winfo_rootx()}+{chip.winfo_rooty() + chip.winfo_height() + 2}")
+            self._actor_tip_win = tip
+        except tk.TclError:
+            pass
 
     def _pack_actor_button(self, row, entry: dict) -> None:
         body = (entry.get("body") or "").strip()
         base, motion = project_manager.split_actor_motion(body)
+        # t164u: 一行显示这个人的完整原文（和 actor 里存的一样）
         if entry.get("role") == "host":
-            text = self._actor_button_text("讲员", base, full=True) if base else "讲员"
+            text = f"讲员：{body}" if base else "讲员"
         else:
-            text = self._actor_button_text(entry.get("label") or "人物", base)
-        motion_text = self._motion_chip_text(motion)
-        if motion_text:
-            text = f"{text} {motion_text}"
+            text = f"{entry.get('label') or '人物'}：{body}"
         # 可以 Tab / 点一下获得焦点（蓝框 + 浅蓝底），再按 Delete / BackSpace 删除。
         chip = tk.Frame(
             row, bg="white", relief="sunken", bd=1, cursor="fleur", takefocus=1,
             highlightthickness=2, highlightbackground="white", highlightcolor="#1a73e8",
         )
         label = tk.Label(chip, text=text, bg="white", cursor="fleur", anchor="w")
-        label.pack(fill=tk.BOTH, expand=True, padx=6, pady=2)
+        label.pack(fill=tk.BOTH, expand=True, padx=6, pady=1)
         chip._actor_entry = dict(entry)
         chip._actor_label = text
-        chip.pack(side=tk.LEFT, padx=(0, 4))
-        chip.update_idletasks()
-        chip.configure(width=max(int(label.winfo_reqwidth() * 1.5) + 12, 72), height=label.winfo_reqheight() + 6)
+        chip._actor_text_label = label
+        chip.configure(height=self._actor_row_height())
         chip.pack_propagate(False)
+        chip.pack(side=tk.TOP, fill=tk.X, pady=(0, 2))
+        for w in (chip, label):
+            w.bind("<Enter>", lambda _e, c=chip, ww=w: self._actor_tip(ww, c, True), add="+")
+            w.bind("<Leave>", lambda _e, c=chip, ww=w: self._actor_tip(ww, c, False), add="+")
         for widget in (chip, label):
             widget.bind("<ButtonPress-1>", self._actor_press)
             widget.bind("<B1-Motion>", self._actor_motion)
@@ -226,19 +296,20 @@ class ActorsMixin:
             self._actor_drag_index = None
         self._actor_drag_moved = False
         self._actor_drag_x = event.x_root
+        self._actor_drag_y = event.y_root
 
     def _actor_motion(self, event) -> None:
         src = self._actor_drag_index
         buttons = getattr(self, "_actor_buttons", None) or []
         if src is None or not buttons or src >= len(buttons):
             return
-        if not self._actor_drag_moved and abs(event.x_root - self._actor_drag_x) < 6:
+        if not self._actor_drag_moved and abs(event.y_root - getattr(self, "_actor_drag_y", event.y_root)) < 6:
             return
         target = None
         best = None
-        for i, btn in enumerate(buttons):
-            center = btn.winfo_rootx() + max(btn.winfo_width(), 1) / 2
-            dist = abs(event.x_root - center)
+        for i, btn in enumerate(buttons):  # t164u: 一行一个人，上下拖
+            center = btn.winfo_rooty() + max(btn.winfo_height(), 1) / 2
+            dist = abs(event.y_root - center)
             if best is None or dist < best:
                 best = dist
                 target = i
@@ -248,10 +319,11 @@ class ActorsMixin:
         moved = buttons.pop(src)
         buttons.insert(target, moved)
         self._actor_drag_index = target
-        for btn in buttons:
-            btn.pack_forget()
-        for btn in buttons:
-            btn.pack(side=tk.LEFT, padx=(0, 4))
+        fillers = getattr(self, "_actor_fillers", None) or []
+        for w in list(buttons) + list(fillers):
+            w.pack_forget()
+        for w in list(buttons) + list(fillers):
+            w.pack(side=tk.TOP, fill=tk.X, pady=(0, 2))
 
     def _actor_release(self, event) -> None:
         buttons = getattr(self, "_actor_buttons", None) or []

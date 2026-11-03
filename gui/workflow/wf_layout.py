@@ -647,6 +647,9 @@ class LayoutMixin:
             command=self.choose_clip_transcribe_scope,
         )
         self.btn_clip_transcribe.pack(side=tk.LEFT, padx=(4, 0))
+        # t165u: 这一场讲话长度估算 + 「自动」会选的长度（和生场视频「自动」同一个函数）
+        self._speech_est_label = ttk.Label(scene_prompt_row, text="", foreground="#1a5fb4")
+        self._speech_est_label.pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(self.video_edit_frame, text="讲话:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         # Tk Text 内置撤销/重做：Ctrl+Z 撤销，Ctrl+Y 重做（Windows 常见）；maxundo=0 为不限制深度

@@ -152,12 +152,12 @@ def open_video_prompt_dialog(
     text_var = tk.StringVar(value=saved_text)
     # 视频长度：不进提示词，作为 extra 参数交给 CLI自动（Grok Imagine 视频时长）。记在 video_prompt["duration"]。
     saved_duration = saved_choice.get("duration") if isinstance(saved_choice, dict) else None
-    if saved_duration == "13s":  # t255u: MiniMax 13 秒改成 12 秒，旧项目存的 13s 当 12s
-        saved_duration = "12s"
-    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "12s", "auto") else "auto")  # t227u: 默认「自动」（存过的长度照旧恢复）
+    if saved_duration == "12s":  # t166u: MiniMax 恢复 13 秒，旧项目存的 12s 当 13s
+        saved_duration = "13s"
+    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "13s", "auto") else "auto")  # t227u: 默认「自动」（存过的长度照旧恢复）
     saved_visual = True
     saved_speaking = True
-    saved_actor = False
+    saved_actor = True  # t174u: 三项默认全勾；项目 video_prompt 里存过就按存的
     saved_override = config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0]
     if isinstance(saved_choice, dict):
         if "visual" in saved_choice:
@@ -355,11 +355,12 @@ def open_video_prompt_dialog(
             _sp = " ".join(str(s.get("speaking") or "") for s in scenes)
             _will_audio = (_cfg_mm.is_minimax(backend) and audio_mode_var.get() in ("talk", "sing")
                            and get_image is not None and bool(get_image("clip_audio")))
-            if _cfg_mm.is_minimax(backend) and not _will_audio:
+            if not _will_audio:  # t165u: Grok / Gemini 也用同一个估算 + 语速档
                 # t154u: 正常语速长度：场景音频 > 配音时间轴 > 字数估算
                 _norm = None
                 try:
-                    _ap = (get_image("clip_audio") or "") if (get_image is not None and len(scenes) == 1) else ""
+                    _ap = (get_image("clip_audio") or "") if (get_image is not None and len(scenes) == 1
+                                                              and _cfg_mm.is_minimax(backend)) else ""
                     if _ap:
                         from utility import sd_image_processor as _sdp0
 
@@ -372,8 +373,10 @@ def open_video_prompt_dialog(
                     _tl0 = config_prompt.h3_speaker_timeline(scenes[0]) if len(scenes) == 1 else []
                     _norm = _tl0[-1][1] if _tl0 else None
                 _dur, _speech_speed, _speech_normal, _why = config_prompt.auto_length_speed_choice(_sp, _opts, _norm)
-            else:
-                _dur, _why = config_prompt.auto_length_choice(_sp, _opts)
+            else:  # MiniMax 加场景音频：长度跟音频走，不说快（估算同一个函数）
+                _dur, _s0, _n0, _why = config_prompt.auto_length_speed_choice(_sp, _opts, None)
+                if _s0 < 0.999:
+                    _dur, _why = _opts[-1], _why.split("→")[0] + f"→ {_opts[-1][:-1]}秒（有场景音频，不说快）"
             _cap = str(scenes[0].get("caption") or scenes[0].get("title") or "").strip()
             print(f"⏱ 自动长度：{_cap[:20] or '这一场'} {_why}")
         style = (get_style() or "").strip()
@@ -443,6 +446,8 @@ def open_video_prompt_dialog(
             prompt = prepend_fyi(  # t163u: FYI 里讲字幕 / 文字的句子不带
                 prompt, config_prompt.strip_caption_lines(get_fyi_text()), include=bool(fyi_include_var.get())
             )
+            if not _cfg_mm.is_minimax(backend) and config_prompt.speech_pace_line(_speech_speed):
+                prompt = prompt + "\n\n" + config_prompt.speech_pace_line(_speech_speed)  # t165u: Grok / Gemini 说快
         # 出图比例：16:9 / 9:16（项目画面大小），提示词里没有才加在最前面。
         from gui.picture_prompt_dialog import _project_video_size
 
@@ -512,7 +517,7 @@ def open_video_prompt_dialog(
             try:
                 from utility import sd_image_processor as _sdp
 
-                _secs = float(_sdp.minimax_snap_seconds(_dur))  # t200u: 7 / 10 / 12
+                _secs = float(_sdp.minimax_snap_seconds(_dur))  # t166u: 7 / 10 / 13
 
                 if _amode in ("talk", "sing"):
                     _secs = _sdp.minimax_audio_video_seconds(_sdp.h3_audio_seconds(get_image("clip_audio") or ""))
@@ -577,7 +582,7 @@ def open_video_prompt_dialog(
             "frames": frames,  # t155u: MiniMax 用：two 时第二张图是结束图
         }
         # t151u: 记下这一场的语速档，导入视频时自动按它放慢（1.0 = 不变速，也记，盖掉旧的）
-        _eff_speed = _speech_speed if (_cfg_mm.is_minimax(backend) and _amode == "none") else 1.0
+        _eff_speed = _speech_speed if _amode == "none" else 1.0  # t165u: Grok / Gemini 说快了也记，导入时放慢
         extra["speech_speed"] = _eff_speed
         try:
             import time as _time
@@ -709,9 +714,9 @@ def open_video_prompt_dialog(
     length_box = ttk.LabelFrame(actions, text="长度", padding=(8, 4))
     length_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     length_radios = []
-    # t200u: Grok / Gemini 6/10/15 秒；MiniMax 7/10/12 秒（换后端时就地改字和值，6↔7、10↔10、15↔12）
+    # t200u: Grok / Gemini 6/10/15 秒；MiniMax 7/10/13 秒（换后端时就地改字和值，6↔7、10↔10、15↔13）
     _LEN_STD = ("6s", "10s", "15s")
-    _LEN_MM = ("7s", "10s", "12s")
+    _LEN_MM = ("7s", "10s", "13s")
     for value, label in (("6s", "6秒"), ("10s", "10秒"), ("15s", "15秒")):
         _rb = ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var)
         _rb.pack(anchor=tk.W)
@@ -720,6 +725,8 @@ def open_video_prompt_dialog(
     _rb = ttk.Radiobutton(length_box, text="自动", value="auto", variable=duration_var)
     _rb.pack(anchor=tk.W)
     length_radios.append(_rb)
+    auto_info_lbl = ttk.Label(length_box, text="", foreground="#0a5", wraplength=170, justify=tk.LEFT)  # t169u
+    auto_info_lbl.pack(anchor=tk.W)
 
     # t161u/t163u: 后端选在对话框里（Grok / Gemini / MiniMax）；场景音频：不加 / 作为说话 / 作为唱歌（只有 MiniMax）
     import config as _cfg_prefs
@@ -782,6 +789,22 @@ def open_video_prompt_dialog(
         with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing")
         for rb in length_radios:  # 带音频时长度跟音频走
             rb.state(["disabled"] if with_audio else ["!disabled"])
+        _refresh_auto_info(mm, with_audio)
+
+    def _refresh_auto_info(mm, with_audio) -> None:
+        """t169u: 「自动」现在会选什么（和提交、导入同一个函数）。"""
+        try:
+            if with_audio:
+                auto_info_lbl.config(text="自动: 跟场景音频，不说快")
+                return
+            scs = [s for s in (get_scenes() or []) if isinstance(s, dict)]
+            sp = " ".join(str(s.get("speaking") or "") for s in scs)
+            tl = config_prompt.h3_speaker_timeline(scs[0]) if len(scs) == 1 else []
+            L, s, _n, _w = config_prompt.auto_length_speed_choice(sp, _LEN_MM if mm else _LEN_STD, tl[-1][1] if tl else None)
+            auto_info_lbl.config(text=config_prompt.auto_info_text(L, s))
+        except Exception as exc:  # noqa: BLE001
+            auto_info_lbl.config(text="")
+            print(f"⚠️ 自动长度预览失败：{exc}")
 
     backend_var.trace_add("write", _sync_backend)
     audio_mode_var.trace_add("write", _sync_backend)
@@ -1090,8 +1113,8 @@ def open_video_prompt_dialog(
     # t155u/t161u: 说清楚声音输入只有 MiniMax 支持
     ttk.Label(
         advanced,
-        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 12 秒自动分成几段（每段 ≤ 12 秒、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）。选「不加」时不送音频，也从不分段：一场只生成一段，长度 7 / 10 / 12 秒（「自动」按台词估算；"
-        "12 秒放不下就用 12 秒加语速档让人物说快，导入时按同一档放慢）。分辨率固定 1120×640（竖屏 640×1120）。"
+        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 13.67 秒自动分成几段（每段 ≤ 13.67 秒 = 328 帧、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）。选「不加」时不送音频，也从不分段：一场只生成一段，长度 7 / 10 / 13 秒（实际 7.29 / 10.13 / 13.67 秒，按 24fps 帧数；「自动」按台词估算；"
+        "13 秒放不下就用 13 秒加语速档让人物说快，导入时按同一档放慢）。分辨率固定 1056×608（竖屏 608×1056）。"
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         + ("" if _has_audio else "（这一场没有音频）"),

@@ -682,7 +682,7 @@ class TracksMixin:
 
     def load_secondary_track_first_frame(self):
         """加载旁白轨道视频的第一帧到画布（从当前偏移位置）"""
-        if not self.workflow:
+        if not getattr(self, "workflow", None):
             return
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not current_scene:
@@ -1283,7 +1283,7 @@ class TracksMixin:
 
     def on_secondary_track_tab_changed(self, event=None):
         """tab切换时停止正在播放的视频并加载预览帧"""
-        if not self.workflow:
+        if not getattr(self, "workflow", None):
             return
         # 先停止所有播放
         self.pause_secondary_track()
@@ -1301,7 +1301,7 @@ class TracksMixin:
 
     def load_pip_lr_first_frame(self):
         """加载 PIP L/R 视频的第一帧"""
-        if not self.workflow:
+        if not getattr(self, "workflow", None):
             return
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)

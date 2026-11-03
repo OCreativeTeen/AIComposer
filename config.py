@@ -996,7 +996,7 @@ def minimax_variant(backend) -> dict:
 # t162u: 单画面时把起始图也接到 last_frame，锁住光线 / 环境（动作会更少）。设 1 打开。
 MINIMAX_LOCK_LAST_FRAME = _env("MINIMAX_LOCK_LAST_FRAME", "0").lower() in ("1", "true", "yes", "on")
 MINIMAX_SIZE_XLARGE = _env("MINIMAX_SIZE_XLARGE", "1280x704")
-MINIMAX_SIZE_LARGE = _env("MINIMAX_SIZE_LARGE", "1120x640")  # t255u: 横屏 1120x640 / 竖屏 640x1120（32 的倍数；704x1280 跑 13 秒尾段会花）
+MINIMAX_SIZE_LARGE = _env("MINIMAX_SIZE_LARGE", "1056x608")  # t168u: 横屏 1056x608 / 竖屏 608x1056（省显存跑 13 秒；原 1120x640）（32 的倍数；704x1280 跑 13 秒尾段会花）
 MINIMAX_SIZE_SMALL = _env("MINIMAX_SIZE_SMALL", "832x480")
 COMFYUI_WORKFLOW_DIR = _env("COMFYUI_WORKFLOW_DIR", r"\\10.0.0.179\wan22\ComfyUI\user\default\workflows")
 WAN_I2V_URL = _env("WAN_I2V_URL", "http://10.0.0.231:9001")

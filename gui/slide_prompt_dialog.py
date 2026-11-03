@@ -143,9 +143,19 @@ def pack_scene_field_choices(
     row.pack(anchor=tk.W, padx=(20, 0))
     ttk.Label(row, text="换成").pack(side=tk.LEFT)
     labels = [label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES]
-    ttk.Combobox(
+    combo = ttk.Combobox(
         row, textvariable=override_var, values=labels, state="readonly", width=22
-    ).pack(side=tk.LEFT, padx=(4, 0))
+    )
+    combo.pack(side=tk.LEFT, padx=(4, 0))
+
+    def _sync_override(*_a) -> None:  # t174u: 没勾人物时「换成」灰掉（不写人物就没得换）
+        try:
+            combo.configure(state="readonly" if actor_var.get() else "disabled")
+        except tk.TclError:
+            pass
+
+    actor_var.trace_add("write", _sync_override)
+    _sync_override()
     return options, buttons
 
 
