@@ -115,20 +115,60 @@ Output JSON only: {"visual": "...", "actors": {"1": "...", "2": "..."}}; each ac
 person as seen in this picture (clothing, distinctive features, expression, position in frame), no name, no / | or brackets."""
 
 
+MISSING_SPEAKERS_RULES = """
+- 讲话里有些 <N> 在人物名单里没有（见「缺的说话人」）：这些人也在这一场、也要说话。从讲话里的称呼和图判断他/她的名字
+  （讲话里别人怎么叫就用什么名字，看不出就写「人物N」）、性别、年龄段、族裔，写进 JSON 的 "new_actors"，
+  并且在 visual 里写到这个人（在画面哪里、说话时的动作表情），actors 里也给他/她这一场的样子。
+  "new_actors": {"2": {"name": "小雅", "gender": "woman", "age": "youth", "ethnicity": "chinese", "look": "这一场的样子短句"}}
+  gender 只能 man / woman；age 只能 kids / teenager / youth / mature / senior；ethnicity 用 chinese / english 等英文小写。"""
+
+
+def speaking_numbers(speaking: str) -> list:
+    """讲话里出现过的说话人序号 <N>（从小到大）。"""
+    import re
+
+    return sorted({int(x) for x in re.findall(r"<\s*(\d+)\s*>", speaking or "")})
+
+
+def remix_scene_full(visual: str, image_path: str, *, actor_text: str = "", language_label: str = "",
+                     speaking: str = "") -> dict:
+    """t161u: 创建项目时的看图调整和视觉双击 Remix 共用。
+    返回 {"visual", "notes": {N: 样子}, "added": {N: {name, gender, age, ethnicity, look}}, "actor": 新 actor 文本}。"""
+    import config_prompt
+    import project_manager
+
+    names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers({"actor": actor_text})]
+    missing = [n for n in speaking_numbers(speaking) if n > len(names)]
+    visual2, notes, added = _remix_scene(visual, image_path, names=names, language_label=language_label,
+                                         speaking=speaking, missing=missing)
+    actor = project_manager.set_actor_scene_notes(actor_text or "", notes)
+    actor = project_manager.add_missing_actors(actor, missing, added, notes)
+    return {"visual": visual2, "notes": notes, "added": added, "actor": actor, "missing": missing}
+
+
 def remix_scene_with_image(visual: str, image_path: str, *, names=(), language_label: str = "",
                            speaking: str = "") -> tuple:
-    """t158u: 返回 (视觉, {人物序号: 这一场的样子})。JSON 解析失败时退回只有视觉（整段当视觉，没有人物）。"""
+    """t158u: 返回 (视觉, {人物序号: 这一场的样子})。"""
+    v, notes, _added = _remix_scene(visual, image_path, names=names, language_label=language_label,
+                                    speaking=speaking, missing=())
+    return v, notes
+
+
+def _remix_scene(visual: str, image_path: str, *, names=(), language_label: str = "",
+                 speaking: str = "", missing=()) -> tuple:
+    """返回 (视觉, {N: 样子}, {N: 新人物})。JSON 解析失败时退回只有视觉（整段当视觉，没有人物）。"""
     import json
     import re
 
     if not image_path or not os.path.isfile(image_path):
         raise FileNotFoundError("没有起始图")
-    system = VISUAL_IMAGE_REMIX_SYSTEM + (VISUAL_DIALOGUE_RULES if (speaking or "").strip() else "") + SCENE_ACTORS_RULES
-    if names and not (speaking or "").strip():
-        pass
+    system = (VISUAL_IMAGE_REMIX_SYSTEM + (VISUAL_DIALOGUE_RULES if (speaking or "").strip() else "")
+              + SCENE_ACTORS_RULES + (MISSING_SPEAKERS_RULES if missing else ""))
+    miss_note = ("\n缺的说话人（人物名单里没有，要补）：" + "，".join(f"<{n}>" for n in missing)) if missing else ""
     user = [
         {"type": "text", "text": _user_text(visual, names, language_label, speaking)
-         + ("\n人物序号：" + "，".join(f"{i} = {n}" for i, n in enumerate(names, 1)) if names else "")},
+         + ("\n人物序号：" + "，".join(f"{i} = {n}" for i, n in enumerate(names, 1)) if names else "")
+         + miss_note},
         {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}},
     ]
     out = _chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
@@ -140,7 +180,7 @@ def remix_scene_with_image(visual: str, image_path: str, *, names=(), language_l
     except ValueError:
         data = None
     if not isinstance(data, dict) or not str(data.get("visual") or "").strip():
-        return out, {}
+        return out, {}, {}
     notes = {}
     for k, v in (data.get("actors") or {}).items():
         try:
@@ -149,7 +189,15 @@ def remix_scene_with_image(visual: str, image_path: str, *, names=(), language_l
             continue
         if str(v or "").strip():
             notes[n] = str(v).strip()
-    return str(data["visual"]).strip(), notes
+    added = {}
+    for k, v in (data.get("new_actors") or {}).items():
+        try:
+            n = int(str(k).strip())
+        except ValueError:
+            continue
+        if n in (missing or ()) and isinstance(v, dict):
+            added[n] = {x: str(v.get(x) or "").strip() for x in ("name", "gender", "age", "ethnicity", "look")}
+    return str(data["visual"]).strip(), notes, added
 
 
 def accept_auto_remix(old: str, new: str) -> str:

@@ -1038,6 +1038,27 @@ def set_actor_scene_notes(text: str, notes: dict) -> str:
     return format_actor_entries(rows)
 
 
+def add_missing_actors(text: str, missing, added: dict, notes: dict = None) -> str:
+    """t161u: 讲话里有 <N> 但 actor 里没有第 N 个人 → 按默认格式补上 gender/age/ethnicity/名字（这一场的样子）。
+    Strata 没给的就用 woman/youth/chinese/人物N 这类默认值。"""
+    rows = actor_entries(text)
+    have = len([r for r in rows if r.get("role") == "person" and not actor_is_absent(r.get("body") or "")])
+    for n in sorted(int(x) for x in (missing or ())):
+        if n <= have:
+            continue
+        info = (added or {}).get(n) or {}
+        clean = lambda s: re.sub(r"[|/（）()\n]+", " ", str(s or "")).strip(" ，,。")
+        gender = clean(info.get("gender")).lower()
+        gender = gender if gender in ("man", "woman") else ("woman" if gender in ("female", "girl") else "man" if gender in ("male", "boy") else "woman")
+        age = _ACTOR_AGE.get(clean(info.get("age")).lower(), "youth")
+        eth = clean(info.get("ethnicity")).lower() or "chinese"
+        name = clean(info.get("name")) or f"人物{n}"
+        look = clean(info.get("look") or (notes or {}).get(n))[:60]
+        rows.append({"role": "person", "label": "", "body": f"{gender}/{age}/{eth}/{name}" + (f"（{look}）" if look else "")})
+        have += 1
+    return format_actor_entries(rows)
+
+
 def actor_text_for_generation(text: str) -> str:
     """生成时去掉不出现的人。他们不进画面，也不占讲话和旁白。"""
     rows = [row for row in actor_entries(text) if not actor_is_absent(row.get("body") or "")]

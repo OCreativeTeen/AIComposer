@@ -158,7 +158,9 @@ def ask_speaking_concise_review_dialog(
     *,
     title: str = "审阅文案",
     initial_edit: Optional[str] = None,
-) -> Optional[str]:
+    extra_label: Optional[str] = None,
+    extra_initial: str = "",
+):
     """弹窗：只读「原文」+ 可编辑定稿区；「Remix」对原文调用 ``remix_fn``；「确定」返回定稿。
 
     ``initial_edit`` 非空时定稿区初始值与之相同（原文仍为 ``original_content``，如字幕审阅用 speaking 作原文）。
@@ -209,36 +211,88 @@ def ask_speaking_concise_review_dialog(
     edit_seed = initial_edit if initial_edit is not None else (original_content or "")
     edit_w.insert("1.0", edit_seed)
 
+    # t161u: 第二个可编辑区（视觉 Remix 时 = 人物），remix_fn 返回 (定稿, 人物)；确定时一起返回
+    extra_w = None
+    if extra_label:
+        ttk.Label(main, text=extra_label, font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        extra_w = scrolledtext.ScrolledText(main, wrap=tk.WORD, height=4, width=72, font=("Arial", 10))
+        extra_w.pack(fill=tk.BOTH, expand=False, pady=(2, 8))
+        extra_w.insert("1.0", extra_initial or "")
+
     btn_bar = ttk.Frame(main)
     btn_bar.pack(fill=tk.X, pady=(4, 0))
 
     def reset_from_original() -> None:
         edit_w.delete("1.0", tk.END)
         edit_w.insert("1.0", edit_seed)
+        if extra_w is not None:
+            extra_w.delete("1.0", tk.END)
+            extra_w.insert("1.0", extra_initial or "")
+
+    remix_state = {"busy": False}
 
     def do_remix() -> None:
-        raw = original_content #edit_w.get("1.0", tk.END)
-        try:
-            out = remix_fn(raw)
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror("Remix 失败", str(e), parent=dlg)
+        # t161u: Remix 在后台线程跑（工人线程不碰 Tk），按钮显示忙；结果用 after 轮询拿回来
+        import queue
+
+        if remix_state["busy"]:
             return
-        edit_w.delete("1.0", tk.END)
-        edit_w.insert("1.0", (out or "").strip())
+        raw = original_content #edit_w.get("1.0", tk.END)
+        q: "queue.Queue" = queue.Queue()
+        remix_state["busy"] = True
+        remix_btn.config(text="Remix 中…", state=tk.DISABLED)
+
+        def work() -> None:
+            try:
+                q.put(("ok", remix_fn(raw)))
+            except Exception as e:  # noqa: BLE001
+                q.put(("err", e))
+
+        def poll() -> None:
+            try:
+                kind, val = q.get_nowait()
+            except queue.Empty:
+                try:
+                    dlg.after(150, poll)
+                except tk.TclError:
+                    pass
+                return
+            remix_state["busy"] = False
+            try:
+                if not dlg.winfo_exists():
+                    return
+                remix_btn.config(text="Remix(LLM)", state=tk.NORMAL)
+            except tk.TclError:
+                return
+            if kind == "err":
+                messagebox.showerror("Remix 失败", f"{val}\n定稿保持不变。", parent=dlg)
+                return
+            extra = None
+            if isinstance(val, tuple):
+                val, extra = (val + (None,))[:2]
+            edit_w.delete("1.0", tk.END)
+            edit_w.insert("1.0", (val or "").strip())
+            if extra_w is not None and extra is not None:
+                extra_w.delete("1.0", tk.END)
+                extra_w.insert("1.0", str(extra).strip())
+
+        threading.Thread(target=work, daemon=True).start()
+        dlg.after(150, poll)
 
     def on_ok() -> None:
         text = edit_w.get("1.0", tk.END).strip()
         if not text:
             messagebox.showwarning("审阅", "定稿正文不能为空。", parent=dlg)
             return
-        result[0] = text
+        result[0] = (text, extra_w.get("1.0", tk.END).strip()) if extra_w is not None else text
         dlg.destroy()
 
     def on_cancel() -> None:
         dlg.destroy()
 
     ttk.Button(btn_bar, text="还原原文", command=reset_from_original).pack(side=tk.LEFT, padx=(0, 6))
-    ttk.Button(btn_bar, text="Remix(LLM)", command=do_remix).pack(side=tk.LEFT, padx=(0, 6))
+    remix_btn = ttk.Button(btn_bar, text="Remix(LLM)", command=do_remix)
+    remix_btn.pack(side=tk.LEFT, padx=(0, 6))
 
     btn_row2 = ttk.Frame(main)
     btn_row2.pack(fill=tk.X, pady=(10, 0))
@@ -247,7 +301,7 @@ def ask_speaking_concise_review_dialog(
 
     dlg.protocol("WM_DELETE_WINDOW", on_cancel)
     dlg.update_idletasks()
-    w_m, h_m = 720, min(640, dlg.winfo_reqheight() + 20)
+    w_m, h_m = 720, min(760 if extra_w is not None else 640, dlg.winfo_reqheight() + 20)
     sw = dlg.winfo_screenwidth()
     sh = dlg.winfo_screenheight()
     dlg.geometry(f"{w_m}x{h_m}+{(sw - w_m) // 2}+{(sh - h_m) // 2}")

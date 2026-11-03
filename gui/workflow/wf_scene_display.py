@@ -196,6 +196,7 @@ class SceneDisplayMixin:
         else:
             initial_edit = None
 
+        actor_seed = (scene.get("actor") or "").strip()
         prompt_tpl = remix_system_prompt or config_prompt.SPEAKING_CONCISE_PROMPT
         system_prompt = prompt_tpl.format(language=lang_label)
 
@@ -208,18 +209,17 @@ class SceneDisplayMixin:
         def _remix(t: str) -> str:
             if text_field != "visual" or remix_system_prompt:
                 return _remix_text(t)
-            # t187u: 视觉：带上这一场的起始图让 Strata 看图改写，去掉和画面冲突的动作；不行就退回纯文字
+            # t161u: 和创建项目时看图调整同一条路：视觉 + 每个人这一场的样子 + 补讲话里缺的说话人
             try:
                 from utility.file_util import get_file_path
-                from utility.visual_remix import remix_visual_with_image
+                from utility.visual_remix import remix_scene_full
 
                 image = get_file_path(scene, "clip_image")
-                names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
-                # t199u: 讲话一起给，动作跟着对话走
-                out = remix_visual_with_image(t, image, names=names, language_label=lang_label,
-                                              speaking=scene.get("speaking") or "")
-                print(f"🖼 视觉 Remix：带起始图 {os.path.basename(image)} 交给 Strata 看图改写")
-                return config.chinese_convert(out, lang)
+                res = remix_scene_full(t, image, actor_text=actor_seed, language_label=lang_label,
+                                       speaking=scene.get("speaking") or "")
+                print(f"🖼 视觉 Remix：带起始图 {os.path.basename(image)} 交给 Strata 看图改写"
+                      + (f"；补上说话人 {res['missing']}" if res.get("missing") else ""))
+                return config.chinese_convert(res["visual"], lang), config.chinese_convert(res["actor"], lang)
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 视觉 Remix 看图失败，改用纯文字：{exc}")
                 speaking = (scene.get("speaking") or "").strip()
@@ -235,15 +235,28 @@ class SceneDisplayMixin:
                     print(f"⚠️ 视觉 Remix 按讲话的纯文字改写失败，用原来的纯文字：{exc2}")
                     return _remix_text(t)
 
+        is_visual = text_field == "visual" and not remix_system_prompt
         confirmed = ask_speaking_concise_review_dialog(
             self.root,
             source_text,
             remix_fn=_remix,
             title=title,
             initial_edit=initial_edit,
+            extra_label="人物（Remix 后的建议，可修改；确定时一起写进 人物 栏）" if is_visual else None,
+            extra_initial=actor_seed,
         )
         if confirmed is None:
             return "break"
+        if isinstance(confirmed, tuple):  # t161u: 视觉 + 人物
+            confirmed, new_actor = confirmed
+            import project_manager
+
+            new_actor = project_manager.normalize_actor_text(new_actor or "")
+            if new_actor and new_actor != (scene.get("actor") or "").strip():
+                scene["actor_before_remix"] = scene.get("actor") or ""
+                scene["actor"] = new_actor
+                self._set_actor_text(new_actor)
+                print(f"🖼 视觉 Remix：人物 → {new_actor}")
 
         scene[text_field] = confirmed
         widget_map = {

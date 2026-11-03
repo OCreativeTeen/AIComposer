@@ -314,11 +314,7 @@ class PromptFlowsMixin:
                 print(f"ℹ️ 调整视觉：{label} 没有视觉文字或没有图，跳过")
                 return
             lang = getattr(self.workflow, "language", None) or "tw"
-            try:
-                names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
-            except Exception:  # noqa: BLE001
-                names = []
-            remix_q.put((scene, label, visual, image, names, lang, scene.get("speaking") or ""))  # t199u: 讲话也记下
+            remix_q.put((scene, label, visual, image, scene.get("actor") or "", lang, scene.get("speaking") or ""))  # t161u: 整个 actor
 
         def apply_visual(scene, label, old, new, notes=None):
             """UI 线程：看图改写的结果直接写进这一场的视觉；原文留在 visual_before_remix。"""
@@ -335,10 +331,10 @@ class PromptFlowsMixin:
             scene["visual"] = new
             if notes:  # t158u: 每个人这一场的样子写进 actor 括号
                 try:
-                    import project_manager
-
-                    new_actor = project_manager.set_actor_scene_notes(scene.get("actor") or "", notes)
-                    if new_actor and new_actor != (scene.get("actor") or ""):
+                    new_actor = notes.get("actor") or ""
+                    if (scene.get("actor") or "") != notes.get("actor_old"):
+                        print(f"ℹ️ 调整人物：{label} 的人物在这期间被改过，不覆盖")
+                    elif new_actor and new_actor != (scene.get("actor") or ""):
                         scene["actor_before_remix"] = scene.get("actor") or ""
                         scene["actor"] = new_actor
                         print(f"🖼 调整人物：{label} → {new_actor}")
@@ -351,6 +347,8 @@ class PromptFlowsMixin:
                 if cur is scene and getattr(self, "scene_visual", None) is not None:
                     self.scene_visual.delete("1.0", tk.END)
                     self.scene_visual.insert("1.0", new)
+                    if hasattr(self, "_set_actor_text"):  # t161u
+                        self._set_actor_text(scene.get("actor") or "")
                 self.workflow.save_scenes_to_json()
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 调整视觉：{label} 写回界面 / 保存失败 {exc}")
@@ -358,7 +356,7 @@ class PromptFlowsMixin:
         def remix_worker():
             """t198u: 一场一场地把视觉 + 刚写回的图交给 Strata 看图改写（和视觉双击 Remix 同一个函数）。
             看图失败就不动视觉（不退回纯文字改写），只记日志。"""
-            from utility.visual_remix import remix_scene_with_image
+            from utility.visual_remix import remix_scene_full
             import config
 
             try:
@@ -366,14 +364,13 @@ class PromptFlowsMixin:
                     item = remix_q.get()
                     if item is None:
                         break
-                    scene, label, old, image, names, lang, speaking = item
+                    scene, label, old, image, actor_old, lang, speaking = item
                     ui(lambda l=label: var.set(f"调整视觉（{l}，Strata 看图）…"))
                     try:
-                        out, notes = remix_scene_with_image(old, image, names=names,  # t158u: 视觉 + 人物样子
-                                                            language_label=config.llm_language_label(lang),
-                                                            speaking=speaking)
-                        out = config.chinese_convert(out, lang)
-                        notes = {k: config.chinese_convert(v, lang) for k, v in notes.items()}
+                        res = remix_scene_full(old, image, actor_text=actor_old,  # t161u: 视觉 + 人物样子 + 补缺的说话人
+                                               language_label=config.llm_language_label(lang), speaking=speaking)
+                        out = config.chinese_convert(res["visual"], lang)
+                        notes = {"actor_old": actor_old, "actor": config.chinese_convert(res["actor"], lang)}
                     except Exception as exc:  # noqa: BLE001
                         failed.append(f"{label}：调整视觉失败，保留原文（{exc}）")
                         print(f"⚠️ 调整视觉：{label} 看图失败，保留原文：{exc}")
