@@ -103,6 +103,55 @@ def remix_visual_text(visual: str, *, names=(), language_label: str = "", speaki
     return out
 
 
+# t158u: 新建项目逐场出图后的自动调整：视觉 + 每个人在这一场的样子（写进 actor 名字后面的括号）一起改
+SCENE_ACTORS_RULES = """
+这一次请输出 JSON（不要别的文字、不要 ```）：{"visual": "改写后的视觉", "actors": {"1": "人物1 在这一场的样子", "2": "..."}}
+- visual：按上面的规则写；有讲话时按讲话一句一拍、按顺序写出故事的动态发展（谁在说、做什么动作、什么表情、听的人怎么反应、
+  环境 / 道具有什么变化），说话的人从第一帧就在画面里、脸和嘴看得见，不要写捂嘴、托下巴、低头、背对镜头、走进画面。
+- actors：键是人物序号（和「说话人对应」一样），值是这个人在这张图里的样子，一个短句（15 到 40 字）：衣服颜色款式、
+  明显特征（发型、眼镜等）、表情、在画面里的位置（左 / 右 / 前 / 后，坐或站）。只写图里看得到的，不写名字，不用 / | 和括号。
+  图里没有这个人就写空字符串。用和视觉相同的语言和字体。
+Output JSON only: {"visual": "...", "actors": {"1": "...", "2": "..."}}; each actor value is one short phrase describing that
+person as seen in this picture (clothing, distinctive features, expression, position in frame), no name, no / | or brackets."""
+
+
+def remix_scene_with_image(visual: str, image_path: str, *, names=(), language_label: str = "",
+                           speaking: str = "") -> tuple:
+    """t158u: 返回 (视觉, {人物序号: 这一场的样子})。JSON 解析失败时退回只有视觉（整段当视觉，没有人物）。"""
+    import json
+    import re
+
+    if not image_path or not os.path.isfile(image_path):
+        raise FileNotFoundError("没有起始图")
+    system = VISUAL_IMAGE_REMIX_SYSTEM + (VISUAL_DIALOGUE_RULES if (speaking or "").strip() else "") + SCENE_ACTORS_RULES
+    if names and not (speaking or "").strip():
+        pass
+    user = [
+        {"type": "text", "text": _user_text(visual, names, language_label, speaking)
+         + ("\n人物序号：" + "，".join(f"{i} = {n}" for i, n in enumerate(names, 1)) if names else "")},
+        {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}},
+    ]
+    out = _chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
+    if not out:
+        raise RuntimeError("Strata 看图改写返回空")
+    m = re.search(r"\{.*\}", out, re.S)
+    try:
+        data = json.loads(m.group(0)) if m else None
+    except ValueError:
+        data = None
+    if not isinstance(data, dict) or not str(data.get("visual") or "").strip():
+        return out, {}
+    notes = {}
+    for k, v in (data.get("actors") or {}).items():
+        try:
+            n = int(str(k).strip())
+        except ValueError:
+            continue
+        if str(v or "").strip():
+            notes[n] = str(v).strip()
+    return str(data["visual"]).strip(), notes
+
+
 def accept_auto_remix(old: str, new: str) -> str:
     """t198u: 自动调整视觉（不经过对话框）能不能直接写回：返回 '' = 可以，否则返回不用的原因。"""
     o, n = (old or "").strip(), (new or "").strip()

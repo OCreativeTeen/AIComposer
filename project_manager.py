@@ -945,7 +945,10 @@ def normalize_actor_text(text: str) -> str:
         if len(present) >= 4:
             continue
         person_n += 1
-        present.append(f"人物{person_n}：{body}")
+        _pb, note = split_actor_motion(_strip_actor_label(part))  # t158u: 保留（这一场的样子）
+        if "已经在画面" in (note or ""):
+            note = ""
+        present.append(f"人物{person_n}：{_with_actor_motion(body, note)}")
     return " | ".join(present + absent)
 
 
@@ -976,7 +979,7 @@ def actor_entries(text: str) -> list:
         rows.append({
             "role": "person",
             "label": f"人物{person_n}",
-            "body": _person_body(part),
+            "body": _with_actor_motion(_person_body(part), split_actor_motion(_strip_actor_label(part))[1]),  # t158u
         })
     return rows
 
@@ -1017,6 +1020,21 @@ def actor_with_host(text: str, voice_name: str) -> str:
         rows.append(row)
     if voice_name and not placed:
         rows.append({"role": "host", "body": voice_name})
+    return format_actor_entries(rows)
+
+
+def set_actor_scene_notes(text: str, notes: dict) -> str:
+    """t158u: 把 {人物序号: 这一场的样子} 写进 actor 每个人名字后面的括号（替换旧括号）；讲员不动。"""
+    rows = actor_entries(text)
+    n = 0
+    for row in rows:
+        if row.get("role") != "person" or actor_is_absent(row.get("body") or ""):
+            continue
+        n += 1
+        note = re.sub(r"[|/（）()\n]+", " ", str((notes or {}).get(n) or "")).strip(" ，,。")
+        if note:
+            base, _old = split_actor_motion(row.get("body") or "")
+            row["body"] = f"{base}（{note[:60]}）"
     return format_actor_entries(rows)
 
 

@@ -776,12 +776,20 @@ class MediaImportMixin:
             initial_source=initial_source,
             target_clip_length=self._current_clip_length(),
             preselect_file=preselect_file,
+            speed_for_file=self._recorded_speed_for_file,  # t151u
         )
         if not pick:
             return
         if isinstance(pick, dict):
             self._apply_editor_pick(pick, stage_download=True)
             return
+
+    def _recorded_speed_for_file(self, path: str):
+        """t151u: 当前场生成时记下的语速档（说快了），导入这个文件时预选同一档速度放慢还原。"""
+        import config_prompt
+
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+        return config_prompt.recorded_speech_speed(scene, path)
 
     def _edit_current_scene_clip(self) -> None:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)

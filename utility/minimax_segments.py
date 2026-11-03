@@ -139,12 +139,66 @@ def concat_with_audio(parts: list, audio_src: str, seconds: float, out: str) -> 
 _PIC2 = re.compile(r"[^.\n。]*Picture 2[^.\n。]*[.。]?\s*")
 
 
-def segment_prompt(prompt: str, k: int, m: int, start: float, end: float, keep_last: bool) -> str:
+_SPK_MAP = re.compile(r"\(S(\d+)\) is ([^,;(]+)")
+_WHEN = re.compile(r"from (\d+(?:\.\d+)?) s to (\d+(?:\.\d+)?) s")
+_SWITCH = re.compile(r"^Then the lip movement switches to [^,]*?(?: (from \d+(?:\.\d+)? s to \d+(?:\.\d+)? s))?, (?:and )?")
+
+
+def _speaker_names(text: str) -> dict:
+    return {int(n): nm.strip() for n, nm in _SPK_MAP.findall(text or "")}
+
+
+def segment_dialogue(text: str, start: float, end: float, timeline) -> tuple:
+    """t150u: 这一段只留时间上落在 [start, end] 里的台词句（时间改成这一段里的秒数），返回 (提示词, 这一段说话人序号顺序)。
+    timeline = [(开始, 结束, 说话人序号)]，一句台词一条；对不上就原样返回 (text, None)。"""
+    from utility.prompt_polish import _dialogue_span
+
+    tl = [tuple(x) for x in (timeline or []) if isinstance(x, (list, tuple)) and len(x) >= 3]
+    span = _dialogue_span(text) if (tl and "<d>" in text) else None
+    if not span:
+        return text, None
+    body = text[span[0]:span[1]]
+    turns = [t.strip() for t in re.findall(r".*?</d>", body, flags=re.S)]
+    if len(turns) != len(tl):
+        return text, None
+    keep, order = [], []
+    for t, (a, b, n) in zip(turns, tl):
+        a, b, n = float(a), float(b), int(n)
+        ov = min(b, end) - max(a, start)
+        if ov < 0.25 and not (a >= start and b <= end):
+            continue
+        ra, rb = max(a, start) - start, min(b, end) - start
+        t = _WHEN.sub(f"from {ra:.1f} s to {rb:.1f} s", t, count=1)
+        if not keep:  # 这一段的第一句：不是「换到某人」，直接说这个人
+            m = _SWITCH.match(t)
+            if m:
+                t = ((m.group(1) + ", ") if m.group(1) else "") + t[m.end():]
+                t = t[0].upper() + t[1:]
+        keep.append(t)
+        if not order or order[-1] != n:
+            order.append(n)
+    new = " ".join(keep) if keep else "Nobody speaks in this segment; everyone keeps their lips closed."
+    return text[:span[0]] + new + text[span[1]:], order
+
+
+def segment_prompt(prompt: str, k: int, m: int, start: float, end: float, keep_last: bool, timeline=None) -> str:
     text = prompt or ""
     if not keep_last:  # 结束图只给最后一段，前面几段去掉「Picture 2 …」那句
         text = _PIC2.sub("", text).rstrip()
+    names = _speaker_names(text)
+    text, order = segment_dialogue(text, start, end, timeline)  # t150u
     note = (f"Segment {k} of {m}: this shot covers seconds {start:.1f}-{end:.1f} of the scene dialogue; "
             "lip-sync only the words in the given audio.")
+    if order is not None and names:
+        who = lambda n: f"{names.get(n, f'Speaker {n}')} (S{n})"  # noqa: E731
+        silent = [who(n) for n in sorted(names) if n not in order]
+        if not order:
+            note += " Nobody speaks in this segment; everyone keeps their lips closed."
+        else:
+            note += (" In this segment " + (f"only {who(order[0])} speaks" if len(order) == 1
+                                            else ", then ".join(who(n) for n in order) + " speak in this order"))
+            note += ("; " + " and ".join(silent) + (" keeps" if len(silent) == 1 else " keep")
+                     + " their lips closed the whole segment." if silent else ".")
     if k > 1:
         note += (" Continues directly from the previous shot: same people, same place, same clothing, same light, "
                  "same camera direction; Picture 1 is the last frame of the previous shot.")
@@ -152,7 +206,7 @@ def segment_prompt(prompt: str, k: int, m: int, start: float, end: float, keep_l
 
 
 def run_segmented(*, gen_one, image_path, prompt, audio_path, audio_seconds, dest_dir, base_name,
-                  last_image_path=None, status=None, retry_same=1, is_unreachable=None) -> str:
+                  last_image_path=None, status=None, retry_same=1, is_unreachable=None, timeline=None) -> str:
     """gen_one(image, prompt, seconds, audio, last_image, out_path, status) → mp4。返回接好的 mp4。
     每段失败在同一台重试 retry_same 次；连不上直接抛出（交给双机换另一台整场重来）；
     按了停止：当前段做完就抛 SegmentStopped，不接、不导入。"""
@@ -170,7 +224,8 @@ def run_segmented(*, gen_one, image_path, prompt, audio_path, audio_seconds, des
             raise SegmentStopped(f"已停止（做完 {k - 1}/{m} 段），这一场不导入")
         tag = f"第{k}/{m}段"
         seg_audio = cut_audio(audio_path, a, b, os.path.join(seg_dir, f"seg{k}of{m}_audio.wav"))
-        p = segment_prompt(prompt, k, m, a, b, keep_last=(k == m))
+        # t150u: 没有结束图时（参考图工作流）不删「Picture 2」句：那是第 1 个肖像 / Speaker map，不是结束图
+        p = segment_prompt(prompt, k, m, a, b, keep_last=(k == m or not last_image_path), timeline=timeline)
         raw = os.path.join(seg_dir, f"seg{k}of{m}_raw.mp4")
         for attempt in range(retry_same + 1):
             try:

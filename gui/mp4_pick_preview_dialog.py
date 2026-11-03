@@ -1,6 +1,7 @@
 """从文件夹挑选 MP4：预览、裁剪起止、变速、音量；确认后产出临时 mp4/wav。"""
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import tempfile
@@ -37,7 +38,7 @@ from utility.ffmpeg_audio_processor import ffmpeg_path, ffprobe_path
 
 _PREVIEW_SPEED_MIN = 0.7
 _PREVIEW_SPEED_MAX = 1.2
-_PREVIEW_SPEED_STEP = 0.1
+_PREVIEW_SPEED_STEP = 0.05  # t151u: 0.7 / 0.75 / 0.8 … 和语速档一致
 _PREVIEW_MIN_CLIP_SEC = 0.1
 _PREVIEW_HANDLE_PX = 10
 
@@ -256,6 +257,7 @@ def ask_mp4_pick_with_trim_preview(
     initial_source: Optional[str] = None,
     target_clip_length: Optional[float] = None,
     preselect_file: Optional[str] = None,
+    speed_for_file: Optional[Callable[[str], Optional[float]]] = None,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -513,7 +515,7 @@ def ask_mp4_pick_with_trim_preview(
     speed_lbl = ttk.Label(speed_row, text="1.0×", width=8, anchor=tk.CENTER)
     speed_lbl.pack(side=tk.LEFT, padx=4)
     ttk.Button(speed_row, text="▶", width=3, command=lambda: _speed_up()).pack(side=tk.LEFT)
-    ttk.Label(speed_row, text="（0.7–1.2）", foreground="#555").pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Label(speed_row, text="（0.7–1.2，每档 0.05）", foreground="#555").pack(side=tk.LEFT, padx=(8, 0))
 
     vol_row = ttk.Frame(trim_box)
     vol_row.pack(fill=tk.X, pady=(0, 6))
@@ -697,7 +699,7 @@ def ask_mp4_pick_with_trim_preview(
                 fit_btn.state(["!disabled"] if ok else ["disabled"])
                 seg = max(0.0, c.end - c.start)
                 out_dur = seg / max(0.01, c.speed)
-                spd_note = f"  → 输出 {_fmt_time(out_dur)}（×{c.speed:.1f}）" if abs(c.speed - 1.0) > 0.001 else ""
+                spd_note = f"  → 输出 {_fmt_time(out_dur)}（×{c.speed:g}）" if abs(c.speed - 1.0) > 0.001 else ""
                 head = video_at[0] if split_av and focus[0] == "audio" else current_t[0]
                 time_lbl.config(
                     text=f"{os.path.basename(c.path)}  ·  {_fmt_time(head)} / {_fmt_time(c.duration)}  ({c.fps:.2f} fps)"
@@ -779,13 +781,28 @@ def ask_mp4_pick_with_trim_preview(
         c = _ui_clip()
         if c is None:
             return
-        _set_speed(c, round(min(_PREVIEW_SPEED_MAX, c.speed + _PREVIEW_SPEED_STEP), 1))
+        # t151u: 吸到 0.05 一档（「调速度配满本场」算出的 0.736 之类先吸回档上）
+        _set_speed(c, round(min(_PREVIEW_SPEED_MAX, math.floor(c.speed / _PREVIEW_SPEED_STEP + 1e-6) * _PREVIEW_SPEED_STEP
+                                + _PREVIEW_SPEED_STEP), 2))
 
     def _speed_down() -> None:
         c = _ui_clip()
         if c is None:
             return
-        _set_speed(c, round(max(_PREVIEW_SPEED_MIN, c.speed - _PREVIEW_SPEED_STEP), 1))
+        _set_speed(c, round(max(_PREVIEW_SPEED_MIN, math.ceil(c.speed / _PREVIEW_SPEED_STEP - 1e-6) * _PREVIEW_SPEED_STEP
+                                - _PREVIEW_SPEED_STEP), 2))
+
+    def _auto_speed(c) -> None:
+        """t151u: 生成时按语速档 s 说快了的视频：选中时自动把区间速度设成 s，放慢回正常语速（输出 = 区间 / s）。"""
+        if c is None or not callable(speed_for_file):
+            return
+        try:
+            s = speed_for_file(c.path)
+        except Exception:  # noqa: BLE001
+            s = None
+        if s and abs(float(s) - 1.0) > 0.001 and abs(float(s) - c.speed) > 0.001:
+            print(f"🎚️ 导入视频：{os.path.basename(c.path)} 生成时说快了（语速档 {float(s):g}），区间速度自动设为 {float(s):g}")
+            _set_speed(c, float(s))
 
     def _time_to_x(t: float, c=None, canvas=None) -> float:
         c = _ui_clip() if c is None else c
@@ -1351,6 +1368,7 @@ def ask_mp4_pick_with_trim_preview(
             if _lock_on():
                 _on_lock_toggle()
             video_at[0] = clip[0].start
+            _auto_speed(clip[0])  # t151u
         current_t[0] = video_at[0]
         _apply_ui()
         _show_frame(current_t[0])
@@ -1574,17 +1592,17 @@ def ask_mp4_pick_with_trim_preview(
                 )
             plan = (
                 f"你在编辑这段视频，并选了音频。只混进 Clip。\n"
-                f"视频先按 {c.start:.1f}–{c.end:.1f} 秒、速度 {c.speed:.1f} 裁好。\n"
+                f"视频先按 {c.start:.1f}–{c.end:.1f} 秒、速度 {c.speed:g} 裁好。\n"
                 f"从播放停住的 {mix_at:.1f} 秒开始混。\n"
-                f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。\n"
+                f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:g}。\n"
                 f"做法：把这段音频混进 Clip 现有的声音，混音比例 {float(mix_ratio_var.get()) * 100:.0f}%。\n"
                 f"{fade_in_line}，{fade_out_line}。{cut_line}"
             )
         elif audio_edit and c is not None and ac is not None:
             plan = (
                 f"你在编辑这段视频，并选了音频。\n"
-                f"视频：{sel_fn[0]}，{c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。\n"
-                f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}\n"
+                f"视频：{sel_fn[0]}，{c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:g}。\n"
+                f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:g}。{vol_line}\n"
                 f"做法：用这段音频换掉视频里的声音。两边长度不一致时，把视频缩放到和音频一样长。"
             )
         elif c is not None and ac is not None:
@@ -1594,7 +1612,7 @@ def ask_mp4_pick_with_trim_preview(
                 f"音频：{audio_state.get('fn') or ''}\n"
                 f"做法：用这段音频换掉视频里的声音，视频长度改成和音频处理后一样，"
                 f"再替换到 {dest_name}。\n"
-                f"音频 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}"
+                f"音频 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:g}。{vol_line}"
             )
         elif ac is not None:
             if _audio_changed(ac, vol):
@@ -1602,7 +1620,7 @@ def ask_mp4_pick_with_trim_preview(
                     f"你只选了音频，没有视频。\n"
                     f"音频：{audio_state.get('fn') or ''}\n"
                     f"做法：只把这段音频处理好后拷进项目，文件名是原来的名字加上 -1、-2。不替换画面。\n"
-                    f"区间 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}"
+                    f"区间 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:g}。{vol_line}"
                 )
             else:
                 plan = (
@@ -1631,7 +1649,7 @@ def ask_mp4_pick_with_trim_preview(
                 f"你只选了视频，没有另外的音频。\n"
                 f"视频：{sel_fn[0]}\n"
                 f"{how}\n"
-                f"区间 {c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。{vol_line}"
+                f"区间 {c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:g}。{vol_line}"
             )
         decided = _ask_plan(
             plan,
@@ -2004,6 +2022,7 @@ def ask_mp4_pick_with_trim_preview(
         listbox.selection_set(first)
         listbox.see(first)
         _load_file(choices[first])
+        _auto_speed(clip[0])  # t151u: 第一个文件已经是 clip[0] 时 _load_file 不重建
 
     sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
     dlg.update_idletasks()

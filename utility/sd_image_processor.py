@@ -1043,6 +1043,13 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         with open(output_path, "wb") as f:
             for chunk in r.iter_content(1 << 20):
                 f.write(chunk)
+    try:  # t156u: 旁边记一份 prompt_id / 提示词 / 送进去的图（顺序 = Picture 1, 2, …）
+        with open(output_path + ".h3.json", "w", encoding="utf-8") as f:
+            json.dump({"prompt_id": prompt_id, "seed": seed, "seconds": seconds,
+                       "images": [image_name] + list(ref_image_names or []), "prompt": prompt},
+                      f, ensure_ascii=False, indent=1)
+    except Exception as e:  # noqa: BLE001
+        print(f"[ComfyUI H3] prompt_id 记录没写成：{e}")
     if audio_local:
         # t155u: 保险起见把原始场景音频（同样截好的）换进 mp4，画面不重编码；失败就保留 ComfyUI 的输出
         muxed = output_path + ".mux.mp4"

@@ -97,6 +97,7 @@ def open_video_prompt_dialog(
     on_story_style=None,
     get_actor_portraits=None,
     episode=None,
+    on_scene_record=None,
 ) -> None:
     """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选叙事风格、画面、背景、演进、运镜、动画，
     再打开手动窗口，里面放提示词和画面）。
@@ -348,10 +349,31 @@ def open_video_prompt_dialog(
             return
         # t225u: 长度「自动」：每一场按自己的 speaking 估算（全集 / 本集从这一场起也是一场一场算）
         _dur = duration_var.get()
+        _speech_speed, _speech_normal = 1.0, 0.0  # t151u: 语速档（MiniMax 不加音频的「自动」才会 < 1）
         if _dur == "auto":
             _opts = _LEN_MM if _cfg_mm.is_minimax(backend) else _LEN_STD
             _sp = " ".join(str(s.get("speaking") or "") for s in scenes)
-            _dur, _why = config_prompt.auto_length_choice(_sp, _opts)
+            _will_audio = (_cfg_mm.is_minimax(backend) and audio_mode_var.get() in ("talk", "sing")
+                           and get_image is not None and bool(get_image("clip_audio")))
+            if _cfg_mm.is_minimax(backend) and not _will_audio:
+                # t154u: 正常语速长度：场景音频 > 配音时间轴 > 字数估算
+                _norm = None
+                try:
+                    _ap = (get_image("clip_audio") or "") if (get_image is not None and len(scenes) == 1) else ""
+                    if _ap:
+                        from utility import sd_image_processor as _sdp0
+
+                        _a = float(_sdp0.h3_audio_seconds(_ap) or 0)
+                        if _a > 0:
+                            _norm = (_a, "场景音频")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 场景音频长度没读出来：{exc}")
+                if _norm is None:
+                    _tl0 = config_prompt.h3_speaker_timeline(scenes[0]) if len(scenes) == 1 else []
+                    _norm = _tl0[-1][1] if _tl0 else None
+                _dur, _speech_speed, _speech_normal, _why = config_prompt.auto_length_speed_choice(_sp, _opts, _norm)
+            else:
+                _dur, _why = config_prompt.auto_length_choice(_sp, _opts)
             _cap = str(scenes[0].get("caption") or scenes[0].get("title") or "").strip()
             print(f"⏱ 自动长度：{_cap[:20] or '这一场'} {_why}")
         style = (get_style() or "").strip()
@@ -464,6 +486,10 @@ def open_video_prompt_dialog(
                 prompt = head + "\n\n" + block + ("\n\n" + rest if sep else "")
             else:
                 prompt = block + "\n\n" + prompt
+        _h3_build = None  # t150u: MiniMax：带人物描述重做提示词
+        _h3_people = None
+        _h3_visual = ""
+        _timeline = []
         # t163u: 三个后端同一份提示词。要点放最前（OUTPUT FORMAT 之后），结尾再强调一次画面干净和光线。
         _scene_audio = bool(get_image("clip_audio")) if get_image is not None else False  # t172u: 每一场自己判断
         _amode = audio_mode_var.get() if (_cfg_mm.is_minimax(backend) and _scene_audio) else "none"
@@ -493,16 +519,44 @@ def open_video_prompt_dialog(
                 _secs = _sdp.minimax_h3_frames(_secs) / float(_sdp.MINIMAX_H3_FPS)
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ MiniMax 时长没算出来：{exc}")
-            prompt = config_prompt.build_h3_prompt(
-                scenes, frames=frames, transition=_tr, style=style,
+            # t150u: <Picture k> = 第 n 个说话人的肖像（参考图工作流才有）；notes = Strata 看图写的人物括号描述
+            _pics = {n: k for k, (n, _nm, _p) in enumerate(portrait_refs, 2)} if (portrait_refs and _mm_r2v) else None
+            _h3_args = dict(
+                frames=frames, transition=_tr, style=style,
                 region=bg_region if bg_include_var.get() else "", era=bg_era if bg_include_var.get() else "",
                 language=language or "", camera=camera_var.get(), audio_mode=_amode, start_image=_start,
                 seconds=_secs, use_visual=bool(visual_var.get()), use_speaking=bool(speaking_var.get()),
                 fyi=get_fyi_text() if fyi_include_var.get() else "",
                 stage=bg_stage if bg_include_var.get() else None,
+                speech_speed=_speech_speed if _amode == "none" else 1.0,
             )
-            if portrait_refs and _mm_r2v:  # t216u: <Picture k> = 谁的肖像
-                prompt = config_prompt.h3_portrait_reference_block(portrait_refs) + "\n\n" + prompt
+            _h3_refs = list(portrait_refs) if (portrait_refs and _mm_r2v) else []
+
+            def _h3_build(notes=None, _scenes=scenes, _args=_h3_args, _pics=_pics, _refs=_h3_refs):
+                p = config_prompt.build_h3_prompt(_scenes, speaker_notes=notes, portrait_pictures=_pics, **_args)
+                if _refs:  # t216u: <Picture k> = 谁的肖像
+                    p = config_prompt.h3_portrait_reference_block(_refs) + "\n\n" + p
+                return p
+
+            prompt = _h3_build(None)
+            if _amode == "talk":  # t150u: 每句台词的起止秒（分段时每段只留这段里的台词和说话人）
+                _timeline = config_prompt.h3_speaker_timeline(scenes[0]) if scenes else []
+            if polish_var.get() and scenes:
+                # t150u: Strata 精简前先看场景图 + 每个有肖像的人（原工作流也找肖像，只给 Strata 看，不送 ComfyUI）
+                try:
+                    _rows = config_prompt.h3_speaker_map(scenes[0])[0]
+                    _all = {}
+                    if callable(get_actor_portraits):
+                        _all = {n: p for n, _nm, p in (get_actor_portraits(scenes[0]) or [])}
+                    _h3_people = []
+                    for _k, _row in enumerate(_rows, 1):
+                        _nm, _ident, _tone = config_prompt._speaker_identity(_row)
+                        _h3_people.append((_k, _nm, ", ".join(x for x in (_ident, _tone) if x), _all.get(_k, "")))
+                    _h3_visual = " ".join(str(s.get("visual") or "") for s in scenes if isinstance(s, dict)).strip() \
+                        if visual_var.get() else ""
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ Strata 人物描述准备失败：{exc}")
+                    _h3_people = None
         if missing and quiet:
             print("视频提示：这一场没有" + "、".join(missing) + "，只发已有的图。")
         elif missing:
@@ -522,10 +576,26 @@ def open_video_prompt_dialog(
             "orientation": "portrait" if _size == "1080x1920" else "landscape",
             "frames": frames,  # t155u: MiniMax 用：two 时第二张图是结束图
         }
+        # t151u: 记下这一场的语速档，导入视频时自动按它放慢（1.0 = 不变速，也记，盖掉旧的）
+        _eff_speed = _speech_speed if (_cfg_mm.is_minimax(backend) and _amode == "none") else 1.0
+        extra["speech_speed"] = _eff_speed
+        try:
+            import time as _time
+
+            scenes[0]["video_speech_speed"] = {
+                "speed": _eff_speed, "length": _dur, "normal_seconds": _speech_normal,
+                "backend": backend, "at": round(_time.time(), 1),
+            }
+            if callable(on_scene_record):
+                on_scene_record()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 语速档没记下：{exc}")
         if _cfg_mm.is_minimax(backend) and get_image is not None and _amode in ("talk", "sing"):
             # t155u/t163u: 只有 MiniMax 且选了「作为说话 / 作为唱歌」才把当前场景音频送去对口型
             extra["scene_audio"] = get_image("clip_audio") or ""
             extra["audio_mode"] = _amode
+            if _timeline:
+                extra["speaker_timeline"] = [list(x) for x in _timeline]  # t150u
 
         def _deliver(final_prompt: str) -> None:
             if callable(deliver):  # t172u: 全集提交：交回给批量，不关窗口
@@ -541,14 +611,24 @@ def open_video_prompt_dialog(
                 except TypeError:
                     open_manual(final_prompt, images)  # old callers without extra
 
+        def _log_prompt(pre: str, post: str, why: str = "") -> None:
+            try:  # t156u: 记下 Strata 前 / 后的提示词（单场）
+                if len(scenes) == 1:
+                    config_prompt.record_video_prompt_log(scenes[0], pre, post, backend, why)
+                    if callable(on_scene_record):
+                        on_scene_record()
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 提示词记录没写成：{exc}")
+
         _episode_state["started"] = True
         if not polish_var.get():
+            _log_prompt(prompt, prompt, "没用 Strata")
             _deliver(prompt)
             return
         # t166u: 本机 Strata 先把提示词打磨精简（后台线程）；失败 / 超时就用原提示词。重试用窗口里已打磨的提示词，不再打磨。
         import threading
 
-        from utility.prompt_polish import polish_video_prompt
+        from utility.prompt_polish import polish_h3_with_people, polish_video_prompt
 
         hint.config(text="Strata 精简提示词…（几秒钟，失败会自动用原提示词）", foreground="#1f5fbf")
         try:
@@ -558,7 +638,14 @@ def open_video_prompt_dialog(
         box = {}
 
         def _work() -> None:
-            box["v"] = polish_video_prompt(prompt, backend)
+            if _h3_build is not None and _h3_people:  # t150u: 先看图写人物描述，再打磨
+                def _rb(notes):
+                    box["pre"] = _h3_build(notes)  # t156u: 打磨前的那版（带人物描述）
+                    return box["pre"]
+
+                box["v"] = polish_h3_with_people(_rb, _h3_people, _start, _h3_visual, backend)
+            else:
+                box["v"] = polish_video_prompt(prompt, backend)
 
         threading.Thread(target=_work, daemon=True).start()
 
@@ -568,6 +655,7 @@ def open_video_prompt_dialog(
                 return
             final, why = box["v"]
             print(f"视频提示：{why}")
+            _log_prompt(box.get("pre") or prompt, final, why)
             _deliver(final)
 
         dlg.after(250, _poll)
@@ -1002,7 +1090,8 @@ def open_video_prompt_dialog(
     # t155u/t161u: 说清楚声音输入只有 MiniMax 支持
     ttk.Label(
         advanced,
-        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 12 秒自动分成几段（每段 ≤ 12 秒、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）；MiniMax 长度 7 / 10 / 12 秒，分辨率固定 1120×640（竖屏 640×1120），，"
+        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 12 秒自动分成几段（每段 ≤ 12 秒、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）。选「不加」时不送音频，也从不分段：一场只生成一段，长度 7 / 10 / 12 秒（「自动」按台词估算；"
+        "12 秒放不下就用 12 秒加语速档让人物说快，导入时按同一档放慢）。分辨率固定 1120×640（竖屏 640×1120）。"
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         + ("" if _has_audio else "（这一场没有音频）"),

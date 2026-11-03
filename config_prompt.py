@@ -1645,8 +1645,9 @@ NO_FOURTH_WALL_LINE = ("Everyone stays inside the scene: they look at each other
 _NUM_WORDS = {1: "1 person", 2: "2 people", 3: "3 people", 4: "4 people"}
 
 
-def cast_lock_lines(names) -> list:
-    """t182u: 人数锁：视频里正好这几个人，不加人、不复制；换姿势 / 位置都是同一个人自己走过去。"""
+def cast_lock_lines(names, background_ok: bool = False) -> list:
+    """t182u: 人数锁：视频里正好这几个人，不加人、不复制；换姿势 / 位置都是同一个人自己走过去。
+    t156u: background_ok（MiniMax 用）= 只锁演员；起始图里另外看得见的人是不说话的背景人物。"""
     names = [str(n or "").strip() for n in (names or []) if str(n or "").strip()]
     names = list(dict.fromkeys(names))
     if not names:
@@ -1654,6 +1655,15 @@ def cast_lock_lines(names) -> list:
     n = len(names)
     who = names[0] if n == 1 else ", ".join(names[:-1]) + " and " + names[-1]
     count = _NUM_WORDS.get(n, f"{n} people")
+    if background_ok:
+        cast = "1 cast member" if n == 1 else f"{n} cast members"
+        return [
+            f"Exactly {cast} in the whole video, {who}: anyone else already visible in <Picture 1> is a silent "
+            "background person who keeps their lips closed and never speaks; no one is added, no one is duplicated, "
+            "and each person appears only once.",
+            "Any change of pose or place in the description, such as sitting down, standing up or walking to the window, "
+            "is made by that same person moving continuously from where they are in the start picture, never by a second copy.",
+        ]
     return [
         f"Exactly {count} in the whole video, {who}: no one else appears, no one is duplicated, "
         "and each person appears only once.",
@@ -1675,9 +1685,26 @@ def _pose_place(clause: str) -> str:
     return ""
 
 
-def _pose_move(clause: str) -> str:
-    """一个小句里的姿势 / 位置变化 → 英文动作；没有返回空。"""
+_REAL_SIT = re.compile(r"坐下|坐到|坐回|坐進|坐进|入座|落座|走.{0,6}坐")
+_REAL_STAND = re.compile(r"站起|起身|起立")
+_REAL_LIE = re.compile(r"躺下|躺到|躺回|倒在")
+
+
+def _pose_move(clause: str, strict: bool = False) -> str:
+    """一个小句里的姿势 / 位置变化 → 英文动作；没有返回空。
+    t156u: strict（MiniMax 用）= 只认真的变化（坐下 / 站起 / 躺下 / 走到…）；坐在 / 站在 / 躺在 是起始姿势，不算。"""
     place = _pose_place(clause)
+    if strict:
+        if _REAL_SIT.search(clause):
+            return "sits down" + (f" on {place}" if place in ("a chair", "the sofa", "the bed") else
+                                  f" at {place}" if place else "")
+        if _REAL_STAND.search(clause):
+            return "stands up"
+        if _REAL_LIE.search(clause):
+            return "lies down" + (f" on {place}" if place else "")
+        if any(k in clause for k in ("走到", "走向", "走過去", "走过去", "走近", "來到", "来到")):
+            return f"walks over to {place}" if place else "takes a few steps to a new spot in the room"
+        return ""
     if "坐" in clause:
         return "walks over and sits down" + (f" on {place}" if place in ("a chair", "the sofa", "the bed") else
                                              f" at {place}" if place else "")
@@ -1690,14 +1717,15 @@ def _pose_move(clause: str) -> str:
     return ""
 
 
-def pose_move_lines(visual: str, names) -> list:
-    """t182u: visual 里某人换姿势 / 位置（坐、站起、走到…）：写成「就是起始图里那个人自己走过去」，尽量写出去哪里。"""
-    out, done = [], set()
+def pose_move_lines(visual: str, names, strict: bool = False, skip=()) -> list:
+    """t182u: visual 里某人换姿势 / 位置（坐、站起、走到…）：写成「就是起始图里那个人自己走过去」，尽量写出去哪里。
+    t156u: strict = 只写真的变化；skip = 说话的人（说话时不走动，一律不写）。"""
+    out, done = [], set(str(x) for x in (skip or ()))
     for clause in re.split(r"[。！？!?，,；;]", str(visual or "")):
         for nm in [str(n or "").strip() for n in (names or [])]:
             if not nm or nm in done or nm not in clause:
                 continue
-            move = _pose_move(clause)
+            move = _pose_move(clause, strict)
             if move:
                 out.append(f"{nm} {move}, the same person as in the start picture moving there, never a second copy.")
                 done.add(nm)
@@ -4140,11 +4168,242 @@ def _h3_speaker_phrase(row: dict) -> str:
     return who + (f" with {tone0}" if tone0 else "") + (f" (voice {voice})" if voice else "")
 
 
+H3_LIP_SYNC_LINE = (
+    "Lip sync: every mouth movement matches the spoken words exactly, syllable by syllable; "
+    "only the person who is speaking at that moment moves their lips, everyone else keeps their lips closed and only "
+    "listens; when the speaker changes, the moving mouth switches to the new speaker at once; lip sync starts at 0.0 s on "
+    "the very first syllable: the first speaker's mouth is already open and forming that syllable in the very first frame, "
+    "with no silent closed-mouth lead-in, no pause and no delay before the lips move."
+)  # t158u: 声音一开始嘴就动  # t150u: 对口型要求（Strata 打磨也要原样保留）
+
+
+_REMAP_WARNED: set = set()
+
+
+def h3_speaker_map(scene: dict) -> tuple:
+    """t150u: (rows, turns, remap)。台词里的 <N> 严格对应 actor 栏第 N 个人；<N> 超出人数时
+    （例如只有一个人却写 <2>）按出现的编号顺序依次对到 actor 里的人，并打印提示。"""
+    rows = _scene_speakers(scene) if isinstance(scene, dict) else []
+    raw = _dialogue_turns(scene) if isinstance(scene, dict) else []
+    labels = sorted({n for n, *_r in raw})
+    remap = {n: n for n in labels}
+    if any(not (1 <= n <= len(rows)) for n in labels) and rows and len(labels) <= len(rows):
+        remap = {n: i for i, n in enumerate(labels, 1)}
+        _key = (str(scene.get("id")), tuple(labels), len(rows))
+        if _key not in _REMAP_WARNED:  # 同一场只提示一次
+            _REMAP_WARNED.add(_key)
+            print("⚠️ 讲话里的编号 " + "、".join(f"<{n}>" for n in labels) + f" 超出 actor 里的 {len(rows)} 个人，按顺序对到："
+                  + "、".join(f"<{n}>→{_speaker_identity(rows[remap[n] - 1])[0]}" for n in labels))
+    turns = []
+    for n, name, ident, text in raw:
+        m = remap.get(n, n)
+        if 1 <= m <= len(rows):
+            name, ident = _speaker_identity(rows[m - 1])[:2]
+        turns.append((m, name, ident, text))
+    return rows, turns, remap
+
+
+def h3_speaker_timeline(scene: dict) -> list:
+    """t150u: [(开始秒, 结束秒, 说话人序号)]，一句台词一条（同 h3_speaker_map 的序号）。
+    只有 speaking_timing 跟现在的 speaking 一致、条数跟台词一样时才有，否则 []。"""
+    if not isinstance(scene, dict):
+        return []
+    tm = scene.get("speaking_timing")
+    if not isinstance(tm, dict):
+        return []
+    if " ".join(str(tm.get("text") or "").split()) != " ".join(str(scene.get("speaking") or "").split()):
+        return []
+    _rows, turns, remap = h3_speaker_map(scene)
+    secs = [x for x in (tm.get("sections") or []) if isinstance(x, dict)]
+    if not secs or len(secs) != len(turns):
+        return []
+    out = []
+    for x, t in zip(secs, turns):
+        try:
+            a, b, n = float(x.get("start") or 0), float(x.get("end") or 0), int(x.get("speaker") or 0)
+        except (TypeError, ValueError):
+            return []
+        if remap.get(n, n) != t[0] or b <= a:
+            return []
+        out.append((round(a, 2), round(b, 2), t[0]))
+    return out
+
+
+_NOTE_DROP = re.compile(r"[()\[\]<>{}\"“”「」『』]")
+
+
+def clean_speaker_note(text: str, limit: int = 360) -> str:
+    """括号里的人物描述：去掉括号 / 尖括号，句号换成逗号（不能断开对话那段），压成一行。"""
+    t = _NOTE_DROP.sub("", str(text or ""))
+    t = re.sub(r"[.!?。！？;；]+\s*", ", ", t)
+    t = " ".join(t.split()).strip(" ,，、")
+    return t[:limit].rstrip(" ,，、")
+
+
+def h3_visual_person_note(visual: str, name: str, names: list) -> str:
+    """t150u: 只有文字时：画面描述里讲这个人的小句（主语沿用上一句），用作括号描述。"""
+    if not visual or not name:
+        return ""
+    names = [n for n in names if n]
+    subject, picked = "", []
+    for sent in re.split(r"[。！？!?\n]+", visual):
+        subject = ""  # 每一句重新找主语
+        for clause in re.split(r"[，,；;：:]+", sent):
+            c = clause.strip()
+            if not c:
+                continue
+            for nm in names:
+                i = c.find(nm)
+                if i == 0 or (i > 0 and c[i - 1] == "的"):
+                    subject = nm
+                    break
+            if subject == name:
+                picked.append(c)
+    return clean_speaker_note("，".join(picked), 120)
+
+
+def actor_scene_note(row: dict) -> str:
+    """t158u: actor 里名字后面的（括号描述）= Strata 看这一场的图写的样子；进出方式（走进画面…）不算。"""
+    import project_manager
+
+    _b, note = project_manager.split_actor_motion((row or {}).get("body") or "")
+    if not note or "画面" in note or "畫面" in note:
+        return ""
+    return note
+
+
+def merge_speaker_note(look: str, visual_note: str) -> str:
+    """t151u: 括号描述 = Strata 看图写的样子 + 场景描述里讲这个人的小句（衣服、表情、姿势、位置），两者都留。"""
+    a, b = clean_speaker_note(look or "", 220), clean_speaker_note(visual_note or "", 140)
+    if a and b and b not in a:
+        return f"{a}, in this scene: {b}"
+    return a or b
+
+
+_MOUTH_COVER = re.compile(
+    r"chin|over (?:her|his|their|the) (?:mouth|face)|cover(?:s|ing)? (?:her|his|their|the) (?:mouth|face)|"
+    r"hand (?:to|at|near|on) (?:her|his|their|the) (?:mouth|lips|face)|look(?:s|ing)? down|gaz(?:e|es|ing) down|"
+    r"eyes down|downcast|head (?:down|bowed|lowered|hung)|bow(?:s|ed|ing)? (?:her|his|their) head|"
+    r"face (?:hidden|turned away|in (?:her|his|their) hands)|back to the camera|turned away|"
+    r"託著下巴|托着下巴|託腮|托腮|手托|手託|低頭|低头|垂頭|垂头|捂|掩著嘴|掩着嘴|掩嘴|掩面|背對鏡頭|背对镜头", re.I)
+_VISUAL_COVER = re.compile(r"託著下巴|托着下巴|託腮|托腮|手托著?着?下巴|手託著?下巴|捂著嘴|捂着嘴|掩著嘴|掩着嘴|掩嘴|掩面|"
+                           r"低著頭|低着头|低頭|低头|垂著頭|垂着头|垂頭|垂头")
+_VISUAL_SILENCE = re.compile(r"[與与和及、]?(?:寂靜|寂静|靜默|静默|沉默|無聲|无声|鴉雀無聲|鸦雀无声)")
+
+
+_NOT_IN_VIEW = re.compile(
+    r"not (?:yet )?(?:visible|in view|in (?:the )?(?:frame|picture|shot))|will (?:appear|enter|come)|appears? later|"
+    r"enters? (?:later|the (?:frame|scene))|walks? in|off-?screen|out of (?:the )?(?:frame|view)|"
+    r"尚未|還沒|还没|不在畫面|不在画面|稍後|稍后|走近|走進|走进", re.I)
+
+
+def strip_mouth_cover(note: str) -> str:
+    """t156u: 说话人的括号描述：去掉挡嘴 / 托下巴 / 低头 / 背对镜头的小句（说话时嘴要看得见）。
+    t158u: 也去掉「还没出现 / 稍后走进来」——说话的人从第一帧就在画面里开口。"""
+    parts = [p.strip() for p in re.split(r"[,;，；]\s*", str(note or "")) if p.strip()]
+    keep = [p for p in parts if not _MOUTH_COVER.search(p) and not _NOT_IN_VIEW.search(p)]
+    return ", ".join(keep)
+
+
+def h3_talk_visual(visual: str) -> str:
+    """t156u: 有台词时的画面描述：去掉托下巴 / 低头 / 捂嘴（挡住嘴）和「寂静 / 沉默」这类跟说话冲突的词。"""
+    v = re.sub(r"(?:另一隻手|另一只手|另一手|一隻手|一只手|一手|雙手|双手|手)?(?:" + _VISUAL_COVER.pattern + ")",
+               "", str(visual or ""))  # t158u: 「另一手捂著嘴」整段去掉，不留「另一手，」
+    v = _VISUAL_SILENCE.sub("", v)
+    return re.sub(r"[，,]\s*[，,]", "，", v)
+
+
+def h3_on_camera_line(names: list) -> str:
+    """t156u: 说话的人：在画面里开口、嘴在动（不是画外音）；说话时不走动、脸朝镜头或对方、嘴不被挡。
+    一整句（没有句点），Strata 原样保留。"""
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    many = len(names) > 1
+    return (f"On camera: {who} " + ("speak" if many else "speaks") + " on camera inside the frame, visibly moving "
+            + ("their" if many else "the") + " lips with every word (spoken dialogue, not a voice-over or inner monologue); "
+            "while speaking, " + ("each speaker" if many else "the speaker") + " stays where they are in <Picture 1>, "
+            "faces the camera or the person they talk to, and keeps the mouth clearly visible and uncovered, with no hand, "
+            "phone, cup or hair in front of it; " + names[0] + " is already inside the frame at 0.0 s with the face and mouth "
+            "visible (no walking in, no turning around first), and any hand, cup or phone near a speaker's mouth in "
+            "<Picture 1> drops away in the first instant; the actions in the description happen while they keep talking.")
+
+
+def h3_speech_pace_line(speed: float, seconds: float) -> str:
+    """t151u: 不加音频时让模型说快一点（导入时按同一档放慢还原）。没有句号，Strata 原样保留。"""
+    x = 1.0 / max(0.5, float(speed or 1.0))
+    return (f"Speech pace: everyone speaks fast, about {x:.1f} times normal conversational speed, brisk and clear "
+            f"with only very short pauses, so that all the lines fit into the {round(float(seconds or 0)):d} seconds; "
+            "the lip movements stay exactly in sync with this faster speech.")
+
+
+def _h3_dialogue_sentences(rows, turns, *, lang: str, audio_mode: str, notes: dict, timeline: list) -> list:
+    """t150u: 每句台词写清楚谁在说、谁闭嘴；换人时写「口型换到 X」。(S#) = actor 第 # 个人。"""
+    verb = "sings" if audio_mode == "sing" else "says"
+    seen, out = set(), []
+    for i, (n, _name, _ident, text) in enumerate(turns):
+        sid = f"(S{n})"
+        ok = 1 <= n <= len(rows)
+        nm = _speaker_identity(rows[n - 1])[0] if ok else f"Speaker {n}"
+        others = [f"{_speaker_identity(r)[0]} (S{k})" for k, r in enumerate(rows, 1) if k != n]
+        if n not in seen and ok:
+            who = _h3_speaker_phrase(rows[n - 1])
+            note = clean_speaker_note((notes or {}).get(n, ""))
+            if note:  # 括号描述放在名字后面、声音前面
+                nm_at = who.find(nm)
+                cut = nm_at + len(nm) if nm_at >= 0 else len(who)
+                who = who[:cut] + f" ({note})" + who[cut:]
+            who_s = f"{who} {sid} {verb}"
+        else:
+            if audio_mode == "sing":
+                who_s = f"{nm} {sid} sings on"
+            else:
+                who_s = f"{nm} {sid} " + ("answers" if i and turns[i - 1][0] != n else "continues")
+        seen.add(n)
+        when = ""
+        if timeline and i < len(timeline) and audio_mode in ("talk", "none"):
+            a, b, _k = timeline[i]
+            when = f"from {a:.1f} s to {b:.1f} s"
+        quiet = ""
+        if others and audio_mode != "sing":
+            quiet = "while " + " and ".join(others) + (" listens" if len(others) == 1 else " listen") + " with closed lips"
+        if i and turns[i - 1][0] != n and audio_mode != "sing":
+            lead = f"then the lip movement switches to {nm}" + (f" {when}" if when else "") + ", " + (
+                f"and {quiet}, " if quiet else "")
+        else:
+            lead = "".join(x + ", " for x in (when, quiet) if x)
+        body = who_s
+        sent = f"{lead}{body}: <d>[{lang}] {text}</d>"
+        out.append(sent[0].upper() + sent[1:])  # 每句一个大写开头（不加句号：整段对话一起原样保留）
+    return out
+
+
+def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None = None) -> str:
+    """t150u: 'Speaker map: (S1) is 姊姊, the young woman (…) shown in <Picture 2>; …'（没有句号，Strata 原样保留）。"""
+    if not rows:
+        return ""
+    parts = []
+    for k, r in enumerate(rows, 1):
+        name, ident, _tone = _speaker_identity(r)
+        note = clean_speaker_note((notes or {}).get(k, ""))
+        bit = f"(S{k}) is {name}" + (f", the {ident}" if ident else "") + (f" ({note})" if note else "")
+        if (pictures or {}).get(k):
+            bit += f", whose portrait is <Picture {pictures[k]}>"
+        parts.append(bit)
+    tail = ("; every spoken line belongs only to the person with its (S) id, and only that person's mouth moves"
+            if len(rows) > 1 else "; every spoken line belongs to this person")
+    return "Speaker map: " + "; ".join(parts) + tail + "."
+
+
 def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str = "", region: str = "", era: str = "",
                     language: str = "", camera: str = "none", audio_mode: str = "none", start_image: str = "",
                     seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "",
-                    stage=None) -> str:
-    """t165u: 场景内容 → MiniMax H3 官方格式提示词。t191u: stage = 故事舞台（一句 Story stage:）。"""
+                    stage=None, speaker_notes: dict | None = None, portrait_pictures: dict | None = None,
+                    speech_speed: float = 1.0) -> str:
+    """t165u: 场景内容 → MiniMax H3 官方格式提示词。t191u: stage = 故事舞台（一句 Story stage:）。
+    t150u: speaker_notes = {说话人序号: 括号描述}（Strata 看图写的；没有就用画面描述里讲这个人的小句）；
+    portrait_pictures = {说话人序号: <Picture k> 的 k}（参考图工作流）。"""
     scs = [s for s in (scenes or []) if isinstance(s, dict)]
     sc = scs[0] if scs else {}
     two = frames == "two" or isinstance(transition, dict)
@@ -4181,9 +4440,20 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     else:
         shot.append(f"The scene shown in {pic} stays the same place, preserving its layout, objects and colors.")
     if rows:
-        shot += cast_lock_lines([_speaker_identity(r)[0] for r in rows])  # t182u
+        shot += cast_lock_lines([_speaker_identity(r)[0] for r in rows], background_ok=True)  # t182u / t156u
+    _turns0 = h3_speaker_map(sc)[1] if use_speaking else []
+    _spk_names = []  # t156u: 说话的人
+    for _n, *_x in _turns0:
+        if 1 <= _n <= len(rows):
+            _nm = _speaker_identity(rows[_n - 1])[0]
+            if _nm and _nm not in _spk_names:
+                _spk_names.append(_nm)
     visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip() if use_visual else ""
+    if _turns0 and visual:
+        visual = h3_talk_visual(visual).strip()  # t156u
     vis_all = " ".join(str(s.get("visual") or "") for s in scs)
+    if _turns0:
+        vis_all = h3_talk_visual(vis_all)  # t156u
     if isinstance(transition, dict):
         for key in ("时空", "人物", "特效"):
             v = str(transition.get(key) or "").strip()
@@ -4191,10 +4461,11 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                 visual = (visual + " " + v).strip()
                 vis_all += " " + v
     if visual:
-        shot.append(f"What happens: {visual.rstrip('。.')}.")
-        shot += pose_move_lines(visual, [_speaker_identity(r)[0] for r in rows])  # t182u
+        shot.append((f"What happens while they talk: " if _spk_names else "What happens: ") + f"{visual.rstrip('。.')}.")
+        shot += pose_move_lines(visual, [_speaker_identity(r)[0] for r in rows], strict=True,
+                                skip=_spk_names)  # t182u / t156u: 只写真的变化，说话的人不走动
         shot += in_scene_direction_lines(visual, [_speaker_identity(r)[0] for r in rows])  # t181u
-    turns = _dialogue_turns(sc) if use_speaking else []
+    turns = h3_speaker_map(sc)[1] if use_speaking else []  # t150u: <N> 严格对到 actor 第 N 个人
     story = str(sc.get("story_content") or "").strip()
     if not turns and use_speaking and story and project_manager.scene_is_story_act(sc):
         shot.append(f"Action: {story}")
@@ -4210,27 +4481,39 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                     "the view outside and everyone's clothes stay exactly the same from the first frame to the last."
         shot.append(light)
     shot.append(_H3_CAMERA.get(camera or "none", _H3_CAMERA["none"]))
-    # 台词：(S1)(S2) 按说话人序号，声音描述只在第一次出现时写
-    seen = set()
-    said = []
-    verb = "sings" if audio_mode == "sing" else "says"
-    for i, (n, _name, _ident, text) in enumerate(turns):
-        sid = f"(S{n})"
-        if n not in seen and 1 <= n <= len(rows):
-            who = _h3_speaker_phrase(rows[n - 1])
-            who = who[0].upper() + who[1:]
-            seen.add(n)
-            said.append(f"{who} {sid} {verb}: <d>[{lang}] {text}</d>")
-        else:
-            nm = _speaker_identity(rows[n - 1])[0] if 1 <= n <= len(rows) else f"Speaker {n}"
-            lead = "then answers" if i and turns[i - 1][0] != n else "continues"
-            if audio_mode == "sing":
-                lead = "sings on"
-            said.append(f"{nm} {sid} {lead}: <d>[{lang}] {text}</d>")
+    # 台词：(S1)(S2) = actor 第 1/2 个人；每句写清谁说、谁闭嘴，换人时口型换人（t150u），声音描述只在第一次出现时写
+    _names = [_speaker_identity(r)[0] for r in rows]
+    notes = {}
+    for k, nm in enumerate(_names, 1):
+        look = (speaker_notes or {}).get(k) or actor_scene_note(rows[k - 1] if k <= len(rows) else {})  # t158u
+        note = merge_speaker_note(look, h3_visual_person_note(vis_all, nm, _names))
+        if nm in _spk_names:
+            note = strip_mouth_cover(note)  # t156u: 说话人的描述里不留挡嘴 / 低头
+        if note:
+            notes[k] = note
+    timeline = h3_speaker_timeline(sc) if (turns and audio_mode == "talk") else []
+    _pace = float(speech_speed or 1.0)
+    if turns and audio_mode == "none":  # t151u: 不加音频：配音的起止秒按说快后的语速换算，放得下才写
+        _tl = h3_speaker_timeline(sc)
+        if _tl and _tl[-1][1] * _pace <= float(seconds or 0) + AUTO_LENGTH_SLACK:
+            timeline = [(round(a * _pace, 2), round(b * _pace, 2), n) for a, b, n in _tl]
+    said = _h3_dialogue_sentences(rows, turns, lang=lang, audio_mode=audio_mode, notes=notes, timeline=timeline)
+    if rows and (said or audio_mode == "talk"):
+        shot.append(h3_speaker_map_line(rows, notes, portrait_pictures))
+    if said and audio_mode != "sing":
+        shot.append(H3_LIP_SYNC_LINE)
+        if h3_on_camera_line(_spk_names):
+            shot.append(h3_on_camera_line(_spk_names))  # t156u
+    if said and audio_mode == "none" and _pace < 0.999:
+        shot.append(h3_speech_pace_line(_pace, seconds))
     if said:
         shot.append(" ".join(said))
-        shot.append("One person speaks at a time while the other listens and reacts with natural expressions and small gestures."
-                    if audio_mode != "sing" else "Lips, breath and body move with the song.")
+        if audio_mode == "sing":
+            shot.append("Lips, breath and body move with the song.")
+        elif len(rows) > 1:
+            shot.append("One person speaks at a time while the other listens and reacts with natural expressions and small gestures.")
+        else:  # t156u: 一个人的场景没有「另一个人在听」
+            shot.append("The speaker talks naturally, with expressions and small gestures that match the words.")
     if said and audio_mode == "talk":
         shot.append("Their voices and lip movements follow the provided voice recording.")
     if said:
@@ -6586,7 +6869,7 @@ def h3_portrait_reference_block(refs: list) -> str:
         return ""
     lines = ["REFERENCE PICTURES:", "- <Picture 1> is the scene and the first frame of the video."]
     for k, (n, name, _path) in enumerate(refs, 2):
-        lines.append(f"- <Picture {k}> is the portrait of Speaker {n} {name}: their face, hair and clothing.")
+        lines.append(f"- <Picture {k}> is the portrait of {name} (S{n}): their face, hair and clothing.")
     lines += [
         "The portraits are identity and clothing references only. Each speaker looks exactly like their portrait "
         "(same face, hair and clothes), even if their face is hidden or unclear in <Picture 1>.",
@@ -6594,8 +6877,8 @@ def h3_portrait_reference_block(refs: list) -> str:
         "into the frame and do not copy a portrait's background or pose.",
         "A speaker who is not visible in <Picture 1> enters the scene naturally only when the dialogue brings them "
         "in, and then looks like their portrait. Do not add anyone else.",
-        "Each spoken line is delivered by the speaker marked by its <1>/<2>/<N> tag: lip movement and voice on that "
-        "exact person; the others stay silent while someone else speaks.",
+        "Each spoken line is delivered by the person marked by its (S1)/(S2)/(S#) id, the same person as in their "
+        "portrait: lip movement and voice on that exact person; the others keep their lips closed while someone else speaks.",
     ]
     return "\n".join(lines)
 
@@ -6609,6 +6892,21 @@ SPEECH_PAUSE_END = 0.25
 SPEECH_PAUSE_COMMA = 0.1
 SPEECH_PAUSE_ELLIPSIS = 0.4
 SPEECH_PAUSE_SWITCH = 0.3
+# t157u: 实测 MiniMax H3（p20261103132942 四段 7 秒片，s=1.0）：208 字 / 28.7 秒讲话 ≈ 7.25 字/秒（含停顿），
+# 范围 6.4–8.6；8.6 那段明显赶。MiniMax 会把台词塞进要求的长度，所以用偏舒适的 6.5 字/秒（含停顿）估算。
+MINIMAX_CJK_PER_SEC = 6.5
+MINIMAX_WORDS_PER_SEC = 2.8
+MINIMAX_PAUSE_ELLIPSIS = 0.4
+MINIMAX_AUDIO_TRUST = 0.3  # 场景音频 / 时间轴跟字数估算差超过 30% → 不信（多半是上一段 MiniMax 片子的音频）
+
+
+def minimax_speech_seconds(text: str) -> float:
+    """t157u: MiniMax 实测语速的讲话秒数（字数 / 6.5 + 英文词 / 2.8 + 省略号 0.4）。"""
+    _, d = speaking_seconds_estimate(text)
+    return round(d["cjk"] / MINIMAX_CJK_PER_SEC + d["words"] / MINIMAX_WORDS_PER_SEC
+                 + d["ellipsis"] * MINIMAX_PAUSE_ELLIPSIS, 1)
+
+
 AUTO_LENGTH_SLACK = 0.5  # 估算比选项多不到 0.5 秒仍算放得下
 
 
@@ -6648,3 +6946,108 @@ def auto_length_choice(text: str, options) -> tuple:
     note = "（偏长，超过最长选项）" if secs > float(opts[-1][:-1]) + AUTO_LENGTH_SLACK else ""
     return pick, f"讲话 {size} ≈ {secs:.1f}s → {pick[:-1]}秒{note}"
 
+
+# t151u: 语速档 = 导入视频「区间速度」的档（0.05 一档）。生成时说快 1/s 倍，导入时按 s 放慢还原（输出 = 区间 / s）。
+SPEECH_SPEED_STEPS = (0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0)
+SPEECH_SPEED_TARGET = 0.7  # 默认按说快 30% 估算
+
+
+def auto_length_speed_choice(text: str, options, normal_secs=None) -> tuple:
+    """t151u: 返回 (长度, 语速档 s, 正常语速秒数, 说明)。
+    t154u: 正常语速放得下 7/10/12（容差 AUTO_LENGTH_SLACK）→ 最短放得下的，s=1.0（不说快）；
+    超过最长才用最长 + 放得下的最慢档（最低 0.7，0.7 也放不下就 0.7 并提示）。
+    normal_secs = 场景音频长度 > 配音时间轴 > 按字数估算。"""
+    opts = sorted(options, key=lambda v: float(str(v).rstrip("sS")))
+    _, d = speaking_seconds_estimate(text)
+    if not (d.get("cjk") or d.get("words")):
+        return opts[0], 1.0, 0.0, f"没有讲话 → {opts[0][:-1]}秒，语速 1.0"
+    secs = minimax_speech_seconds(text)  # t157u: 按 MiniMax 实测语速
+    est = secs
+    src = "估算"
+    if isinstance(normal_secs, tuple):
+        normal_secs, src = normal_secs
+    elif normal_secs and float(normal_secs) > 0:
+        src = "配音时间轴"
+    note = ""
+    if normal_secs and float(normal_secs) > 0:
+        if abs(float(normal_secs) - est) <= MINIMAX_AUDIO_TRUST * est:
+            secs = round(float(normal_secs), 2)
+        else:  # t157u: 例：场景音频是上一段 6 秒片子抽出来的 5.85 秒，台词其实要 10 秒
+            note = f"；{src} {float(normal_secs):.1f} 秒跟字数估算差太多，不用"
+            src = "估算"
+    else:
+        src = "估算"
+    src += note
+    fit = next((o for o in opts if secs <= float(o[:-1]) + AUTO_LENGTH_SLACK), None)
+    if fit:
+        return fit, 1.0, secs, f"正常语速约 {secs:.1f} 秒（{src}）→ {fit[:-1]}秒，正常语速（不加速）"
+    pick = opts[-1]
+    cap = float(pick[:-1]) + AUTO_LENGTH_SLACK
+    s = max((x for x in SPEECH_SPEED_STEPS if secs * x <= cap), default=SPEECH_SPEED_TARGET)
+    over = f"（⚠️ 太长：说快到 0.7 档也要约 {secs * s:.1f} 秒，超过 {pick[:-1]} 秒，尾巴可能说不完）" if secs * s > cap else ""
+    out = float(pick[:-1]) / s
+    return pick, s, secs, (f"正常语速约 {secs:.1f} 秒（{src}），超过最长 {pick[:-1]} 秒 → {pick[:-1]}秒，语速档 {s:g}"
+                           f"（说快约 {1 / s:.2f} 倍；导入时速度 {s:g} → 约 {out:.1f} 秒）{over}")
+
+
+def recorded_speech_speed(scene, path: str):
+    """t151u: 这一场记下的语速档（scene["video_speech_speed"]）是否适用于这个视频文件。
+    记了文件名就只认这个文件；否则只认提交之后才生成的文件（修改时间 ≥ 提交时间）。不适用返回 None。"""
+    import os as _os
+
+    rec = scene.get("video_speech_speed") if isinstance(scene, dict) else None
+    if not isinstance(rec, dict) or not path:
+        return None
+    try:
+        s = float(rec.get("speed"))
+        at = float(rec.get("at") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not any(abs(s - x) < 1e-6 for x in SPEECH_SPEED_STEPS):
+        return None
+    fn = str(rec.get("file") or "")
+    if fn:
+        return s if _os.path.basename(fn).lower() == _os.path.basename(str(path)).lower() else None
+    try:
+        if at and _os.path.getmtime(path) < at - 2:
+            return None
+    except OSError:
+        return None
+    return s
+
+VIDEO_PROMPT_LOG_KEEP = 5
+
+
+def record_video_prompt_log(scene: dict, pre: str, post: str, backend: str = "", why: str = "") -> None:
+    """t156u: 记下这一场提交的提示词：Strata 前 / 后（最近 VIDEO_PROMPT_LOG_KEEP 次）。"""
+    import time as _t
+
+    if not isinstance(scene, dict):
+        return
+    log = scene.get("video_prompt_log")
+    log = log if isinstance(log, list) else []
+    log.append({"at": round(_t.time(), 1), "time": _t.strftime("%Y-%m-%d %H:%M:%S"), "backend": backend,
+                "strata": (post or "") != (pre or ""), "why": why, "pre_strata": pre or "", "sent": post or ""})
+    scene["video_prompt_log"] = log[-VIDEO_PROMPT_LOG_KEEP:]
+
+
+def attach_video_prompt_file(scene: dict, path: str) -> None:
+    """t156u: 视频回来：最近一条没有文件的记录记下文件名，和 ComfyUI 的 prompt_id（读 <视频>.h3.json，有就用）。"""
+    import json as _j
+    import os as _o
+
+    log = scene.get("video_prompt_log") if isinstance(scene, dict) else None
+    if not isinstance(log, list) or not path:
+        return
+    ent = next((e for e in reversed(log) if isinstance(e, dict) and not e.get("file")), None)
+    if ent is None:
+        return
+    ent["file"] = _o.path.basename(path)
+    try:
+        with open(str(path) + ".h3.json", encoding="utf-8") as f:
+            side = _j.load(f)
+        for k in ("prompt_id", "seed", "images", "seconds"):
+            if k in side:
+                ent[k] = side[k]
+    except Exception:  # noqa: BLE001
+        pass

@@ -38,8 +38,10 @@ Rules:
 - Make the visual, action, expression and voice descriptions vivid, concrete and concise, in English, positive phrasing only. No ban lists.
 - Keep the lighting / time-of-day continuity and the camera instruction.
 - Directions inside the scene: when something is turned, shown or handed to a person ("轉向 David", "turns toward David"), write it with that person as the explicit target, turning sideways inside the scene toward them, never toward the camera or viewer. Copy every sentence containing "not toward the camera" or "Everyone stays inside the scene" verbatim. People never address the camera.
-- Cast lock: copy the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. When the description puts someone in a different pose or place than in <Picture 1>, write it as that same person moving there from where they are (for example "小偉 himself walks over and sits down on the chair"), never as a second copy. Do not describe the same move a second time in other words.
-- Copy every sentence that contains a <d> block exactly as given, together with the speaker description in front of it (for example "The young man 林浩 with a young male voice (voice Leo) (S2) says:"). Rewrite only the sentences without <d>.
+- Cast lock: copy the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. When the description really changes someone's pose or place (sits down, stands up, walks to...), write it as that same person moving there from where they are, never as a second copy; a person already sitting or standing in <Picture 1> simply stays there, so never invent a move. Do not describe the same move a second time in other words.
+- Copy every sentence that contains a <d> block exactly as given, together with the speaker description in front of it (for example "The young man 林浩 with a young male voice (voice Leo) (S2) says:"), including the bracketed description of each person, the times, the "while ... listens with closed lips" part and the "lip movement switches to ..." part. Rewrite only the sentences without <d>.
+- Lip sync and speaker mapping are the most important facts of this prompt. Copy the sentence starting "Speaker map:" and the sentence starting "Lip sync:" verbatim, with every bracketed person description. Never drop, shorten or soften the lip-sync emphasis, who speaks, who stays silent with closed lips, or the switch of the moving mouth when the speaker changes. Every (S1)/(S2) id always means the same person as in the Speaker map.
+- Copy the sentence starting "On camera:" verbatim. A person who speaks is seen speaking on camera with moving lips, never as a voice-over: never describe a speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is dialogue, write the actions as happening while they talk and add no silence or quiet wording.
 Output only the final prompt: no preface, no notes, no markdown fences."""
 
 
@@ -128,6 +130,50 @@ def restore_direction_lines(original: str, polished: str) -> str:
     return out.rstrip() + "\n" + add
 
 
+_H3_LOCKED = ("Speaker map: ", "Lip sync: ", "On camera: ", "Speech pace: ")  # t150u: 讲话人对应 + 对口型，H3 打磨后一律用原句
+
+
+def _locked_sentence(text: str, prefix: str):
+    i = (text or "").find(prefix)
+    if i < 0:
+        return None
+    j = text.find(".", i)
+    while j >= 0 and j + 1 < len(text) and not text[j + 1].isspace():
+        j = text.find(".", j + 1)  # 跳过 5.7 这种小数点
+    j = len(text) if j < 0 else j + 1
+    return i, j
+
+
+def restore_h3_locked_lines(original: str, polished: str) -> str:
+    """t150u: 「Speaker map:」「Lip sync:」两句：Strata 改了就换回原句，丢了就补在对话前。"""
+    out = polished or ""
+    for prefix in _H3_LOCKED:
+        a = _locked_sentence(original or "", prefix)
+        if not a:
+            continue
+        want = original[a[0]:a[1]]
+        b = _locked_sentence(out, prefix)
+        if b:
+            out = out[:b[0]] + want + out[b[1]:]
+            continue
+        span = _dialogue_span(out) if "<d>" in out else None
+        if span:
+            out = out[:span[0]] + want + " " + out[span[0]:]
+        else:
+            k = out.find("\n\noverall_soundscape:")
+            out = (out[:k].rstrip() + " " + want + out[k:]) if k >= 0 else (out.rstrip() + " " + want)
+    return out
+
+
+def split_reference_block(prompt: str) -> tuple:
+    """t150u: 参考图工作流最前面的 REFERENCE PICTURES 段落不交给 Strata 改：(段落 + 空行, H3 正文)。"""
+    text = prompt or ""
+    if text.startswith("REFERENCE PICTURES:") and "\n\n" in text:
+        head, rest = text.split("\n\n", 1)
+        return head + "\n\n", rest
+    return "", text
+
+
 def validate(original: str, polished: str, backend: str) -> str:
     """返回 '' 表示通过，否则是原因。"""
     h3 = str(backend or "").startswith("minimax")  # t188u/t194u: minimax_5070ti / minimax_5060 / minimax_dual
@@ -153,6 +199,10 @@ def validate(original: str, polished: str, backend: str) -> str:
                 return f"说话人编号 {sid} 丢了"
         if "<Picture 1>" in original and "Picture 1" not in polished:
             return "Picture 1 引用丢了"
+        for prefix in _H3_LOCKED:  # t150u
+            a = _locked_sentence(original, prefix)
+            if a and original[a[0]:a[1]] not in polished:
+                return f"「{prefix.strip()}」那句没有原样保留"
         lo, hi = 0.5, 2.0
     else:
         if "Clean film image: only the scene fills the frame." in original and \
@@ -170,6 +220,10 @@ def validate(original: str, polished: str, backend: str) -> str:
 
 def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIMEOUT_S) -> tuple:
     """(结果, 说明)。失败时结果是原提示词。"""
+    ref_head, body = split_reference_block(prompt) if str(backend or "").startswith("minimax") else ("", prompt)
+    if ref_head:  # t150u: 参考图说明段不改，只打磨 H3 正文
+        out, why = polish_video_prompt(body, backend, timeout_s)
+        return ref_head + out, why
     started = time.monotonic()
     try:
         from utility import llm_api
@@ -201,6 +255,7 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
     out = restore_direction_lines(prompt, out)  # t181u
     if str(backend or "").startswith("minimax"):
         out = restore_h3_dialogue(prompt, out)  # t172u: 对话部分一律用原文
+        out = restore_h3_locked_lines(prompt, out)  # t150u: 讲话人对应 + 对口型那两句一律用原句
         _first = prompt.strip().splitlines()[0].strip()
         _lines = out.strip().splitlines()
         if _lines and _lines[0].strip() != _first and "integrated_multimodal_description:" in out:
@@ -216,3 +271,130 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
     why = f"Strata 精简完成：{len(prompt)} → {len(out)} 字（{secs:.1f} 秒）"
     print(f"[Strata 精简] {why}")
     return out, why
+
+
+# ---------------------------------------------------------------------------
+# t150u: MiniMax：Strata 先看场景图 + 人物肖像，给每个说话人写一句括号描述（衣服、脸、表情、在画面里的位置、特征），
+# 再把描述放进提示词（Speaker map 和每个人第一次说话的地方），然后照常打磨。Strata 看不了图就只用文字。
+
+_SYS_DESCRIBE = """You describe the people of ONE video scene so that a video model can tell them apart and move the lips of the right person.
+You get: the speaker list (speaker id, name, actor description), the scene's visual description, the scene's first frame (Picture 1) and, for some speakers, a portrait.
+For EVERY speaker id write one short English description (at most 35 words) with: clothing and colours, hair and face, facial expression, approximate position and pose in Picture 1 (left / right / centre, foreground / background, standing / sitting / lying, near what), and any distinctive feature. Merge in the person-specific details that the visual description gives for THIS person (clothing, expression, pose, position, what they hold or do, features); each speaker line below quotes them. Where the pictures and the visual description disagree about the look, follow the pictures.
+Use the portrait to recognise the person in Picture 1. If a person is not visible in Picture 1, describe them from the portrait and say they are not in view yet. Do not invent other people. Do not use the person's name or any brackets inside the description.
+Every listed person speaks in the video, so describe the face as visible: never mention a hand on the chin or over the mouth, looking down, a bowed head, a turned-away or hidden face.
+Return only JSON, for example: {"S1": "...", "S2": "..."}"""
+
+
+def _image_data_url(path: str, side: int = 640) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im = im.convert("RGB")
+        im.thumbnail((side, side))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _strata_client(timeout_s: float):
+    import os
+
+    import httpx
+    from openai import OpenAI
+
+    from utility import llm_api
+
+    return OpenAI(api_key=os.getenv("STRATA_API_KEY", ""), base_url=llm_api.MODELS[llm_api.STRATA]["url"],
+                  http_client=httpx.Client(timeout=httpx.Timeout(timeout_s)), max_retries=0)
+
+
+def describe_speakers(speakers: list, scene_image: str = "", visual: str = "", timeout_s: float = POLISH_TIMEOUT_S,
+                      use_images: bool = True) -> tuple:
+    """speakers = [(序号, 名字, 身份/actor 文字, 肖像路径或 "")]。返回 ({序号: 描述}, 说明, 是否看了图)。
+    失败返回 ({}, 原因, False)；图片请求被拒时自动退回只用文字再问一次。"""
+    import json
+    import os
+
+    if not speakers:
+        return {}, "没有说话人", False
+    lines = ["Speakers:"]
+    try:
+        from config_prompt import h3_visual_person_note as _vnote
+    except Exception:  # noqa: BLE001
+        _vnote = None
+    _names = [nm for _n, nm, _i, _p in speakers]
+    for n, name, ident, portrait in speakers:
+        _v = _vnote(str(visual or ""), name, _names) if _vnote else ""  # t151u: 场景描述里讲这个人的小句
+        lines.append(f"- S{n}: {name}" + (f", {ident}" if ident else "") + (", portrait given" if portrait and use_images else "")
+                     + (f"; the visual description says about this person: {_v}" if _v else ""))
+    lines.append("")
+    lines.append("Visual description of the scene: " + (str(visual or "").strip() or "(none)"))
+    content = [{"type": "text", "text": "\n".join(lines)}]
+    seen = False
+    if use_images:
+        try:
+            if scene_image and os.path.isfile(scene_image):
+                content += [{"type": "text", "text": "Picture 1 (the scene, first frame of the video):"},
+                            {"type": "image_url", "image_url": {"url": _image_data_url(scene_image)}}]
+                seen = True
+            for n, name, _ident, portrait in speakers:
+                if portrait and os.path.isfile(portrait):
+                    content += [{"type": "text", "text": f"Portrait of S{n} {name}:"},
+                                {"type": "image_url", "image_url": {"url": _image_data_url(portrait, 512)}}]
+                    seen = True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Strata 人物描述] 图片没读出来（{exc}），只用文字")
+            content, seen = content[:1], False
+    started = time.monotonic()
+    try:
+        from openai import BadRequestError
+
+        from utility import llm_api
+
+        api = llm_api.LLMApi(llm_api.STRATA)
+        api.manual_fallback = False
+        req = api._strata_request(llm_api.STRATA, [{"role": "system", "content": _SYS_DESCRIBE},
+                                                    {"role": "user", "content": content if seen else content[0]["text"]}])
+        req["max_tokens"] = 1024
+        try:
+            resp = _strata_client(timeout_s).chat.completions.create(**req)
+        except BadRequestError as exc:
+            if not seen:
+                raise
+            print(f"[Strata 人物描述] 带图请求被拒（{str(exc)[:120]}），只用文字再问")
+            return describe_speakers(speakers, "", visual, timeout_s, use_images=False)
+        raw = _clean(resp.choices[0].message.content if resp and resp.choices else "")
+        m = re.search(r"\{.*\}", raw, re.S)
+        data = json.loads(m.group(0)) if m else {}
+    except Exception as exc:  # noqa: BLE001
+        why = f"Strata 人物描述失败（{type(exc).__name__}: {str(exc)[:120]}）"
+        print(f"[Strata 人物描述] {why}")
+        return {}, why, False
+    notes = {}
+    for k, v in (data.items() if isinstance(data, dict) else []):
+        mm = re.match(r"^\s*S?(\d+)\s*$", str(k))
+        if mm and str(v or "").strip():
+            notes[int(mm.group(1))] = str(v).strip()
+    want = {n for n, *_r in speakers}
+    notes = {n: v for n, v in notes.items() if n in want}
+    why = (f"Strata 人物描述 {len(notes)}/{len(want)} 人（{'看了图' if seen else '只用文字'}，"
+           f"{time.monotonic() - started:.1f} 秒）")
+    print(f"[Strata 人物描述] {why}")
+    return notes, why, seen
+
+
+def polish_h3_with_people(rebuild, speakers: list, scene_image: str, visual: str, backend: str,
+                          timeout_s: float = POLISH_TIMEOUT_S) -> tuple:
+    """t150u: rebuild(notes) -> 提示词。先让 Strata 看图写人物描述，用描述重做提示词，再打磨。
+    人物描述失败就用 rebuild(None)（画面描述里讲这个人的小句）。返回 (提示词, 说明)。"""
+    notes, why1, _seen = describe_speakers(speakers, scene_image, visual, timeout_s) if speakers else ({}, "", False)
+    try:
+        prompt = rebuild(notes or None)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Strata 人物描述] 放进提示词失败（{exc}），不用描述")
+        prompt, why1 = rebuild(None), why1 + "；没放进提示词"
+    out, why2 = polish_video_prompt(prompt, backend, timeout_s)
+    return out, "；".join(x for x in (why1, why2) if x)

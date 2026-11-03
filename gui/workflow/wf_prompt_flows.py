@@ -148,12 +148,19 @@ class PromptFlowsMixin:
         except Exception:  # noqa: BLE001
             same = False
 
+        rec = scene.get("video_speech_speed")
+        if isinstance(rec, dict) and not rec.get("file"):
+            rec["file"] = os.path.basename(path)  # t151u: 这一场的语速档只给这个文件
+        config_prompt.attach_video_prompt_file(scene, path)  # t156u
+        spd = config_prompt.recorded_speech_speed(scene, path) or 1.0
+
         def build_pair() -> None:
             try:
                 start, end = default_video_range(path)
-                pair = self._build_volume_adjusted_mp4_wav_pair(path, 1.0, start=start, end=end, speed=1.0)
+                pair = self._build_volume_adjusted_mp4_wav_pair(path, 1.0, start=start, end=end, speed=spd)
                 err = ""
-                print(f"🎚️ 全集提交自动导入：区间 {start:.3f}–{end:.3f} 秒，速度 1.0，音量 1 倍")
+                print(f"🎚️ 全集提交自动导入：区间 {start:.3f}–{end:.3f} 秒，速度 {spd:g}"
+                      + ("（生成时说快了，按语速档放慢）" if spd < 0.999 else "") + "，音量 1 倍")
             except Exception as exc:  # noqa: BLE001
                 pair, err = None, f"裁剪失败：{exc}"
             self.root.after(0, lambda: stage(pair, err))
@@ -313,7 +320,7 @@ class PromptFlowsMixin:
                 names = []
             remix_q.put((scene, label, visual, image, names, lang, scene.get("speaking") or ""))  # t199u: 讲话也记下
 
-        def apply_visual(scene, label, old, new):
+        def apply_visual(scene, label, old, new, notes=None):
             """UI 线程：看图改写的结果直接写进这一场的视觉；原文留在 visual_before_remix。"""
             from utility.visual_remix import accept_auto_remix
 
@@ -326,6 +333,17 @@ class PromptFlowsMixin:
                 return
             scene["visual_before_remix"] = old
             scene["visual"] = new
+            if notes:  # t158u: 每个人这一场的样子写进 actor 括号
+                try:
+                    import project_manager
+
+                    new_actor = project_manager.set_actor_scene_notes(scene.get("actor") or "", notes)
+                    if new_actor and new_actor != (scene.get("actor") or ""):
+                        scene["actor_before_remix"] = scene.get("actor") or ""
+                        scene["actor"] = new_actor
+                        print(f"🖼 调整人物：{label} → {new_actor}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 调整人物：{label} 写 actor 失败 {exc}")
             remixed.append(scene)
             print(f"🖼 调整视觉：{label} 已按图改写。原文：{old[:200]}")
             try:
@@ -340,7 +358,7 @@ class PromptFlowsMixin:
         def remix_worker():
             """t198u: 一场一场地把视觉 + 刚写回的图交给 Strata 看图改写（和视觉双击 Remix 同一个函数）。
             看图失败就不动视觉（不退回纯文字改写），只记日志。"""
-            from utility.visual_remix import remix_visual_with_image
+            from utility.visual_remix import remix_scene_with_image
             import config
 
             try:
@@ -351,14 +369,16 @@ class PromptFlowsMixin:
                     scene, label, old, image, names, lang, speaking = item
                     ui(lambda l=label: var.set(f"调整视觉（{l}，Strata 看图）…"))
                     try:
-                        out = remix_visual_with_image(old, image, names=names,
-                                                      language_label=config.llm_language_label(lang), speaking=speaking)
+                        out, notes = remix_scene_with_image(old, image, names=names,  # t158u: 视觉 + 人物样子
+                                                            language_label=config.llm_language_label(lang),
+                                                            speaking=speaking)
                         out = config.chinese_convert(out, lang)
+                        notes = {k: config.chinese_convert(v, lang) for k, v in notes.items()}
                     except Exception as exc:  # noqa: BLE001
                         failed.append(f"{label}：调整视觉失败，保留原文（{exc}）")
                         print(f"⚠️ 调整视觉：{label} 看图失败，保留原文：{exc}")
                         continue
-                    ui(lambda s=scene, l=label, o=old, n=out: apply_visual(s, l, o, n))
+                    ui(lambda s=scene, l=label, o=old, n=out, a=notes: apply_visual(s, l, o, n, a))
             finally:
                 ui(end_one)
 
@@ -737,6 +757,15 @@ class PromptFlowsMixin:
             if isinstance(batch, list):  # t172u: 全集提交中：先记下，全部做完再打开一次导入视频
                 batch.append(path)
                 return
+            try:  # t151u: 当前场记下的语速档只给这个文件
+                _sc = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+                _rec = _sc.get("video_speech_speed") if isinstance(_sc, dict) else None
+                if isinstance(_rec, dict) and not _rec.get("file"):
+                    _rec["file"] = os.path.basename(path)
+                if isinstance(_sc, dict):
+                    config_prompt.attach_video_prompt_file(_sc, path)  # t156u
+            except Exception:  # noqa: BLE001
+                pass
             show_auto_close_popup(self.root, "生场视频", f"视频已下载：\n{os.path.basename(path)}")
             self.root.after(
                 200,
@@ -818,6 +847,7 @@ class PromptFlowsMixin:
             save_choice=save_video_choice,
             on_story_style=on_story_style,
             get_actor_portraits=lambda sc: config_prompt.scene_speaker_portraits(sc, self._actor_entry_portrait),
+            on_scene_record=lambda: self.workflow.save_scenes_to_json() if self.workflow else None,  # t151u
             episode={
                 "scenes": _episode_from_current,
                 "select": _select_scene,

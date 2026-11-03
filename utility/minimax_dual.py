@@ -123,7 +123,9 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     _w, _h, _why = _sdp.minimax_size_for(str(extra.get("orientation") or "landscape"), _secs, bool(_audio), _adur)
     _vsecs = _sdp.minimax_audio_video_seconds(_adur) if _audio else _secs
     _st(f"CLI自动：{v['label']}（ComfyUI，实际发送=窗口里的 H3 格式提示词）生成视频 {_w}×{_h}（{_why}） "
-        + f"{_vsecs:g}秒" + ("（跟场景音频）" if _audio else "") + ("，含结束图" if _last else "") + " …")
+        + f"{_vsecs:g}秒" + ("（跟场景音频）" if _audio else "") + ("，含结束图" if _last else "")
+        + (f"，语速档 {float(extra['speech_speed']):g}（说快，导入时放慢）" if float(extra.get("speech_speed") or 1) < 0.999 else "")
+        + " …")
     _dest = dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
     _name = time.strftime("minimax_h3_%Y%m%d_%H%M%S") + "_" + key.replace("minimax_", "") + ".mp4"
     if _audio and _adur > _sdp.MINIMAX_MAX_SECONDS:
@@ -135,7 +137,8 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
 
         return _seg.run_segmented(
             gen_one=_one, image_path=image_path, prompt=prompt, audio_path=_audio, audio_seconds=_adur,
-            dest_dir=_dest, base_name=_name[:-4], last_image_path=_last, status=_st, is_unreachable=is_unreachable)
+            dest_dir=_dest, base_name=_name[:-4], last_image_path=_last, status=_st, is_unreachable=is_unreachable,
+            timeline=extra.get("speaker_timeline"))  # t150u
     return _generate_one(_sdp, image_path, prompt, _secs, _w, _h, os.path.join(_dest, _name), v, _st, _audio, _last,
                          refs=_refs)
 
