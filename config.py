@@ -995,8 +995,9 @@ def minimax_variant(backend) -> dict:
 #   有场景音频，或时长 > 10 秒（15 秒）→ SMALL；≤ 6 秒且没有音频 → XLARGE（t157u）；其余（10 秒）→ LARGE。
 # t162u: 单画面时把起始图也接到 last_frame，锁住光线 / 环境（动作会更少）。设 1 打开。
 MINIMAX_LOCK_LAST_FRAME = _env("MINIMAX_LOCK_LAST_FRAME", "0").lower() in ("1", "true", "yes", "on")
-MINIMAX_SIZE_XLARGE = _env("MINIMAX_SIZE_XLARGE", "1280x704")
-MINIMAX_SIZE_LARGE = _env("MINIMAX_SIZE_LARGE", "1056x608")  # t168u: 横屏 1056x608 / 竖屏 608x1056（省显存跑 13 秒；原 1120x640）（32 的倍数；704x1280 跑 13 秒尾段会花）
+MINIMAX_SIZE_6S = _env("MINIMAX_SIZE_6S", "1312x736")  # 6 秒档（≤ 158 帧）用，竖屏 736x1312（32 的倍数）
+MINIMAX_SIZE_XLARGE = _env("MINIMAX_SIZE_XLARGE", "1280x704")  # t178u: 9 秒档（≤ 226 帧）用；12 秒档用 LARGE
+MINIMAX_SIZE_LARGE = _env("MINIMAX_SIZE_LARGE", "1120x640")  # t168u: 横屏 1120x640 / 竖屏 640x1120（12 秒档；原 13 秒档用 1056x608）（32 的倍数；704x1280 跑 12 秒尾段会花）
 MINIMAX_SIZE_SMALL = _env("MINIMAX_SIZE_SMALL", "832x480")
 COMFYUI_WORKFLOW_DIR = _env("COMFYUI_WORKFLOW_DIR", r"\\10.0.0.179\wan22\ComfyUI\user\default\workflows")
 WAN_I2V_URL = _env("WAN_I2V_URL", "http://10.0.0.231:9001")

@@ -832,15 +832,32 @@ _SCENE_IMAGE_UNITS = {
 }
 
 
+# t199u: 「关键字作背景」不是对话：绝不能画成漫画对话泡泡 / 字幕 / 整句。所有关键字路径共用。
+KEYWORD_COUNT_ZH = "1 到 2 个关键词（最多 3 个），每个只有几个字（中文最多 4 个字，英文 1 到 2 个词）"
+KEYWORD_COUNT_EN = "1 to 2 keywords (3 at most), each only a few characters (at most 4 Chinese characters, or 1 to 2 English words)"
+NO_BUBBLE_ZH = ("绝对不要对话泡泡、说话气泡、思想泡泡、漫画分格、字幕、旁白框或标题；不写整句话，不把讲话 / 对白内容写到画面上。"
+                "讲话是说出来的，不是写出来的。")
+NO_BUBBLE_EN = ("Absolutely NO speech bubbles, dialogue balloons, thought bubbles, comic panels, captions, subtitles, "
+                "narration boxes or titles; no full sentences, and never write the spoken lines or dialogue onto the picture. "
+                "Speech is heard, not written.")
+
+
+REMOVE_BUBBLES_EN = ("Remove every speech bubble, thought balloon, caption box and dialogue text already in Image 1, "
+                     "repainting the area behind them (continue the background, people and objects there).")
+REMOVE_BUBBLES_ZH = "把图 1 里已有的对话泡泡、思想泡泡、字幕框和对白文字全部去掉，并把它们后面的画面补画完整。"
+
+
 # t126u: 关键词放哪里（所有「关键字作背景」共用）：长在环境里；实在不行才用一块融进场景的半透明板。
 KEYWORD_PLACE_ZH = (
     "- 关键词要像这个场景本来就有的东西，用场景里的材质、光线和透视做出来，字大，和整幅画用同一种画风（写实时就是真实存在、被拍下来的字）：\n"
     "  · 木桌、木门、木柜上：刻进木纹里的木刻字，有刀痕、凹槽和木头的阴影。\n"
     "  · 墙上：嵌进墙面的大字（浮雕、砖石刻字、斑驳的老墙字），或写在挂着的字画、卷轴、匾额上。\n"
+    "  · 招牌、木牌、路牌、门牌上：刻上或漆上的字；或写在贴着 / 夹着 / 飘着的纸条、便签、信纸上。\n"
     "  · 天空里：由云自然聚成的字。\n"
     "  · 水面、沙地、雪地、玻璃上的雾气里：写在 / 印在这些表面上。\n"
-    "  · 没有合适的表面时：半透明、朦胧的大字，从灯光、光束、烟雾或水汽里飘出来，柔和，像被灯照亮的真实雾气。\n"
-    "- 字要大，在画面里一眼能看见、能读出来；它是场景的一部分，不是贴上去的标签或字幕框。"
+    "  · 没有合适的表面时：半透明、朦胧的大字，从灯光、光束、烟雾、水雾或一阵风（被风吹起的光痕、落叶、尘沙）里飘出来，柔和，像被灯照亮的真实雾气。\n"
+    "- 字要大，在画面里一眼能看见、能读出来；它是场景的一部分，不是贴上去的标签或字幕框。\n"
+    "- " + NO_BUBBLE_ZH
 )
 KEYWORD_PLACE_EN = (
     "- Make each keyword look like it already belongs to the scene, crafted from the scene's own material, light and "
@@ -848,17 +865,21 @@ KEYWORD_PLACE_EN = (
     "  · On a wooden table, door or cabinet: carved into the wood grain, with chisel marks, grooves and wood shadows.\n"
     "  · On a wall: large characters inlaid or carved into the wall (relief, stone or brick carving, weathered old wall "
     "lettering), or brushed on a hanging painting, scroll or plaque.\n"
+    "  · On a shop sign, wooden board, road sign or door plate: carved or painted on it; or written on a paper note, "
+    "sticky note or letter pinned, tucked or drifting in the scene.\n"
     "  · In the sky: characters formed naturally by clouds.\n"
     "  · On water, sand, snow, or misted glass: written or pressed into that surface.\n"
     "  · With no suitable surface: large, semi-transparent, hazy characters drifting out of lamplight, a light beam, "
-    "smoke or steam, soft, like real lamp-lit mist.\n"
-    "- Big enough to read at a glance. It is part of the scene, never a label or caption box."
+    "smoke, steam, water mist or a gust of wind (wind streaks, swirling leaves or dust), soft, like real lamp-lit mist.\n"
+    "- Big enough to read at a glance. It is part of the scene, never a label or caption box.\n"
+    "- " + NO_BUBBLE_EN
 )
 KEYWORD_PLACE_SHORT_EN = (
     "Make the keyword part of the scene, LARGE, in the picture's own art style, from the scene's own material and light: carved into wood "
     "grain on a wooden table; inlaid into a wall or brushed on a hanging scroll, painting or plaque; formed by clouds in "
     "the sky; or, with no suitable surface, large semi-transparent hazy characters drifting out of lamplight or smoke like "
-    "lit mist. Follow perspective and lighting; never a label or caption box."
+    "lit mist, water mist or wind streaks; or carved / painted on a sign, or written on a paper note. Follow perspective and lighting; never a label or caption box. "
+    + NO_BUBBLE_EN
 )
 
 
@@ -904,14 +925,13 @@ INFOGRAPHIC_NO_INDEX_RULE = (
 )
 INFOGRAPHIC_KEYPHRASE_RULE = (
     "信息图关键词（必须遵守）：\n"
-    "- 先读懂每一场，再为它提炼 1 到 3 个核心关键词：每个只有几个字（中文 2–4 字，英文 1–3 词），说出这一场背后真正要揭示的东西："
+    "- 先读懂每一场，再为它提炼" + KEYWORD_COUNT_ZH + "，说出这一场背后真正要揭示的东西："
     "关键的情绪、病因 / 根源、核心问题或转折。例如「怕改变」「假装没事」「被看见」「不敢开口」；"
     "绝不是场景标题、编号或「第N幕」。content.pdf 里这一场有 caption / 标题时，可以从它提炼，但要落到核心意思上。\n"
     + KEYWORD_PLACE_ZH + "\n"
     "- 关键词用和 content.pdf 相同的语言和字体（繁体 / 简体一致）。每个场景部分只有这几个关键词，没有别的字。\n"
     "Infographic key phrase (must follow):\n"
-    "- First understand each scene, then distil 1 to 3 key phrases for it: each only a few characters (Chinese 2–4 characters, "
-    "English 1–3 words) that name what the scene really reveals: the key emotion, the root cause, the core problem or "
+    "- First understand each scene, then distil " + KEYWORD_COUNT_EN + " for it that name what the scene really reveals: the key emotion, the root cause, the core problem or "
     "turning point, e.g. \"afraid of change\", \"pretending to be fine\", \"finally seen\". Never a scene title, a number, "
     "or a label like 第N幕 / Act N. If the scene in content.pdf has a caption or title, you may derive it from that, but "
     "boil it down to the core meaning.\n"
@@ -939,9 +959,9 @@ def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
         return INFOGRAPHIC_KEYPHRASE_RULE + "\n" + INFOGRAPHIC_NO_INDEX_RULE
     if text == "keywords":
         return (
-            f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是 1 到 3 个融进场景的关键词（每个 2 到 4 字 / 英文 1 到 3 词）。\n"
-            f"- On-screen text: {unit_en} has NO title text and NO body text. The only text is 1 to 3 keywords, "
-            "blended into the scene (each 2-4 Chinese characters / 1-3 English words).\n"
+            f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是 {KEYWORD_COUNT_ZH}，融进场景。{NO_BUBBLE_ZH}\n"
+            f"- On-screen text: {unit_en} has NO title text and NO body text. The only text is {KEYWORD_COUNT_EN}, "
+            f"blended into the scene. {NO_BUBBLE_EN}\n"
             + KEYWORD_BG_RULE_ZH
         )
     if text in ("erase", "express"):
@@ -1094,8 +1114,8 @@ def build_slide_flow_prompt(
     lines.append(SLIDE_FLOW_META_NOTE)
     if keywords:
         lines.append(
-            "The one exception: 1 to 3 short keywords (each 2-4 Chinese characters), taken from ``Keyword hint`` and the scene's core emotion, blended into the scene as described above. "
-            "Never the full scene title."
+            "The one exception: " + KEYWORD_COUNT_EN + ", taken from ``Keyword hint`` and the scene's core emotion, blended into the scene as described above. "
+            "Never the full scene title. " + NO_BUBBLE_EN
         )
 
     if not presentation:
@@ -1571,19 +1591,20 @@ def picture_flow_choice_label(task: str, text: str, visual_style: str = "") -> s
 
 
 # 关键字作背景：每场只要一个很短的关键词，融进场景本身；绝不能是独立的文字板。
-KEYWORD_MAX_ZH = 8
+KEYWORD_MAX_ZH = 4  # t199u: 关键字最多 4 个字
 KEYWORD_MAX_EN_WORDS = 3
 KEYWORD_BG_RULE_ZH = (
     "关键字作背景（必须遵守）：\n"
-    "- 每一场 / 每一页提炼 1 到 3 个关键词，每个 2 到 4 个字（英文 1 到 3 个词），取这一场的核心情绪或转折，例如「突然冷漠」「隔门试探」「笨拙破冰」。"
-    "只有这几个词，没有句子、标题或说明。\n"
+    "- 先读懂这一场，再提炼" + KEYWORD_COUNT_ZH + "，说出这一场背后真正的东西：关键的情绪、根源、核心问题或转折，"
+    "例如「避风港」「怕改变」「被看见」「隔门」。绝不是讲话里的句子、场景标题或编号。只有这几个词，没有句子、标题或说明。\n"
     + KEYWORD_PLACE_ZH + "\n"
     "- 画面（场景）是主体，关键词像场景里的一件东西，让人看了更有感觉。"
 )
 KEYWORD_BG_RULE_EN = (
     "Keyword as background (must follow):\n"
-    "- For each scene / slide take 1 to 3 keywords, each 2 to 4 Chinese characters (or 1 to 3 English words), drawn from "
-    "the scene's core emotion or turning point. Only these words: no sentence, title or explanation.\n"
+    "- First understand the scene, then distil " + KEYWORD_COUNT_EN + " naming what the scene really reveals: the key "
+    "emotion, root cause, core problem or turning point (e.g. 避风港 \"safe harbor\", 怕改变, 被看见). Never a line from "
+    "the dialogue, a scene title or a number. Only these words: no sentence, title or explanation.\n"
     + KEYWORD_PLACE_EN + "\n"
     "- The picture, the scene, stays the main content; the keywords are part of it and deepen its feeling."
 )
@@ -1611,13 +1632,17 @@ def flow_caption_rule(text: str) -> str:
         return (
             "Take the explanation text off the picture. Do not leave an empty space "
             "or a ring of decoration around nothing.\n"
+            + REMOVE_BUBBLES_EN.replace("Image 1", "the picture") + "\n"
             + KEYWORD_BG_RULE_EN + "\n"
+            "The speaking / dialogue in the scene content is only for understanding the moment; it is never drawn as "
+            "text. Any speech bubble or caption already in the picture is removed.\n"
             "The meaning itself is shown through the people, the place, or the story. "
             "The center is full. It is not blank."
         )
     if text == "express":
         return (
             "No letters anywhere. No keyword, no caption, no subtitle, no title, no background writing, no speech bubble.\n"
+            + REMOVE_BUBBLES_EN.replace("Image 1", "the picture") + "\n"
             + NO_TEXT_PANEL_LINE + "\n"
             "Do not leave an empty board in the middle, and do not leave a ring of decoration around a blank center.\n"
             "Show what that text meant through the people, the place, or the story, in the middle of the picture. "
@@ -1627,9 +1652,10 @@ def flow_caption_rule(text: str) -> str:
         return (
             "Remove the explanation text: captions beside the picture, under it, or in a box. "
             "Those words are not part of the drawing.\n"
+            + REMOVE_BUBBLES_EN.replace("Image 1", "the picture") + "\n"
             "Do not leave an empty board, a blank panel, or a hole. "
             "Continue the same picture through that area: the place, the people, and the objects that belong there.\n"
-            "Do not add new lettering. " + NO_TEXT_PANEL_LINE
+            "Do not add new lettering. " + NO_TEXT_PANEL_LINE + "\n" + NO_BUBBLE_EN
         )
     return "Keep any words already drawn in the picture. They stay part of the picture. Do not add a new caption."
 
@@ -4997,8 +5023,8 @@ def build_direct_video_clipbody(
 _STEP_CAPTION_LINES = {
     "keep": "** Text: keep step {k}'s short title as one caption line; no other text.",
     "erase": "** Text: remove step {k}'s text too (title, labels); no letters, and no blank board or panel left behind.",
-    "keywords": "** Text: drop step {k}'s title and labels; blend 1 to 3 short keywords from them (each 2-4 Chinese characters, "
-                "or 1-3 English words) into the scene itself. " + KEYWORD_PLACE_SHORT_EN,
+    "keywords": "** Text: drop step {k}'s title and labels; blend " + KEYWORD_COUNT_EN + " from them "
+        "into the scene itself. " + KEYWORD_PLACE_SHORT_EN,
     "express": "** Text: no letters at all; show what step {k}'s text says through the people, action and setting; "
                "no text box, panel or caption area.",
 }
@@ -6782,7 +6808,7 @@ def build_analysis_flow_prompt(
     ]
     if text == "keywords":
         lines.append(
-            "The one exception: 1 to 3 short keywords for that part of the report (each 2-4 Chinese characters / 1-3 English words), "
+            "The one exception: " + KEYWORD_COUNT_EN + " for that part of the report, "
             "blended into the picture as described above. Never a full heading."
         )
     parts["Instruction_for_image" if output in ("slides", "infographic") else "Instruction_for_scenes"] = "\n".join(lines)
@@ -6894,14 +6920,14 @@ SPEECH_PAUSE_ELLIPSIS = 0.4
 SPEECH_PAUSE_SWITCH = 0.3
 # t157u: 实测 MiniMax H3（p20261103132942 四段 7 秒片，s=1.0）：208 字 / 28.7 秒讲话 ≈ 7.25 字/秒（含停顿），
 # 范围 6.4–8.6；8.6 那段明显赶。MiniMax 会把台词塞进要求的长度，所以用偏舒适的 6.5 字/秒（含停顿）估算。
-MINIMAX_CJK_PER_SEC = 6.5
+MINIMAX_CJK_PER_SEC = 5.3  # t196u: p20261103182153 四段实测 204 字 / 34.8 秒 = 5.86 字/秒（台词塞满整段），听感快 10–15% → 正常 ≈ 5.3
 MINIMAX_WORDS_PER_SEC = 2.8
 MINIMAX_PAUSE_ELLIPSIS = 0.4
 MINIMAX_AUDIO_TRUST = 0.3  # 场景音频 / 时间轴跟字数估算差超过 30% → 不信（多半是上一段 MiniMax 片子的音频）
 
 
 def minimax_speech_seconds(text: str) -> float:
-    """t157u: MiniMax 实测语速的讲话秒数（字数 / 6.5 + 英文词 / 2.8 + 省略号 0.4）。"""
+    """t157u: MiniMax 实测语速的讲话秒数（字数 / MINIMAX_CJK_PER_SEC(5.3) + 英文词 / 2.8 + 省略号 0.4）。"""
     _, d = speaking_seconds_estimate(text)
     return round(d["cjk"] / MINIMAX_CJK_PER_SEC + d["words"] / MINIMAX_WORDS_PER_SEC
                  + d["ellipsis"] * MINIMAX_PAUSE_ELLIPSIS, 1)
@@ -6955,7 +6981,7 @@ def _minimax_real_seconds(n: float) -> float:
 
 
 def _is_minimax_opts(opts) -> bool:
-    return "7s" in opts or "13s" in opts
+    return "9s" in opts or "12s" in opts
 
 
 def _len_real(o, opts) -> float:
@@ -6964,7 +6990,7 @@ def _len_real(o, opts) -> float:
 
 
 def _len_cap(o, opts) -> float:
-    """放得下的上限：名义 + 0.5 秒容差；MiniMax 实际帧长更长时用实际长度（13 秒档 = 13.67）。"""
+    """放得下的上限：名义 + 0.5 秒容差；MiniMax 实际帧长更长时用实际长度（12 秒档 = 12.25）。"""
     return max(float(str(o)[:-1]) + AUTO_LENGTH_SLACK, _len_real(o, opts))
 
 
@@ -6979,7 +7005,7 @@ SPEECH_SPEED_TARGET = 0.7  # 默认按说快 30% 估算
 
 def auto_length_speed_choice(text: str, options, normal_secs=None) -> tuple:
     """t151u: 返回 (长度, 语速档 s, 正常语速秒数, 说明)。
-    t154u: 正常语速放得下 7/10/13（容差 AUTO_LENGTH_SLACK）→ 最短放得下的，s=1.0（不说快）；
+    t154u: 正常语速放得下 6/9/12（容差 AUTO_LENGTH_SLACK）→ 最短放得下的，s=1.0（不说快）；
     超过最长才用最长 + 放得下的最慢档（最低 0.7，0.7 也放不下就 0.7 并提示）。
     normal_secs = 场景音频长度 > 配音时间轴 > 按字数估算。"""
     opts = sorted(options, key=lambda v: float(str(v).rstrip("sS")))
@@ -7025,13 +7051,13 @@ def auto_info_text(length: str, speed: float) -> str:
     return t
 
 
-AUTO_LEN_MINIMAX = ("7s", "10s", "13s")
+AUTO_LEN_MINIMAX = ("6s", "9s", "12s")  # t179u
 AUTO_LEN_STD = ("6s", "10s", "15s")  # Grok / Gemini 的长度选项（和生场视频窗口一致）
 
 
 def auto_length_for_backend(text: str, minimax: bool, normal_secs=None) -> tuple:
     """t165u: 生场视频「自动」和本场内容里的讲话估算共用：(长度, 语速档, 正常语速秒数, 说明)。
-    MiniMax 7/10/13（实际 7.29/10.13/13.67 秒），Grok / Gemini 6/10/15；超过最长 + 0.5 秒才说快一档，导入时按同一档放慢。"""
+    MiniMax 6/9/12（实际 6.58/9.42/12.25 秒），Grok / Gemini 6/10/15；超过最长 + 0.5 秒才说快一档，导入时按同一档放慢。"""
     return auto_length_speed_choice(text, AUTO_LEN_MINIMAX if minimax else AUTO_LEN_STD, normal_secs)
 
 
@@ -7118,3 +7144,65 @@ def attach_video_prompt_file(scene: dict, path: str) -> None:
                 ent[k] = side[k]
     except Exception:  # noqa: BLE001
         pass
+
+
+def build_cast_fix_prompt(scene: dict, actor_rows: list, visual_style: str = "", fyi: str = "", text: str = "keep") -> str:
+    """t197u: 图片修改 · 补全/修正人物。图 1 = 当前场景图，后面是每位人物的肖像图（actor_rows 的 image_no）。
+    按场景描述（visual）和讲话（speaking，<1>/<2> → 人物1/人物2）检查图里的人：缺的补上，错的按肖像和描述改正；
+    构图、背景、光线、画风、比例不动，不加多余的人。"""
+    import re
+
+    sc = scene if isinstance(scene, dict) else {}
+    visual = str(sc.get("visual") or "").strip()
+    speaking = str(sc.get("speaking") or "").strip()
+    rows = [dict(r, name=str(r.get("name") or "").split("/")[-1].strip() or r.get("name")) for r in (actor_rows or []) if isinstance(r, dict)]
+    by_no = {}
+    for r in rows:
+        m = re.search(r"(\d+)", str(r.get("label") or ""))
+        if m:
+            by_no.setdefault(m.group(1), r)
+
+    def _who(n: str) -> str:
+        r = by_no.get(n)
+        return f"{r.get('label')} ({r.get('name')})" if r else f"人物{n}"
+
+    speak = re.sub(r"<(\d+)>\s*", lambda m: "\n" + _who(m.group(1)) + ": ", speaking).strip()
+    cast = [f"- {r.get('label')} = {r.get('name')}: reference portrait is Image {r.get('image_no')}" for r in rows]
+    n = len(rows)
+    parts = [
+        "TASK: Fix the characters in Image 1 (the current scene image). Edit Image 1; do not draw a new picture.",
+        "Image 1 = the scene image to correct. The other images are character reference portraits:\n" + "\n".join(cast),
+        f"The scene must contain exactly these {n} character(s), no more and no fewer:\n"
+        + "\n".join(f"- {r.get('label')} ({r.get('name')})" for r in rows),
+    ]
+    if visual:
+        parts.append("SCENE DESCRIPTION (what happens, who is where, actions and interaction):\n" + visual)
+    if speak:
+        parts.append("SPOKEN LINES (heard, never drawn; only to understand who talks and the mood):\n" + speak)
+    parts.append(
+        "CHECK Image 1 against the scene description and the spoken lines, then:\n"
+        "1. If a character is missing, add them into the scene, matching their reference portrait (face, age, hair, "
+        "build, clothing) and the action / position / interaction given in the description.\n"
+        "2. If a character is wrong (wrong identity or face, wrong clothing, wrong pose, wrong action or interaction), "
+        "correct them to match their reference portrait and the description.\n"
+        "3. Characters that are already correct stay as they are.\n"
+        "4. Keep the composition, camera angle, background, props, lighting, color and art style of Image 1, "
+        + ("including any words already drawn in it. " if text == "keep" else
+           "except speech bubbles, balloons, caption boxes and any text, which are not part of the scene. ") +
+        "Added or corrected people must have correct, natural proportions and scale relative to the room and to each "
+        "other, consistent perspective and lighting, and must blend in seamlessly.\n"
+        "5. Do not add any other people (no extra children, passers-by, background figures or reflections of people). "
+        + ("Do not add any text, captions or watermarks, except the background keywords described below.\n" if text == "keywords"
+           else "Do not add text, captions or watermarks.\n") +
+        "6. The reference portraits only define how each character looks; do not copy their backgrounds or framing."
+    )
+    # t200u: 说明文字选项和别的图片修改路径用同一段规则；对话泡泡一律不画
+    if text != "keep":
+        parts.append(REMOVE_BUBBLES_EN + "\n" + REMOVE_BUBBLES_ZH)
+    parts.append("TEXT IN THE PICTURE (说明文字):\n" + flow_caption_rule(text or "keep"))
+    parts.append(NO_BUBBLE_EN + "\n" + NO_BUBBLE_ZH)
+    if visual_style:
+        parts.append(f"Art style: keep the style of Image 1 ({visual_style}).")
+    if fyi:
+        parts.insert(0, "IMPORTANT NOTE FROM THE USER: " + fyi)
+    return "\n\n".join(parts)

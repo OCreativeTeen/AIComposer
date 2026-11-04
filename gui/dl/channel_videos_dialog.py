@@ -1107,6 +1107,11 @@ class ChannelVideosDialogImpl:
                     return
                 ac = (analyzed_content or "").strip() if analyzed_content else ""
                 ch = os.path.basename(self.channel_path)
+                # t198u: 没单独传进来的，用这一条上记的（预览窗口的选择）
+                setting_region = setting_region or (vd.get("setting_region") or "").strip() or None
+                setting_era = setting_era or (vd.get("setting_era") or "").strip() or None
+                if scene_style is None and vd.get("scene_style") is not None:
+                    scene_style = vd.get("scene_style")
                 lang = (language or getattr(self, "language", None) or "tw").strip() or "tw"
                 result, selected_config = create_project_with_initial_raw(
                     parent=self.root,
@@ -1124,6 +1129,7 @@ class ChannelVideosDialogImpl:
                     setting_region=setting_region,
                     setting_era=setting_era,
                     scene_style=scene_style,
+                    story_style=(vd.get("story_style") or "").strip() or None,
                     # t110u: 项目名 = 选定/手改的名称;没有才用首场 caption
                     title=(title or vd.get(project_manager.PENDING_PROJECT_TITLE_KEY) or "").strip() or None,
                 )
@@ -1171,6 +1177,9 @@ class ChannelVideosDialogImpl:
                     topic_tags_kw=_topic_tags_val(),
                     superseded_pid=existing_pid or "",
                     dialogue_mode=_look_talk,
+                    setting_region=setting_region,
+                    setting_era=setting_era,
+                    scene_style=scene_style,
                 )
                 return
 
@@ -1788,7 +1797,25 @@ class ChannelVideosDialogImpl:
                 except tk.TclError:
                     return None
 
+            def _sync_story_look_into_row():
+                """t198u: 预览窗口当前的选择写进这一条（和 project_profile），新建项目从这里读。
+                以前只有点过下拉才写进去；没点过（频道偏好给的初始值）时新项目会落回上次 / 默认（写实）。"""
+                ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                getter = ctx.get("story_look") if isinstance(ctx, dict) else None
+                try:
+                    look = getter() if callable(getter) else {}
+                except tk.TclError:
+                    look = {}
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                for k, v in (look or {}).items():
+                    if v in (None, ""):
+                        continue
+                    video_detail[k] = v
+                    if isinstance(pp, dict):
+                        pp[k] = v
+
             def _open_project_from_summary():
+                _sync_story_look_into_row()
                 region, era = _story_setting()
                 _open_project_for_video_detail(
                     video_detail,
@@ -1803,6 +1830,7 @@ class ChannelVideosDialogImpl:
                 )
 
             def _regen_project_from_summary():
+                _sync_story_look_into_row()
                 region, era = _story_setting()
                 _regenerate_project_for_video_detail(
                     video_detail, summary_window, video_size=_story_video_size(),

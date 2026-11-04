@@ -152,9 +152,10 @@ def open_video_prompt_dialog(
     text_var = tk.StringVar(value=saved_text)
     # 视频长度：不进提示词，作为 extra 参数交给 CLI自动（Grok Imagine 视频时长）。记在 video_prompt["duration"]。
     saved_duration = saved_choice.get("duration") if isinstance(saved_choice, dict) else None
-    if saved_duration == "12s":  # t166u: MiniMax 恢复 13 秒，旧项目存的 12s 当 13s
-        saved_duration = "13s"
-    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "13s", "auto") else "auto")  # t227u: 默认「自动」（存过的长度照旧恢复）
+    if saved_duration == "13s":  # 旧项目存的 13s 当 12s（MiniMax 6/9/12）
+        saved_duration = "12s"
+    # t178u: MiniMax 存过的 10s（旧档）在换到 MiniMax 时由 _sync_backend 换成 9s（10↔9）
+    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s", "7s", "9s", "12s", "auto") else "auto")  # t227u: 默认「自动」（存过的长度照旧恢复）
     saved_visual = True
     saved_speaking = True
     saved_actor = True  # t174u: 三项默认全勾；项目 video_prompt 里存过就按存的
@@ -517,7 +518,7 @@ def open_video_prompt_dialog(
             try:
                 from utility import sd_image_processor as _sdp
 
-                _secs = float(_sdp.minimax_snap_seconds(_dur))  # t166u: 7 / 10 / 13
+                _secs = float(_sdp.minimax_snap_seconds(_dur))  # t179u: 6 / 9 / 12
 
                 if _amode in ("talk", "sing"):
                     _secs = _sdp.minimax_audio_video_seconds(_sdp.h3_audio_seconds(get_image("clip_audio") or ""))
@@ -714,9 +715,9 @@ def open_video_prompt_dialog(
     length_box = ttk.LabelFrame(actions, text="长度", padding=(8, 4))
     length_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     length_radios = []
-    # t200u: Grok / Gemini 6/10/15 秒；MiniMax 7/10/13 秒（换后端时就地改字和值，6↔7、10↔10、15↔13）
+    # t200u/t178u: Grok / Gemini 6/10/15 秒；MiniMax 6/9/12 秒（换后端时就地改字和值，6↔6、10↔9；旧 7→6、15↔12）
     _LEN_STD = ("6s", "10s", "15s")
-    _LEN_MM = ("7s", "10s", "13s")
+    _LEN_MM = ("6s", "9s", "12s")
     for value, label in (("6s", "6秒"), ("10s", "10秒"), ("15s", "15秒")):
         _rb = ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var)
         _rb.pack(anchor=tk.W)
@@ -778,7 +779,9 @@ def open_video_prompt_dialog(
         _vals = _LEN_MM if mm else _LEN_STD
         for rb, v in zip(length_radios, _vals):
             rb.configure(value=v, text=v[:-1] + "秒")
-        _cur = duration_var.get()
+        _cur = {"7s": "6s", "13s": "12s"}.get(duration_var.get(), duration_var.get())  # t179u: 旧存的 7 秒 → 6 秒
+        if _cur in _vals:
+            duration_var.set(_cur)
         if _cur not in _vals and _cur != "auto":
             _other = _LEN_STD if mm else _LEN_MM
             duration_var.set(_vals[_other.index(_cur)] if _cur in _other else "auto")
@@ -1113,8 +1116,8 @@ def open_video_prompt_dialog(
     # t155u/t161u: 说清楚声音输入只有 MiniMax 支持
     ttk.Label(
         advanced,
-        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 13.67 秒自动分成几段（每段 ≤ 13.67 秒 = 328 帧、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）。选「不加」时不送音频，也从不分段：一场只生成一段，长度 7 / 10 / 13 秒（实际 7.29 / 10.13 / 13.67 秒，按 24fps 帧数；「自动」按台词估算；"
-        "13 秒放不下就用 13 秒加语速档让人物说快，导入时按同一档放慢）。分辨率固定 1056×608（竖屏 608×1056）。"
+        text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 12.25 秒自动分成几段（每段 ≤ 12.25 秒 = 294 帧、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）。选「不加」时不送音频，也从不分段：一场只生成一段，长度 6 / 9 / 12 秒（实际 6.58 / 9.42 / 12.25 秒，按 24fps 帧数；「自动」按台词估算；"
+        "12 秒放不下就用 12 秒加语速档让人物说快，导入时按同一档放慢）。分辨率按实际长度（含带音频、分段的每一段）：6 秒档（≤ 6.58 秒）1312×736（竖屏 736×1312），9 秒档（≤ 9.42 秒）1280×704（竖屏 704×1280），12 秒档 1120×640（竖屏 640×1120）。"
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         + ("" if _has_audio else "（这一场没有音频）"),

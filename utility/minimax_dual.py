@@ -104,7 +104,7 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     else:
         key = config.minimax_variant_key(backend) or config.MINIMAX_DEFAULT_VARIANT
     v = config.minimax_variant(key)
-    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t166u: 7 / 10 / 13（6→7，15→13）
+    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t179u: 6 / 9 / 12（7→6，10→9，15→12）
     _imgs = [p for p in (image_paths or []) if p] if isinstance(image_paths, (list, tuple)) else []
     if not image_path and _imgs:
         image_path = _imgs[0]
@@ -129,11 +129,16 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     _dest = dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
     _name = time.strftime("minimax_h3_%Y%m%d_%H%M%S") + "_" + key.replace("minimax_", "") + ".mp4"
     if _audio and _adur > _sdp.MINIMAX_MAX_SECONDS:
-        # t201u: 音频 > 13.67 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入
+        # t201u: 音频 > 12.25 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入
         from utility import minimax_segments as _seg
 
+        _orient = str(extra.get("orientation") or "landscape")
+
         def _one(img, p, secs, aud, last, out, st):
-            return _generate_one(_sdp, img, p, secs, _w, _h, out, v, st, aud, last, refs=_refs)
+            # t178u: 每段按自己的长度挑分辨率（≤ 6.583 秒 1312x736，≤ 9.417 秒 1280x704，更长 1120x640）
+            sw, sh, swhy = _sdp.minimax_size_for(_orient, secs, True, secs)
+            st(f"分段 {secs:.2f} 秒 → {sw}×{sh}（{swhy}）")
+            return _generate_one(_sdp, img, p, secs, sw, sh, out, v, st, aud, last, refs=_refs)
 
         return _seg.run_segmented(
             gen_one=_one, image_path=image_path, prompt=prompt, audio_path=_audio, audio_seconds=_adur,

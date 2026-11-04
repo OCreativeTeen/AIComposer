@@ -847,19 +847,19 @@ def _parse_size(text: str, fallback: tuple) -> tuple:
         return fallback
 
 
-MINIMAX_LENGTHS = (7, 10, 13)  # t166u: MiniMax 恢复 7 / 10 / 13 秒（实际按帧：175 / 243 / 328 帧）
+MINIMAX_LENGTHS = (6, 9, 12)  # t179u: MiniMax 6 / 9 / 12 秒（实际按帧：158 / 226 / 294 帧）
 
 
 def minimax_exact_seconds(seconds) -> float:
-    """t166u: 名义秒数 → 实际生成的秒数（17k+5 帧 / 24fps）：7→7.29，10→10.125，13→13.667。"""
+    """t166u: 名义秒数 → 实际生成的秒数（17k+5 帧 / 24fps）：6→6.583，9→9.417，12→12.25。"""
     return minimax_h3_frames(float(seconds)) / MINIMAX_H3_FPS
 
 
-MINIMAX_MAX_SECONDS = minimax_exact_seconds(13)  # 328 帧 = 13.667 秒
+MINIMAX_MAX_SECONDS = minimax_exact_seconds(12)  # 294 帧 = 12.25 秒
 
 
 def minimax_snap_seconds(seconds) -> int:
-    """t200u: 任意秒数（含 Grok 的 6 / 15）→ 最近的 7 / 10 / 13：6→7，10→10，15→13。"""
+    """t200u/t178u: 任意秒数（含 Grok 的 6 / 10 / 15）→ 最近的 6 / 9 / 12：旧 7→6，10→9，15→12（t179u）。"""
     try:
         s = float(str(seconds).strip().rstrip("sS") or 10)
     except Exception:  # noqa: BLE001
@@ -868,25 +868,36 @@ def minimax_snap_seconds(seconds) -> int:
 
 
 def minimax_audio_video_seconds(audio_seconds) -> float:
-    """t200u: 有音频时的视频长度：跟音频走（至少 4 秒），最长 13.67 秒（328 帧）；更长或读不到按 13.67 秒。"""
+    """t200u: 有音频时的视频长度：跟音频走（至少 4 秒），最长 12.25 秒（294 帧）；更长或读不到按 12.25 秒。"""
     a = float(audio_seconds or 0)
     if a <= 0 or a > MINIMAX_MAX_SECONDS:
         return MINIMAX_MAX_SECONDS
     return max(4.0, a)
 
 
+MINIMAX_6S_MAX_SECONDS = minimax_exact_seconds(6)  # 158 帧 = 6.583 秒，到这为止用 1312x736
+MINIMAX_HIRES_MAX_SECONDS = minimax_exact_seconds(9)  # t178u: 9 秒档 226 帧 = 9.417 秒，到这为止用 1280x704
+
+
 def minimax_size_for(orientation: str, seconds: float, has_audio: bool, audio_seconds=None) -> tuple:
-    """返回 (宽, 高, 说明)。t168u: 分辨率固定 1056x608（竖屏 608x1056），不再按长度 / 音频加减。
-    seconds / has_audio / audio_seconds 只用来写说明。"""
+    """返回 (宽, 高, 说明)。t178u: 按实际视频长度挑分辨率：≤ 6.583 秒（6 秒档）1312x736（竖屏 736x1312），≤ 9.417 秒（9 秒档）1280x704（竖屏 704x1280），
+    更长（12 秒档）1120x640（竖屏 640x1120）。有音频时长度 = 音频（最长 12.25）。"""
     if has_audio:
         a = float(audio_seconds or 0)
         what = f"音频 {a:.1f} 秒" if a > 0 else "音频时长读不到"
         if a <= 0 or a > MINIMAX_MAX_SECONDS:
             what += f"，按 {MINIMAX_MAX_SECONDS:.2f} 秒"
+        real = minimax_audio_video_seconds(a)
     else:
         what = f"{int(round(float(seconds or 0)))}秒"
-    long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_LARGE", "1056x608"), (1056, 608))  # t252u
-    why = what + f"，固定 {long_e}x{short_e}"
+        real = minimax_exact_seconds(seconds or 0)
+    if real <= MINIMAX_6S_MAX_SECONDS + 1e-6:
+        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_6S", "1312x736"), (1312, 736))
+    elif real <= MINIMAX_HIRES_MAX_SECONDS + 1e-6:
+        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_XLARGE", "1280x704"), (1280, 704))
+    else:
+        long_e, short_e = _parse_size(getattr(config, "MINIMAX_SIZE_LARGE", "1120x640"), (1120, 640))  # t252u
+    why = what + f"（{minimax_h3_frames(real)} 帧），{long_e}x{short_e}"
     w, h = (short_e, long_e) if str(orientation or "").lower() == "portrait" else (long_e, short_e)
     return w, h, why
 
@@ -957,11 +968,11 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
 
     import tempfile
 
-    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–13.67 秒），音频按这个长度截好转 wav 再上传
+    # t155u: 有场景音频时，视频长度跟音频走（夹在 4–12.25 秒），音频按这个长度截好转 wav 再上传
     audio_local = None
     if audio_path and os.path.isfile(audio_path):
         dur = h3_audio_seconds(audio_path)
-        seconds = minimax_audio_video_seconds(dur)  # t200u: 跟音频（至少 4 秒），最长 13.67 秒（328 帧）
+        seconds = minimax_audio_video_seconds(dur)  # t200u: 跟音频（至少 4 秒），最长 12.25 秒（294 帧）
         if dur > MINIMAX_MAX_SECONDS:
             say(f"场景音频 {dur:.1f} 秒，超过 {MINIMAX_MAX_SECONDS:.2f} 秒，只用前 {MINIMAX_MAX_SECONDS:.2f} 秒")
         audio_local = os.path.join(tempfile.gettempdir(), f"h3_{stamp}_audio.wav")

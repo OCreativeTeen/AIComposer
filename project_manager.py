@@ -2062,7 +2062,7 @@ class ProjectSelectionDialog:
                  initial_dialogue_mode=None,
                  initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None,
                  initial_video_size=None, initial_setting_region=None, initial_setting_era=None,
-                 initial_scene_style=None, initial_title=None):
+                 initial_scene_style=None, initial_title=None, initial_story_style=None):
 
         self.parent = parent
         self.initial_title = (initial_title or "").strip()
@@ -2151,7 +2151,7 @@ class ProjectSelectionDialog:
             'setting_region': self.initial_setting_region,
             'setting_era': self.initial_setting_era,
             'scene_style': self.initial_scene_style,
-            'story_style': LAST_STORY_STYLE or None,
+            'story_style': config_prompt.normalize_story_style(initial_story_style) or LAST_STORY_STYLE or None,
             'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
@@ -2803,7 +2803,8 @@ def create_project_dialog(parent, youtube_gui=None):
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags,
                                     dialogue_mode=None, video_size=None,
-                                    setting_region=None, setting_era=None, scene_style=None, title=None):
+                                    setting_region=None, setting_era=None, scene_style=None, title=None,
+                                    story_style=None):
     """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。
     ``video_size``："1920x1080" / "1080x1920"，新建窗口里画面比例的初始值（STORY 窗口的选择）。
     ``setting_region`` / ``setting_era``：STORY 窗口选的地域和时代，写进新项目。
@@ -2844,6 +2845,7 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         initial_setting_era=setting_era,
         initial_scene_style=scene_style,
         initial_title=title,
+        initial_story_style=story_style,
     )
 
     result = dialog.story_result.get('action', 'cancel')

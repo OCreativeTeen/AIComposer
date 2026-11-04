@@ -21,6 +21,7 @@ _DEFAULT_CHOICE = {
     "speaking": True,
     "actor": False,
     "actor_override": config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0],
+    "fix_cast": False,  # t197u: 补全/修正人物
 }
 
 
@@ -36,7 +37,7 @@ def _clean_choice(saved) -> dict:
         choice["text"] = saved["text"]
     if saved.get("narrative") in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES} | {"step"}:
         choice["narrative"] = saved["narrative"]
-    for key in ("visual", "speaking", "actor"):
+    for key in ("visual", "speaking", "actor", "fix_cast"):
         if key in saved:
             choice[key] = bool(saved[key])
     if saved.get("actor_override") in {label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES}:
@@ -199,6 +200,11 @@ def open_picture_prompt_dialog(
     speaking_var = tk.BooleanVar(value=last["speaking"])
     actor_var = tk.BooleanVar(value=last["actor"])
     override_var = tk.StringVar(value=last["actor_override"])
+    fix_cast_var = tk.BooleanVar(value=last.get("fix_cast", False))  # t197u
+    _fix_ok = [False]
+
+    def fix_on() -> bool:
+        return bool(fix_cast_var.get()) and _fix_ok[0]
 
     # 与全集生成相同：叙事风格 | 说明文字 | 写进提示词的内容；画风改变放到下面一行。
     _story_box, story_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
@@ -292,6 +298,7 @@ def open_picture_prompt_dialog(
             "image": image_to_save(),
             "fyi_history": get_fyi_history(),
             "background": bool(bg_include_var.get()),
+            "fix_cast": bool(fix_cast_var.get()),
             **{k: v for k, v in _step_saved.items()},  # t114u: 提取模式下记用户原来的勾选
         }
 
@@ -340,7 +347,7 @@ def open_picture_prompt_dialog(
         if step_mode:
             hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格）和说明文字（只管这一步的字），其他选项不进提示词。")
             return
-        edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
+        edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get() or fix_on())
         hint.config(foreground=("#1f5fbf" if edit_only else ""))
         if edit_only:
             hint.config(text="未选内容：只按「注意 / FYI」修改现有图片")
@@ -382,7 +389,7 @@ def open_picture_prompt_dialog(
                 _call_open_manual(prompt, [path], backend, account)
             return
         extract = task_var.get() == "extract"
-        edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
+        edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get() or fix_on())
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
         if edit_only and not fyi_now:
             if not messagebox.askokcancel(
@@ -412,6 +419,31 @@ def open_picture_prompt_dialog(
             """
             path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
             images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
+            if fix_on() and not extract:
+                # t197u: 补全/修正人物：场景图 + 每位人物的肖像图，一起发给 Grok Image 编辑
+                rows, missing = _cast_rows(scene, style)
+                msg = ("这一场没有当前图，补全/修正人物需要一张场景图。" if not images else
+                       "这一场没有人物。" if not rows else
+                       ("这些人物没有肖像图：" + "、".join(missing)) if missing else "")
+                if msg:
+                    if quiet:
+                        raise ValueError(msg)
+                    messagebox.showwarning("图片修改", msg, parent=dlg)
+                    return None
+                imgs = list(images)
+                for r in rows:
+                    if r["image"] not in imgs:
+                        imgs.append(r["image"])
+                prompt = config_prompt.build_cast_fix_prompt(scene, rows, visual_style=style, fyi=fyi_now, text=text_var.get())
+                prompt = config_prompt.prepend_background_condition(
+                    prompt, region, era, host_narrator, include=bool(bg_include_var.get()), stage=stage_info,
+                )
+                aspect = config_prompt.output_aspect_line(_project_video_size())
+                if aspect:
+                    prompt = aspect + "\n\n" + prompt
+                print("图片修改 · 补全/修正人物：发出的图 = " + " | ".join(
+                    [f"1 场景图 {os.path.basename(imgs[0])}"] + [f"{r['image_no']} {r['label']} {r['name']}" for r in rows]))
+                return prompt, imgs, {"aspect": aspect, "actors": rows, "base": imgs[0], "full_images": True}
             if not images and not quiet:
                 messagebox.showinfo("图片修改", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
             # 人物形象图：勾了人物、不是仅修改 / 人物提取时才加。
@@ -556,6 +588,70 @@ def open_picture_prompt_dialog(
         if picked:
             on_go(picked[0], picked[1])
 
+    # t197u: 补全/修正人物 —— 每位人物都有肖像图才能勾
+    def _cast_rows(scene, style=None):
+        if not isinstance(scene, dict):
+            return [], []
+        from utility.content_pdf import scene_actor_reference_images
+
+        ov = override_var.get() if (actor_var.get() and dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), "")) else ""
+        base = scene.get(chosen_image()) or ""
+        base = base if isinstance(base, str) and base and os.path.isfile(base) else ""
+        rows = scene_actor_reference_images(
+            scene, avatar_dir=actor_avatar_dir, base_image=base, override_label=ov,
+            style=style if style else ((get_style() or "").strip() or None),
+        )
+        return rows, [r["name"] for r in rows if not r.get("image")]
+
+    fix_box = ttk.Frame(bottom)
+    fix_box.pack(side=tk.LEFT, anchor=tk.N, padx=(8, 0))
+    fix_cb = ttk.Checkbutton(fix_box, text="补全/修正人物", variable=fix_cast_var)
+    fix_cb.pack(anchor=tk.W)
+    fix_note = ttk.Label(fix_box, text="", foreground="#888", wraplength=200, justify=tk.LEFT)
+    fix_note.pack(anchor=tk.W)
+    _tip = {"text": "", "win": None}
+
+    def _tip_hide(_e=None):
+        if _tip["win"] is not None:
+            try:
+                _tip["win"].destroy()
+            except tk.TclError:
+                pass
+            _tip["win"] = None
+
+    def _tip_show(_e=None):
+        _tip_hide()
+        if not _tip["text"]:
+            return
+        tw = tk.Toplevel(dlg)
+        tw.wm_overrideredirect(True)
+        tw.geometry(f"+{fix_cb.winfo_rootx()}+{fix_cb.winfo_rooty() + fix_cb.winfo_height() + 4}")
+        tk.Label(tw, text=_tip["text"], background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                 wraplength=360, justify=tk.LEFT).pack()
+        _tip["win"] = tw
+
+    fix_cb.bind("<Enter>", _tip_show)
+    fix_cb.bind("<Leave>", _tip_hide)
+
+    def _sync_fix_cast(*_a) -> None:
+        try:
+            rows, missing = _cast_rows(get_scene() if get_scene is not None else None)
+        except Exception as exc:  # noqa: BLE001
+            rows, missing = [], []
+            print(f"图片修改：查人物肖像出错：{exc}")
+        if not rows:
+            ok, why = False, "这一场没有人物，不能补全/修正人物。"
+        elif missing:
+            ok, why = False, "这些人物没有肖像图：" + "、".join(missing)
+        else:
+            ok, why = True, ("当前场景图 + " + "、".join(f"{r['label']} {r['name']}" for r in rows)
+                             + " 的肖像图一起发给 Grok Image：按场景描述和讲话补上缺的人、改正错的人，构图背景不变。")
+        _fix_ok[0] = ok
+        fix_cb.state(["!disabled"] if ok else ["disabled"])
+        _tip["text"] = why
+        fix_note.config(text="" if ok else why)
+        refresh()
+
     from gui.slide_prompt_dialog import big_submit_button
 
     big_submit_button(dlg, bottom, on_submit, text="提交").pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
@@ -565,6 +661,9 @@ def open_picture_prompt_dialog(
     actor_var.trace_add("write", refresh)
     visual_var.trace_add("write", refresh)
     speaking_var.trace_add("write", refresh)
-    refresh()
+    fix_cast_var.trace_add("write", refresh)
+    override_var.trace_add("write", _sync_fix_cast)
+    actor_var.trace_add("write", _sync_fix_cast)
+    _sync_fix_cast()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

@@ -1967,6 +1967,31 @@ class SceneEditorImpl:
                 _size_ctx["story_setting"] = lambda: (setting_region_var.get(), setting_era_var.get())
                 _size_ctx["story_scene_style"] = scene_style_var.get
 
+                def _story_look() -> dict:
+                    """t198u: 预览窗口里当前看到的选择（没点过下拉也算），新建项目时整套带进去。"""
+                    look = {
+                        "visual_style": config.match_visual_style(visual_style_var.get() or "") or "",
+                        "dialogue_mode": (dialogue_mode_var.get() or "").strip(),
+                        "scene_style": config_prompt.normalize_scene_style(scene_style_var.get()),
+                        "setting_region": (setting_region_var.get() or "").strip(),
+                        "setting_era": (setting_era_var.get() or "").strip(),
+                    }
+                    nv = scene_ui.get("narrator_var")
+                    if nv is not None:
+                        look["narrator"] = (nv.get() or "").strip()
+                    pv = scene_ui.get("prompt_combo_var")
+                    label = ((pv.get() if pv is not None else "") or "").strip()
+                    if label:
+                        look["scene_prompt_label"] = label
+                        st = config_prompt.normalize_story_style(label) if "series" in label.lower() else ""
+                        if not st and config_channel.is_step_story_label(label):
+                            st = "story_speak"
+                        if st:
+                            look["story_style"] = st
+                    return look
+
+                _size_ctx["story_look"] = _story_look
+
             def _commit_visual_style(_e=None):
                 vs = config.match_visual_style(visual_style_var.get() or "")
                 if not vs:
