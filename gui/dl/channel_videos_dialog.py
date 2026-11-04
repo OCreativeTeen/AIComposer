@@ -2005,6 +2005,11 @@ class ChannelVideosDialogImpl:
             dialog,
             {
                 "open_row": {"set": _cli_open_row},
+                # t203u: 魔法工作流「确认分类」换了分类后关掉列表窗口，重开才读到新列表
+                "close": {"set": lambda _v: (dialog.after(0, dialog.destroy), (True, "closing"))[1]},
+                # t214u: 魔法工作流「确认分类」搬了分类 → 整个程序从头开始（重新选主题列表）
+                "restart": {"set": lambda _v: (dialog.after(0, lambda: __import__("gui.app_restart", fromlist=["x"]).restart_app(self.root)),
+                                               (True, "restarting"))[1]},
             },
         )
         dialog.bind("<Destroy>", _unbind_video_list)

@@ -158,6 +158,15 @@ def set_screen_ready(name: str, ready: bool = True) -> None:
     _arm_pump()
 
 
+def apply_local(screen: str, op: str, field: str, value: str = "") -> tuple:
+    """t213u: 在 GUI 自己（Tk 线程）里直接调绑定的 handler。
+    不能在 Tk 线程里用 cli.bridge.send_bridge_command：pump 也在 Tk 线程，会卡到超时、什么也不做。"""
+    try:
+        return _apply({"screen": screen, "op": op, "field": field, "value": value})
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
 def unbind_screen(name: str) -> None:
     with _LOCK:
         _BOUND.pop(name, None)

@@ -6,6 +6,7 @@
 在工作线程里调用，不要在 Tk 主线程里调用。
 """
 from __future__ import annotations
+from utility.zh_convert import to_simplified as _to_simplified  # t210u
 
 import hashlib
 import os
@@ -965,6 +966,7 @@ class GeminiSession:
 
     def make_image(self, prompt: str, images=None, reject_paths=None):
         """在当前对话里发 图 + 提示词，等新的结果图（取最新一张），返回 PIL Image。"""
+        prompt = _to_simplified(prompt)  # t210u: 送出前转简体
         prompt = (prompt or "").strip()
         if not prompt:
             raise RuntimeError("提示词是空的")
@@ -1021,6 +1023,7 @@ def ask_text(prompt: str, status: Status = None, timeout_s: float = SCENE_TEXT_T
 
 def make_image(prompt: str, image_path, status: Status = None):
     """贴基础图和人物参考图，再贴提示词。返回生成结果的 PIL Image。"""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prompt = (prompt or "").strip()
     if not prompt:
         raise RuntimeError("提示词是空的")
@@ -1386,6 +1389,7 @@ def _resubmit_video(page, image_path: str, prompt: str, status: Status, k: int, 
     """t137u: 只在同一个对话里完整重发：选上「视频」→ 删掉残留附件 → 重新上传起始图（等缩略图）→ 贴原提示词 →
     点发送 → 核实：用户消息数 +1、最后一条有图和提示词。不开新对话、不换标签。
     返回 (page, 发送前回复数, ok, 原因)。没核实到 ok=False（调用方算一次失败的重试）。"""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     url = _live_url(page)
     uq0 = _user_query_count(page)
     n0 = _resp_count(page)
@@ -1701,6 +1705,7 @@ def _send_video_prompt(page, prompt: str, status: Status, already_typed: bool = 
                        allow_conversation: bool = False) -> None:
     """只在 /videos 发送：发送前确认（视频模式 + 起始图 + 提示词），点视频输入框里的发送，确认视频任务开始。
     发送后落到 /app 新对话或普通对话（没有视频任务）就直接报错，绝不在对话页补发。"""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     if not already_typed:
         _type_prompt_real(page, prompt)
     _pre_send_check(page, prompt, "发送前", allow_conversation)
@@ -1975,6 +1980,7 @@ def _video_upload(page, path: str, status: Status, allow_conversation: bool = Fa
 def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = None, *,
                orientation: str = "landscape", model: str = "") -> str:
     """Gemini 视频：/videos 页，选模型、设 横向/纵向、贴起始图、贴提示词、发送，等 mp4 下载到 dest_dir。返回路径。"""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prompt = (prompt or "").strip()
     if not prompt:
         raise RuntimeError("提示词是空的")

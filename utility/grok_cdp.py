@@ -18,6 +18,7 @@ Everything here is blocking; call it from a worker thread, never the Tk thread.
 Grok's DOM changes often: all selectors live in the constants below.
 """
 from __future__ import annotations
+from utility.zh_convert import to_simplified as _to_simplified  # t210u
 
 import base64
 import io
@@ -984,6 +985,7 @@ def fetch_current_imagine_result(status: Status = None):
 
 def run_imagine(prompt: str, status: Status = None):
     """Use the already-prepared Imagine tab: add prompt, submit, wait, return the new image (PIL)."""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     from PIL import Image
 
     bt = _bt()
@@ -1232,6 +1234,7 @@ def _save_video(page, st: dict, dest_dir: str, status: Status = None) -> str:
 def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
                       resolution: str = "720p", duration: str = "10s") -> str:
     """Prepared Imagine tab (image attached): prompt, 视频 mode 720p/15s, submit, wait, save mp4 → path."""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     bt = _bt()
     prompt = (prompt or "").strip()
     if not prompt:
@@ -1262,6 +1265,7 @@ def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
 def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = None, *,
                resolution: str = "720p", duration: str = "10s") -> str:
     """Grok Imagine image→video: attach ``image_path`` + ``prompt``; returns the saved mp4 path."""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prepare_imagine(image_path, status)
     return run_imagine_video(prompt, dest_dir, status, resolution=resolution, duration=duration)
 
@@ -1269,6 +1273,7 @@ def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = Non
 def make_image(prompt: str, image_path, status: Status = None):
     """Grok Imagine: attach ``image_path`` (one path, or a list: base picture + reference portraits, in order)
     + ``prompt``, generate, return a PIL Image."""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prepare_imagine(image_path, status)
     return run_imagine(prompt, status)
 

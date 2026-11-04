@@ -2575,11 +2575,11 @@ CHANNEL_CONFIG = {
         },
 
         "scenes_prompt_choices": [
+            (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),  # t205u: 第一个 = 新条目默认
             ("Series . Podcast", config_channel.COUNSELING_TALK_SCENES),
             ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
             ("Series · Story Speak", config_channel.COUNSELING_SERIES_STORY_SPEAK),
             ("Series · Story Act", config_channel.COUNSELING_SERIES_STORY_ACT),
-            (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),
         ],
 
         "channel_prompt": {

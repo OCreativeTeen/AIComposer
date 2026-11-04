@@ -195,93 +195,191 @@ class SceneDisplayMixin:
         source_field=None,
         remix_system_prompt=None,
     ):
-        """双击左键：审阅 / Remix 文案，确定后写回当前场景对应字段。"""
+        """双击左键：审阅 / Remix 文案，确定后写回当前场景对应字段。
+        t207u: 「Remix (全集)」= 从这一场到本集最后一场，每场按单场 Remix 做，结果按「确定」写回。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return "break"
         lang = getattr(self.workflow, "language", None) or "tw"
         lang_label = config.llm_language_label(lang)
         src_field = source_field or text_field
-        source_text = config.chinese_convert((scene.get(src_field) or ""), lang)
-        if source_field:
-            initial_edit = config.chinese_convert((scene.get(text_field) or ""), lang)
-        else:
-            initial_edit = None
-
-        actor_seed = (scene.get("actor") or "").strip()
         prompt_tpl = remix_system_prompt or config_prompt.SPEAKING_CONCISE_PROMPT
         system_prompt = prompt_tpl.format(language=lang_label)
-
-        def _remix_text(t: str) -> str:
-            out = self.llm_api_local.generate_text(
-                system_prompt, (t or "").strip()
-            )
-            return config.chinese_convert(out, lang)
-
-        def _remix(t: str) -> str:
-            if text_field != "visual" or remix_system_prompt:
-                return _remix_text(t)
-            # t161u: 和创建项目时看图调整同一条路：视觉 + 每个人这一场的样子 + 补讲话里缺的说话人
-            try:
-                from utility.file_util import get_file_path
-                from utility.visual_remix import remix_scene_full
-
-                image = get_file_path(scene, "clip_image")
-                res = remix_scene_full(t, image, actor_text=actor_seed, language_label=lang_label,
-                                       speaking=scene.get("speaking") or "")
-                print(f"🖼 视觉 Remix：带起始图 {os.path.basename(image)} 交给 Strata 看图改写"
-                      + (f"；补上说话人 {res['missing']}" if res.get("missing") else ""))
-                return config.chinese_convert(res["visual"], lang), config.chinese_convert(res["actor"], lang)
-            except Exception as exc:  # noqa: BLE001
-                print(f"⚠️ 视觉 Remix 看图失败，改用纯文字：{exc}")
-                speaking = (scene.get("speaking") or "").strip()
-                if not speaking:
-                    return _remix_text(t)  # 没有讲话：和以前一样
-                try:  # t199u: 纯文字也按讲话同步
-                    from utility.visual_remix import remix_visual_text
-
-                    names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(scene)]
-                    return config.chinese_convert(
-                        remix_visual_text(t, names=names, language_label=lang_label, speaking=speaking), lang)
-                except Exception as exc2:  # noqa: BLE001
-                    print(f"⚠️ 视觉 Remix 按讲话的纯文字改写失败，用原来的纯文字：{exc2}")
-                    return _remix_text(t)
-
         is_visual = text_field == "visual" and not remix_system_prompt
+
+        def source_of(sc) -> str:
+            return config.chinese_convert((sc.get(src_field) or ""), lang)
+
+        def make_remix(sc):
+            actor_seed = (sc.get("actor") or "").strip()
+
+            def _remix_text(t: str) -> str:
+                out = self.llm_api_local.generate_text(system_prompt, (t or "").strip())
+                return config.chinese_convert(out, lang)
+
+            def _remix(t: str):
+                if not is_visual:
+                    return _remix_text(t)
+                # t161u: 和创建项目时看图调整同一条路：视觉 + 每个人这一场的样子 + 补讲话里缺的说话人
+                try:
+                    from utility.file_util import get_file_path
+                    from utility.visual_remix import remix_scene_full
+
+                    image = get_file_path(sc, "clip_image")
+                    res = remix_scene_full(t, image, actor_text=actor_seed, language_label=lang_label,
+                                           speaking=sc.get("speaking") or "")
+                    print(f"🖼 视觉 Remix：带起始图 {os.path.basename(image)} 交给 Strata 看图改写"
+                          + (f"；补上说话人 {res['missing']}" if res.get("missing") else ""))
+                    return config.chinese_convert(res["visual"], lang), config.chinese_convert(res["actor"], lang)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 视觉 Remix 看图失败，改用纯文字：{exc}")
+                    speaking = (sc.get("speaking") or "").strip()
+                    if not speaking:
+                        return _remix_text(t)  # 没有讲话：和以前一样
+                    try:  # t199u: 纯文字也按讲话同步
+                        from utility.visual_remix import remix_visual_text
+
+                        names = [config_prompt._speaker_identity(r)[0] for r in config_prompt._scene_speakers(sc)]
+                        return config.chinese_convert(
+                            remix_visual_text(t, names=names, language_label=lang_label, speaking=speaking), lang)
+                    except Exception as exc2:  # noqa: BLE001
+                        print(f"⚠️ 视觉 Remix 按讲话的纯文字改写失败，用原来的纯文字：{exc2}")
+                        return _remix_text(t)
+
+            return _remix
+
+        def apply_result(sc, confirmed, *, save=True):
+            """和「确定」一样写回（视觉时连 人物）；sc 是界面当前场才刷新输入框。"""
+            import project_manager
+
+            cur = self.workflow.get_scene_by_index(self.current_scene_index)
+            if isinstance(confirmed, tuple):  # t161u: 视觉 + 人物
+                confirmed, new_actor = (tuple(confirmed) + (None,))[:2]
+                new_actor = project_manager.normalize_actor_text(new_actor or "")
+                if new_actor and new_actor != (sc.get("actor") or "").strip():
+                    sc["actor_before_remix"] = sc.get("actor") or ""
+                    sc["actor"] = new_actor
+                    if cur is sc:
+                        self._set_actor_text(new_actor)
+                    print(f"🖼 视觉 Remix：人物 → {new_actor}")
+            confirmed = (confirmed or "").strip()
+            if not confirmed:
+                return False
+            sc[text_field] = confirmed
+            widget = {"speaking": self.scene_speaking, "visual": self.scene_visual,
+                      "caption": self.scene_caption}.get(text_field)
+            if widget is not None and cur is sc:
+                widget.delete("1.0", tk.END)
+                widget.insert("1.0", confirmed)
+            if save:
+                self.workflow.save_scenes_to_json()
+            return True
+
+        def remix_all(dlg) -> bool:
+            story = [s for s in (self.workflow.scenes_in_story(scene) or []) if isinstance(s, dict)]
+            start = next((i for i, s in enumerate(story) if s is scene), None)
+            targets = story[start:] if start is not None else [scene]
+            if not messagebox.askyesno(
+                "Remix (全集)",
+                f"从这一场到本集最后一场，共 {len(targets)} 场，逐场 Remix「{title.split('—')[-1].strip()}」，"
+                "结果直接写回（不逐场审阅）。\n继续？",
+                parent=dlg,
+            ):
+                return False
+            self._remix_all_scenes(targets, text_field, source_of, make_remix, apply_result)
+            return True
+
+        initial_edit = config.chinese_convert((scene.get(text_field) or ""), lang) if source_field else None
         confirmed = ask_speaking_concise_review_dialog(
             self.root,
-            source_text,
-            remix_fn=_remix,
+            source_of(scene),
+            remix_fn=make_remix(scene),
             title=title,
             initial_edit=initial_edit,
             extra_label="人物（Remix 后的建议，可修改；确定时一起写进 人物 栏）" if is_visual else None,
-            extra_initial=actor_seed,
+            extra_initial=(scene.get("actor") or "").strip(),
+            remix_all_fn=remix_all,
         )
         if confirmed is None:
             return "break"
-        if isinstance(confirmed, tuple):  # t161u: 视觉 + 人物
-            confirmed, new_actor = confirmed
-            import project_manager
-
-            new_actor = project_manager.normalize_actor_text(new_actor or "")
-            if new_actor and new_actor != (scene.get("actor") or "").strip():
-                scene["actor_before_remix"] = scene.get("actor") or ""
-                scene["actor"] = new_actor
-                self._set_actor_text(new_actor)
-                print(f"🖼 视觉 Remix：人物 → {new_actor}")
-
-        scene[text_field] = confirmed
-        widget_map = {
-            "speaking": self.scene_speaking,
-            "visual": self.scene_visual,
-            "caption": self.scene_caption,
-        }
-        widget = widget_map.get(text_field)
-        if widget is not None:
-            widget.delete("1.0", tk.END)
-            widget.insert("1.0", confirmed)
-        self.workflow.save_scenes_to_json()
+        apply_result(scene, confirmed)
         return "break"
+
+    def _remix_all_scenes(self, targets, text_field, source_of, make_remix, apply_result) -> None:
+        """t207u: 后台逐场 Remix（工人线程只调 LLM，不碰 Tk），每场结果在 UI 线程写回并保存；失败跳过，最后汇报。"""
+        import queue
+        import threading
+        from tkinter import ttk
+
+        n = len(targets)
+        win = tk.Toplevel(self.root)
+        win.title(f"Remix (全集) · {n} 场")
+        win.transient(self.root)
+        var = tk.StringVar(value="准备 …")
+        ttk.Label(win, textvariable=var, wraplength=420, padding=12).pack(fill=tk.BOTH)
+        stop = {"flag": False}
+        ttk.Button(win, text="停止（做完这一场后）", command=lambda: stop.update(flag=True)).pack(pady=(0, 10))
+        q: "queue.Queue" = queue.Queue()
+        jobs = [(sc, source_of(sc), make_remix(sc)) for sc in targets]  # UI 线程里先取好每场的原文
+        stats = {"ok": 0, "failed": []}
+
+        def label(sc, k):
+            return f"{k}/{n}（场景 id {sc.get('id')}）"
+
+        def work():
+            for k, (sc, raw, fn) in enumerate(jobs, 1):
+                if stop["flag"]:
+                    q.put(("stopped", n - k + 1, None, None))
+                    break
+                q.put(("progress", k, sc, None))
+                if not (raw or "").strip():
+                    q.put(("fail", k, sc, "原文是空的"))
+                    continue
+                try:
+                    q.put(("ok", k, sc, fn(raw)))
+                except Exception as exc:  # noqa: BLE001
+                    q.put(("fail", k, sc, exc))
+            q.put(("done", 0, None, None))
+
+        def poll():
+            while True:
+                try:
+                    kind, k, sc, val = q.get_nowait()
+                except queue.Empty:
+                    break
+                if kind == "progress":
+                    var.set(f"Remix 第 {k}/{n} 场 …")
+                    print(f"🔁 Remix (全集) {text_field}：{label(sc, k)} 开始")
+                elif kind == "ok":
+                    try:
+                        if apply_result(sc, val):
+                            stats["ok"] += 1
+                            print(f"✅ Remix (全集) {text_field}：{label(sc, k)} 已写回")
+                        else:
+                            stats["failed"].append(f"{label(sc, k)}：结果是空的")
+                    except Exception as exc:  # noqa: BLE001
+                        stats["failed"].append(f"{label(sc, k)}：写回失败 {exc}")
+                elif kind == "fail":
+                    stats["failed"].append(f"{label(sc, k)}：{val}")
+                    print(f"⚠️ Remix (全集) {text_field}：{label(sc, k)} 失败 {val}")
+                elif kind == "stopped":
+                    stats["failed"].append(f"其余 {k} 场：已停止")
+                elif kind == "done":
+                    try:
+                        win.destroy()
+                    except tk.TclError:
+                        pass
+                    note = f"Remix (全集) 完成：{stats['ok']}/{n} 场已写回。"
+                    if stats["failed"]:
+                        note += "\n\n没处理 / 失败：\n" + "\n".join(stats["failed"][:30])
+                    print(note)
+                    messagebox.showinfo("Remix (全集)", note, parent=self.root)
+                    return
+            self.root.after(200, poll)
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(200, poll)
+
 
     def update_current_scene(self, event=None):
         if getattr(self, "_scene_widgets_loading", False):

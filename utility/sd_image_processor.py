@@ -1,4 +1,5 @@
 import json
+from utility.zh_convert import to_simplified as _to_simplified  # t210u
 import base64
 import requests
 from PIL import Image
@@ -367,6 +368,7 @@ class SDProcessor:
 
 
     def two_image_to_video(self, prompt, file_prefix, first_frame, last_frame, sound_path) :
+        prompt = _to_simplified(prompt)  # t210u: 送出前转简体
         server_config = GEN_CONFIG["2I2V"]
         num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
@@ -407,6 +409,7 @@ class SDProcessor:
 
 
     def action_transfer_video(self, prompt, file_prefix, image_path, sound_path, action_path) :
+        prompt = _to_simplified(prompt)  # t210u: 送出前转简体
         duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
         if duration <= 0.0:
             print(f"🔴 音频时长为0")
@@ -457,6 +460,7 @@ class SDProcessor:
 
     def sound_to_video(self, prompt, file_prefix, image_path, sound_path, next_sound_path, animate_mode, silence=False) :
         # 如果 prompt 是字典，转换为 JSON 字符串
+        prompt = _to_simplified(prompt)  # t210u: 送出前转简体
         if isinstance(prompt, dict):
             import json
             prompt = json.dumps(prompt, ensure_ascii=False)
@@ -525,6 +529,7 @@ class SDProcessor:
 
 
     def image_to_video(self, prompt, file_prefix, image_path, sound_path) :
+        prompt = _to_simplified(prompt)  # t210u: 送出前转简体
         server_config = GEN_CONFIG["I2V"]
         num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
@@ -924,6 +929,7 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
                          audio_path=None, last_image_path=None, workflow_path=None, ref_image_paths=None) -> str:
     """ComfyUI（MiniMax H3）图生视频：上传起始图 → POST /prompt → 轮询 /history → /view 下载 mp4。返回本地路径。
     server 默认 config.COMFYUI_VIDEO_URL；宽高要是 32 的倍数；seed 不给就随机。"""
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     import random
     import time
     import uuid

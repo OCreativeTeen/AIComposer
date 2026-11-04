@@ -753,7 +753,7 @@ def open_video_prompt_dialog(
     for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + _cfg_prefs.minimax_backend_options():
         ttk.Radiobutton(backend_box, text=label, value=value, variable=backend_var).pack(anchor=tk.W)
     # t216u: MiniMax 工作流：原工作流（无参考图，FL2VA）/ 参考图工作流（人物肖像，Ref2VA），记在项目 video_prompt
-    h3_wf_var = tk.StringVar(master=dlg, value=_sv.get("h3_workflow") if _sv.get("h3_workflow") in ("i2v", "r2v", "r2v_fast8") else "i2v")
+    h3_wf_var = tk.StringVar(master=dlg, value=_sv.get("h3_workflow") if _sv.get("h3_workflow") in ("i2v", "r2v", "r2v_fast8") else "r2v_fast8")  # t229u: 没记过就默认 FastH3
     h3_wf_box = ttk.LabelFrame(actions, text="MiniMax 工作流", padding=(8, 4))
     h3_wf_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     h3_wf_radios = []

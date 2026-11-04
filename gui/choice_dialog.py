@@ -160,6 +160,7 @@ def ask_speaking_concise_review_dialog(
     initial_edit: Optional[str] = None,
     extra_label: Optional[str] = None,
     extra_initial: str = "",
+    remix_all_fn: Optional[Callable] = None,
 ):
     """弹窗：只读「原文」+ 可编辑定稿区；「Remix」对原文调用 ``remix_fn``；「确定」返回定稿。
 
@@ -261,7 +262,7 @@ def ask_speaking_concise_review_dialog(
             try:
                 if not dlg.winfo_exists():
                     return
-                remix_btn.config(text="Remix(LLM)", state=tk.NORMAL)
+                remix_btn.config(text="Remix", state=tk.NORMAL)
             except tk.TclError:
                 return
             if kind == "err":
@@ -291,8 +292,16 @@ def ask_speaking_concise_review_dialog(
         dlg.destroy()
 
     ttk.Button(btn_bar, text="还原原文", command=reset_from_original).pack(side=tk.LEFT, padx=(0, 6))
-    remix_btn = ttk.Button(btn_bar, text="Remix(LLM)", command=do_remix)
+    remix_btn = ttk.Button(btn_bar, text="Remix", command=do_remix)
     remix_btn.pack(side=tk.LEFT, padx=(0, 6))
+    if remix_all_fn is not None:  # t207u: 从这一场到本集最后一场；开始后关掉本窗（不写回本窗定稿）
+        def do_remix_all() -> None:
+            if remix_state["busy"]:
+                return
+            if remix_all_fn(dlg):
+                dlg.destroy()
+
+        ttk.Button(btn_bar, text="Remix (全集)", command=do_remix_all).pack(side=tk.LEFT, padx=(0, 6))
 
     btn_row2 = ttk.Frame(main)
     btn_row2.pack(fill=tk.X, pady=(10, 0))

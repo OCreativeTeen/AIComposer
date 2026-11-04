@@ -6920,8 +6920,8 @@ SPEECH_PAUSE_ELLIPSIS = 0.4
 SPEECH_PAUSE_SWITCH = 0.3
 # t157u: 实测 MiniMax H3（p20261103132942 四段 7 秒片，s=1.0）：208 字 / 28.7 秒讲话 ≈ 7.25 字/秒（含停顿），
 # 范围 6.4–8.6；8.6 那段明显赶。MiniMax 会把台词塞进要求的长度，所以用偏舒适的 6.5 字/秒（含停顿）估算。
-MINIMAX_CJK_PER_SEC = 5.3  # t196u: p20261103182153 四段实测 204 字 / 34.8 秒 = 5.86 字/秒（台词塞满整段），听感快 10–15% → 正常 ≈ 5.3
-MINIMAX_WORDS_PER_SEC = 2.8
+MINIMAX_CJK_PER_SEC = 4.4  # t209u: 再放慢约 20%（5.3 → 4.4，5.3/4.4 ≈ 1.2）：生成的讲话还是太赶；例 44 字 ≈ 10 秒（原 t196u 实测 204 字 / 34.8 秒 = 5.86）
+MINIMAX_WORDS_PER_SEC = 2.3  # t209u: 同样放慢约 20%
 MINIMAX_PAUSE_ELLIPSIS = 0.4
 MINIMAX_AUDIO_TRUST = 0.3  # 场景音频 / 时间轴跟字数估算差超过 30% → 不信（多半是上一段 MiniMax 片子的音频）
 
@@ -7022,7 +7022,8 @@ def auto_length_speed_choice(text: str, options, normal_secs=None) -> tuple:
     note = ""
     if normal_secs and float(normal_secs) > 0:
         if abs(float(normal_secs) - est) <= MINIMAX_AUDIO_TRUST * est:
-            secs = round(float(normal_secs), 2)
+            # t209u: 时间轴多半来自之前说得太快的片子，比估算短时用估算（只往慢的方向信）
+            secs = round(max(float(normal_secs), est), 2)
         else:  # t157u: 例：场景音频是上一段 6 秒片子抽出来的 5.85 秒，台词其实要 10 秒
             note = f"；{src} {float(normal_secs):.1f} 秒跟字数估算差太多，不用"
             src = "估算"

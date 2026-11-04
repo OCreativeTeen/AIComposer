@@ -522,8 +522,7 @@ class SceneEditorImpl:
                      if config_prompt.normalize_story_style(opt[0]) == _want),
                     _saved_prompt_label,
                 )
-            if not _saved_prompt_label:  # t224u: 这一条没选过 → 用频道偏好
-                _saved_prompt_label = str(project_manager.channel_pref_get(channel_key, "scene_prompt_label") or "")
+            # t205u: 这一条没存过 → 用列表第一个（Step Story），不再用频道上次的选择
             if _saved_prompt_label in [opt[0] for opt in nb_prompt_choices]:
                 default_prompt_label = _saved_prompt_label
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
@@ -586,7 +585,14 @@ class SceneEditorImpl:
             series_total_var.trace_add("write", _sync_series_episode_choices)
 
             # 步数下拉两用：Step Story = 共几场（默认 3），图片分解 = 取第几步（默认 1）；各自记住自己的值。
-            _step_memory = {"story": str(config_channel.STEP_STORY_DEFAULT), "image": "1"}
+            # t205u: 这一条存过步数就用存的，没有就默认 STEP_STORY_DEFAULT（4）
+            _saved_steps = ""
+            for _src in (video_detail, video_detail.get(project_manager.PROJECT_PROFILE_KEY)):
+                if isinstance(_src, dict) and str(_src.get("scene_steps") or "").strip().isdigit():
+                    _saved_steps = str(_src.get("scene_steps")).strip()
+                    break
+            _step_memory = {"story": _saved_steps or str(config_channel.STEP_STORY_DEFAULT), "image": "1"}
+            step_count_var.set(_step_memory["story"])
             _step_kind = [None]
 
             def _sync_dynamic_prompt_widgets(*_a):
@@ -632,6 +638,24 @@ class SceneEditorImpl:
                     pass
 
             prompt_combo.bind("<<ComboboxSelected>>", _commit_prompt_label, add="+")
+
+            def _commit_steps(_e=None):
+                # t205u: 只记 Step Story 的步数（图片分解的“第几步”不存）
+                if not config_channel.is_step_story_label((prompt_combo_var.get() or "").strip()):
+                    return
+                v = (step_count_var.get() or "").strip()
+                if not v.isdigit() or str(video_detail.get("scene_steps") or "") == v:
+                    return
+                video_detail["scene_steps"] = int(v)
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict):
+                    pp["scene_steps"] = int(v)
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:
+                    pass
+
+            step_count_combo.bind("<<ComboboxSelected>>", _commit_steps, add="+")
             action_bar = ttk.Frame(prompt_row)
             action_bar.pack(side=tk.LEFT, fill=tk.X, expand=not embedded, padx=(12, 0))
             scene_ui["action_bar"] = action_bar
@@ -1773,6 +1797,132 @@ class SceneEditorImpl:
                     project_manager.channel_pref_get(_ch_key, "video_size"))
             video_size_var = tk.StringVar(value=_vsize_cur)
             scene_ui["video_size_var"] = video_size_var
+            # t204u: 分类 / 子类 / 标签 + 「确认分类」，在画面那一行上面。只有按按钮才生效（没改动时按钮是灰的）。
+            from gui.workflow import topic_reassign as _tr
+            _tp_ch = self._channel_config_key()
+            _tp_path = (self.channel_path or "").strip() or config.get_channel_path(_tp_ch)
+            try:
+                _tp_topics = _tr._read_json(os.path.join(_tp_path, _tr.TOPICS_FILE))
+            except Exception:  # noqa: BLE001
+                _tp_topics = []
+            _tp_cats = [str(t.get("topic_category") or "").strip() for t in _tp_topics
+                        if isinstance(t, dict) and str(t.get("topic_category") or "").strip()]
+
+            def _tp_split(text) -> list:
+                return _tr.tags_as_list(text)
+
+            _tp_conf = [(
+                str(video_detail.get("topic_category") or "").strip(),
+                str(video_detail.get("topic_subtype") or "").strip(),
+                _tr.tags_as_list(video_detail.get("tags")),
+            )]
+            topic_frm = ttk.Frame(frm)
+            ttk.Label(topic_frm, text="分类:").pack(side=tk.LEFT, padx=(0, 2))
+            tp_cat_var = tk.StringVar(value=_tp_conf[0][0])
+            tp_cat_cb = ttk.Combobox(topic_frm, textvariable=tp_cat_var, state="readonly", width=36,
+                                     values=_tp_cats + ([_tp_conf[0][0]] if _tp_conf[0][0] and _tp_conf[0][0] not in _tp_cats else []))
+            tp_cat_cb.pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Label(topic_frm, text="子类:").pack(side=tk.LEFT, padx=(0, 2))
+            tp_sub_var = tk.StringVar(value=_tp_conf[0][1])
+            tp_sub_cb = ttk.Combobox(topic_frm, textvariable=tp_sub_var, state="readonly", width=36,
+                                     values=_tr.subtypes_of(_tp_topics, _tp_conf[0][0]))
+            tp_sub_cb.pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Label(topic_frm, text="标签:").pack(side=tk.LEFT, padx=(0, 2))
+            tp_tags_var = tk.StringVar(value=" | ".join(_tp_conf[0][2]))
+            tp_tags_ent = ttk.Entry(topic_frm, textvariable=tp_tags_var, width=36)
+            tp_tags_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+            tp_btn = ttk.Button(topic_frm, text="确认分类", width=8, state="disabled")
+            tp_btn.pack(side=tk.LEFT)
+
+            def _tp_now() -> tuple:
+                return (tp_cat_var.get().strip(), tp_sub_var.get().strip(), _tp_split(tp_tags_var.get()))
+
+            def _tp_dirty(*_a) -> None:
+                try:
+                    tp_btn.configure(state=("normal" if _tp_now() != _tp_conf[0] else "disabled"))
+                except tk.TclError:
+                    pass
+
+            def _tp_on_cat(_e=None) -> None:
+                subs = _tr.subtypes_of(_tp_topics, tp_cat_var.get().strip())
+                tp_sub_cb["values"] = subs
+                if tp_sub_var.get() not in subs:
+                    tp_sub_var.set(subs[0] if subs else "")
+                _tp_dirty()
+
+            def _tp_apply(_e=None) -> None:
+                old, new = _tp_conf[0], _tp_now()
+                if new == old:
+                    return
+                if new[0] != old[0] and not messagebox.askyesno(
+                    "确认分类",
+                    f"把这一条从「{old[0]}」移到「{new[0]}」？\n子类和标签会让 Strata 按分析报告重新选。\n\n"
+                    "完成后会关掉这个预览窗口和列表窗口，需要重新打开。", parent=dlg):
+                    return
+                key = _tr.row_key(video_detail)
+                backup_dir = os.path.join(config.channel_list_by_topic_dir_abs(_tp_path), "_backup")
+                try:
+                    tp_btn.configure(state="disabled")
+                    dlg.config(cursor="watch"); dlg.update_idletasks()
+                    res = _tr.apply_change(
+                        _tp_path, lambda c: project_manager.topic_category_list_json_path(_tp_ch, c),
+                        key, old, new, _story_analysis_text(video_detail, scene_ui), backup_dir=backup_dir)
+                except Exception as e:  # noqa: BLE001
+                    messagebox.showerror("确认分类", f"改列表失败：{e}", parent=dlg)
+                    _tp_dirty()
+                    return
+                finally:
+                    try:
+                        dlg.config(cursor="")
+                    except tk.TclError:
+                        pass
+                if res["strata_error"]:
+                    print(f"⚠️ Strata 生成标签失败，保留原标签: {res['strata_error']}")
+                _tr._set_topic_fields(video_detail, res["category"], res["subtype"], res["tags"])
+                _tp_conf[0] = (res["category"], res["subtype"], list(res["tags"]))
+                tp_sub_var.set(res["subtype"])
+                tp_tags_var.set(" | ".join(res["tags"]))
+                _tp_dirty()
+                added = res["added"]
+                print("✅ 确认分类：" + res["msg"] + (f"；新标签 {added}" if added else ""))
+                if not res["moved"]:
+                    if res["regen"]:
+                        show_auto_close_popup(dlg, "确认分类", "子类已改，标签已重新生成：\n" + " | ".join(res["tags"]))
+                    return
+                # t213u: 列表窗口内存里还有这一行，先删掉，免得之后保存时写回旧分类表
+                try:
+                    _old_lp = os.path.normcase(os.path.abspath(project_manager.topic_category_list_json_path(_tp_ch, old[0])))
+                    _dl = getattr(self, "downloader", None)
+                    if _dl is not None and os.path.normcase(os.path.abspath(str(getattr(_dl, "channel_list_json", "") or ""))) == _old_lp:
+                        _dl.channel_videos = [v for v in (_dl.channel_videos or []) if not (isinstance(v, dict) and _tr.row_key(v) == key)]
+                except Exception as e:  # noqa: BLE001
+                    print(f"⚠️ 列表内存没清掉: {e}")
+                messagebox.showinfo(
+                    "确认分类",
+                    f"{res['msg']}\n子类：{res['subtype']}\n标签：{' | '.join(res['tags'])}"
+                    + (f"\n新加进 topics.json 的标签：{' | '.join(added)}" if added else "")
+                    + "\n\n程序现在重新启动，回到开始选择主题列表。", parent=dlg)
+                try:
+                    _unbind_scene_early(config.SCREEN_STORY_SCENE)
+                except Exception:  # noqa: BLE001
+                    pass
+                if getattr(self, "_scene_content_dialog", None) is dlg:
+                    self._scene_content_dialog = None
+                try:
+                    dlg.winfo_toplevel().destroy()  # 直接 destroy，不走关闭时的保存（行已经搬走了）
+                except tk.TclError:
+                    pass
+                # t214u: 不只关列表（关完没窗口整个程序就退出了），而是重启回到开始选择主题列表
+                from gui.app_restart import restart_app
+                restart_app(self.root)
+
+            tp_btn.configure(command=_tp_apply)
+            tp_cat_cb.bind("<<ComboboxSelected>>", _tp_on_cat)
+            tp_sub_cb.bind("<<ComboboxSelected>>", _tp_dirty)
+            tp_tags_ent.bind("<KeyRelease>", _tp_dirty)
+            tp_tags_ent.bind("<Return>", _tp_apply)
+            scene_ui["topic_frm"] = topic_frm
+
             size_frm = ttk.Frame(frm)
             ttk.Label(size_frm, text="画面:").pack(side=tk.LEFT, padx=(0, 4))
             # 提示放在画面那一行下面单独一行：那一行还有地域 / 时代 / 风格 / 讲员，长提示挤进去会把它们推出窗口。
@@ -1960,6 +2110,7 @@ class SceneEditorImpl:
 
             scene_ui["size_frm"] = size_frm
             size_frm.pack(fill=tk.X, pady=(0, 6), before=prompt_row)
+            topic_frm.pack(fill=tk.X, pady=(0, 6), before=size_frm)
             size_note_row.pack(fill=tk.X, after=size_frm)
             _size_ctx = getattr(dlg, "_summary_drop_ctx", None)
             if isinstance(_size_ctx, dict):

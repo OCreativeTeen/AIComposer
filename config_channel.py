@@ -1010,7 +1010,7 @@ Output format:
 # 下拉里只放一个 label；真正的模板在生成提示词时按参数现拼。
 # ---------------------------------------------------------------------------
 STEP_STORY_LABEL = "Step Story"
-STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 3
+STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 4  # t205u: 默认 4 步
 STEP_IMAGE_LABEL = "图片分解 (Step Image)"
 SCENE_SUMMARY_IMAGE_LABEL = "场景总图 (Scene Summary Image)"
 SCENE_SUMMARY_IMAGE_TEMPLATE_MARK = "[[SCENE_SUMMARY_IMAGE]] scene_content → 一张总图；提示词由 config_prompt.build_scene_summary_image_prompt 现拼。"

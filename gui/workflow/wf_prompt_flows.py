@@ -187,7 +187,7 @@ class PromptFlowsMixin:
 
         threading.Thread(target=build_pair, daemon=True).start()
 
-    def _maybe_auto_extract_steps_from_cover(self) -> None:
+    def _maybe_auto_extract_steps_from_cover(self, tries: int = 0) -> None:
         """t172u: 新项目从预览导入了封面、本集 2-6 场：按「图片修改」的提取第 N 步，逐场从封面画出这一场的图。
 
         选项固定：叙事风格 = 提取第 N 步，说明文字 = 关键字作背景，画风改变 = 保持画风，交给 LLM 的图 = 封面。
@@ -198,6 +198,9 @@ class PromptFlowsMixin:
 
         wf = getattr(self, "workflow", None)
         cover = (getattr(wf, "cover_seeded_path", "") or "") if wf else ""
+        if cover and getattr(self, "_clip_video_worker_busy", False) and tries < 30:  # t206u: 等生场视频空闲
+            self.root.after(2000, lambda: self._maybe_auto_extract_steps_from_cover(tries + 1))
+            return
         if wf is not None:
             wf.cover_seeded_path = ""  # 只做一次
         if not cover or not os.path.isfile(cover):
@@ -239,15 +242,21 @@ class PromptFlowsMixin:
         )
         aspect = config_prompt.output_aspect_line(_project_video_size())
         jobs = []
+        from utility.file_util import get_file_path
         for k, sc in enumerate(story, 1):
             body = config_prompt.build_step_image_clipbody(
                 k, visual_style=style, keep_style=True, caption="keywords", extract_only=True, fyi="",
             )
+            try:  # t206u: 和手动一样，用这一场自己的 clip_image（封面拷贝）
+                own = get_file_path(sc, "clip_image")
+            except Exception:  # noqa: BLE001
+                own = ""
+            src = own if own and os.path.isfile(own) else cover
             if backend == "gemini":  # 同一个 Gemini 对话：比例行由批量那边放
-                jobs.append((sc, body, [cover], {"aspect": aspect, "actors": [], "base": cover}))
+                jobs.append((sc, body, [src], {"aspect": aspect, "actors": [], "base": src}))
             else:
-                jobs.append((sc, (aspect + "\n\n" + body) if aspect else body, [cover],
-                             {"aspect": "", "actors": [], "base": cover}))
+                jobs.append((sc, (aspect + "\n\n" + body) if aspect else body, [src],
+                             {"aspect": "", "actors": [], "base": src}))
         print(f"🖼 从封面逐场提取第 1–{n} 步（{backend}）：{os.path.basename(cover)}")
         # t198u: 每一场的图一写回，就带着这张图让 Strata 看图调整这一场的视觉，直接写回（不弹审阅窗）
         self._run_picture_batch(jobs, backend, [], account, auto=True, remix_visual=True)
@@ -426,22 +435,41 @@ class PromptFlowsMixin:
                 from utility import gemini_cdp as engine
             else:
                 from utility import grok_cdp as engine
+            from utility import chrome_account
             n = len(jobs)
+            if auto:  # t206u: 开始前确认 Chrome / CDP 就绪
+                try:
+                    engine.ensure_chrome(scene_status("检查 Chrome …"))
+                    auto_extract_log(f"start {n} scenes backend={who} account={account or chrome_account.active()}")
+                except Exception as exc:  # noqa: BLE001
+                    auto_extract_log(f"chrome not ready: {exc!r}")
             for k, job in enumerate(jobs, 1):
                 scene, prompt, images = job[0], job[1], job[2]
                 if stop["flag"]:
                     failed.append(f"其余 {n - k + 1} 场：已停止")
                     break
                 label = in_episode_label(scene, k)
-                head = f"正在处理第 {k}/{n} 张（本集{label}）"
-                ui(lambda h=head: var.set(h))
-                try:
-                    img = engine.make_image(prompt, list(images), status=scene_status(head))
-                    if img is None or not hasattr(img, "save"):
-                        raise RuntimeError("没有拿到图")
-                    ui(lambda s=scene, i=img, l=label: apply(s, i, l))
-                except Exception as exc:  # noqa: BLE001
-                    failed.append(f"{label}：{exc}")
+                attempts = 2 if auto else 1  # t206u: 自动提取失败重试一次
+                for attempt in range(1, attempts + 1):
+                    head = f"正在处理第 {k}/{n} 张（本集{label}）" + (f" · 重试" if attempt > 1 else "")
+                    ui(lambda h=head: var.set(h))
+                    if auto:
+                        auto_extract_log(f"{label} try{attempt} account={account} prompt_len={len(prompt)} "
+                                         f"images={list(images)}")
+                    try:
+                        with chrome_account.use(account):  # t206u: 每次调用都重申账户
+                            img = engine.make_image(prompt, list(images), status=scene_status(head))
+                        if img is None or not hasattr(img, "save"):
+                            raise RuntimeError("没有拿到图")
+                        if auto:
+                            auto_extract_log(f"{label} try{attempt} ok")
+                        ui(lambda s=scene, i=img, l=label: apply(s, i, l))
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        if auto:
+                            auto_extract_log(f"{label} try{attempt} FAILED: {exc!r}")
+                        if attempt >= attempts or stop["flag"]:
+                            failed.append(f"{label}：{exc}")
 
         def gemini_session_worker():
             """Gemini：整批同一个对话，没有单独的开场消息。
@@ -991,3 +1019,17 @@ class PromptFlowsMixin:
             actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
             get_scene_range=scene_range,
         )
+
+def auto_extract_log(msg: str) -> None:
+    """t206u: 从封面逐场提取的每次尝试 / 失败写到 %LOCALAPPDATA%\\AIComposer\\auto_extract.log。"""
+    import datetime
+
+    line = f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {msg}"
+    print("[auto_extract] " + line)
+    try:
+        d = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AIComposer")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "auto_extract.log"), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass

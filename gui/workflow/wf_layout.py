@@ -45,19 +45,22 @@ class LayoutMixin:
         ttk.Label(row, text="分类").pack(side=tk.LEFT, padx=(0, 2))
         self.topic_category_var = tk.StringVar()
         self.topic_category_combo = ttk.Combobox(
-            row, textvariable=self.topic_category_var, state="readonly", width=12
+            row, textvariable=self.topic_category_var, state="readonly", width=36
         )
         self.topic_category_combo.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(row, text="子类").pack(side=tk.LEFT, padx=(0, 2))
         self.topic_subtype_var = tk.StringVar()
         self.topic_subtype_combo = ttk.Combobox(
-            row, textvariable=self.topic_subtype_var, state="readonly", width=9
+            row, textvariable=self.topic_subtype_var, state="readonly", width=36
         )
         self.topic_subtype_combo.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(row, text="标签").pack(side=tk.LEFT, padx=(0, 2))
         self.topic_tags_var = tk.StringVar()
-        self.topic_tags_entry = ttk.Entry(row, textvariable=self.topic_tags_var, width=18)
+        self.topic_tags_entry = ttk.Entry(row, textvariable=self.topic_tags_var, width=36)
         self.topic_tags_entry.pack(side=tk.LEFT, padx=(0, 4))
+        # t203u: 分类 / 子类 / 标签改了要按这个才生效
+        self.btn_topic_apply = ttk.Button(row, text="确认分类", width=8, state="disabled", command=self._apply_topic_change)
+        self.btn_topic_apply.pack(side=tk.LEFT, padx=(0, 4))
 
         ttk.Separator(row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=24)
 

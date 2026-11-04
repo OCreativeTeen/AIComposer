@@ -2001,3 +2001,59 @@ def add_video_to_topic_playlist(youtube, video_id: str, topic: str, privacy: str
         "snippet": {"playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute()
     print(f"📂 已加入播放列表「{split_topic_category(topic)[1]}」: {pid}")
     return pid
+
+
+# t202u: 预先为频道 topics.json 里的所有分类建好播放列表（和上传时同一套查找 / 新建逻辑，不会重复建）。
+def youtube_from_saved_token(channel_id: str):
+    """用上传保存下来的 token_<channel>.json 建 YouTube 客户端；没有 token 时返回 None（不打开浏览器登录）。"""
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    import googleapiclient.discovery
+    scopes = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.force-ssl"]
+    token_file = os.path.join(_channel_dir(channel_id), f"token_{channel_id}.json")
+    if not os.path.exists(token_file):
+        return None
+    cred = Credentials.from_authorized_user_file(token_file, scopes)
+    if not cred.valid:
+        if not (cred.expired and cred.refresh_token):
+            return None
+        cred.refresh(Request())
+        with open(token_file, "w") as f:
+            f.write(cred.to_json())
+    return googleapiclient.discovery.build("youtube", "v3", credentials=cred)
+
+
+def ensure_all_topic_playlists(channel_id: str, youtube=None, privacy: str = "public") -> dict:
+    """返回 {"created": [...], "existing": [...], "skipped": [...], "errors": [...]}，每项 (topic, playlist_id 或原因)。"""
+    out = {"created": [], "existing": [], "skipped": [], "errors": []}
+    try:
+        with open(os.path.join(_channel_dir(channel_id), "topics.json"), "r", encoding="utf-8") as f:
+            arr = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        out["errors"].append(("topics.json", str(e)))
+        return out
+    topics = []
+    for it in arr if isinstance(arr, list) else [arr]:
+        t = str((it or {}).get("topic_category") or (it or {}).get("category") or "").strip() if isinstance(it, dict) else ""
+        if t and t not in topics:
+            topics.append(t)
+    youtube = youtube or youtube_from_saved_token(channel_id)
+    if youtube is None:
+        out["errors"].append((channel_id, "no saved YouTube token"))
+        return out
+    cache_key = str(channel_id)
+    for t in topics:
+        key, _zh = split_topic_category(t)
+        if not key or key.upper() == "UNKNOWN":
+            out["skipped"].append((t, "UNKNOWN / empty"))
+            continue
+        before = {p.get("id") for p in _list_my_playlists(youtube, cache_key)}
+        try:
+            pid = find_or_create_topic_playlist(youtube, t, privacy=privacy, cache_key=cache_key, channel_id=channel_id)
+        except Exception as e:  # noqa: BLE001
+            out["errors"].append((t, str(e)[:300]))
+            if "quota" in str(e).lower():
+                break
+            continue
+        out["existing" if pid in before else "created"].append((t, pid))
+    return out

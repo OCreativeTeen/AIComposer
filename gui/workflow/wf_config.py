@@ -274,9 +274,9 @@ class ConfigMixin:
             'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '默认视频标题',
             'video_width': project_manager.video_size_pair(config_data.get('video_width'), config_data.get('video_height'))[0],
             'video_height': project_manager.video_size_pair(config_data.get('video_width'), config_data.get('video_height'))[1],
-            'topic_category': (self.topic_category_var.get() or "").strip(),
-            'topic_subtype': (self.topic_subtype_var.get() or "").strip(),
-            'tags': self._topic_tags_value(),
+            'topic_category': self._confirmed_topic()[0],
+            'topic_subtype': self._confirmed_topic()[1],
+            'tags': self._confirmed_topic()[2],
             'visual_style': (self.scene_visual_style.get() or "").strip() or config_data.get("visual_style"),
             'dialogue_mode': config.normalize_dialogue_mode(
                 (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
@@ -324,9 +324,9 @@ class ConfigMixin:
                 'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '视频标题',
                 'video_width': project_manager.video_size_pair(config_data.get('video_width'), config_data.get('video_height'))[0],
                 'video_height': project_manager.video_size_pair(config_data.get('video_width'), config_data.get('video_height'))[1],
-                'topic_category': (self.topic_category_var.get() or "").strip(),
-                'topic_subtype': (self.topic_subtype_var.get() or "").strip(),
-                'tags': self._topic_tags_value(),
+                'topic_category': self._confirmed_topic()[0],
+                'topic_subtype': self._confirmed_topic()[1],
+                'tags': self._confirmed_topic()[2],
                 'visual_style': (self.scene_visual_style.get() or "").strip() or config_data.get("visual_style"),
                 'dialogue_mode': config.normalize_dialogue_mode(
                     (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
@@ -502,10 +502,11 @@ class ConfigMixin:
         if hasattr(self, 'topic_category_combo'):
             self.topic_category_combo.bind('<<ComboboxSelected>>', self._on_topic_category_selected)
         if hasattr(self, 'topic_subtype_combo'):
-            self.topic_subtype_combo.bind('<<ComboboxSelected>>', self._on_topic_fields_changed)
+            # t203u: 子类 / 标签不再自动保存，按「确认分类」才生效
+            self.topic_subtype_combo.bind('<<ComboboxSelected>>', self._mark_topic_dirty)
         if hasattr(self, 'topic_tags_entry'):
-            self.topic_tags_entry.bind('<FocusOut>', self._on_topic_fields_changed)
-            self.topic_tags_entry.bind('<Return>', self._on_topic_fields_changed)
+            self.topic_tags_entry.bind('<KeyRelease>', self._mark_topic_dirty)
+            self.topic_tags_entry.bind('<Return>', self._apply_topic_change)
 
     def _topic_choice_rows(self) -> list:
         channel = ""
@@ -558,6 +559,30 @@ class ConfigMixin:
         self.topic_subtype_combo["values"] = subtypes
         self.topic_subtype_var.set(subtype if subtype in subtypes else "")
         self.topic_tags_var.set(tags_text)
+        self._topic_confirmed = (category, self.topic_subtype_var.get(), self._topic_tags_value())
+        self._mark_topic_dirty()
+
+    def _confirmed_topic(self) -> tuple:
+        """t203u: 保存时用的是已确认的分类 / 子类 / 标签，不是界面上还没确认的选择。"""
+        c = getattr(self, "_topic_confirmed", None)
+        if c is None:
+            pc = project_manager.PROJECT_CONFIG or {}
+            from gui.workflow.topic_reassign import tags_as_list
+            return ((pc.get("topic_category") or "").strip(), (pc.get("topic_subtype") or "").strip(),
+                    tags_as_list(pc.get("tags")))
+        return c[0], c[1], list(c[2])
+
+    def _mark_topic_dirty(self, _event=None) -> None:
+        btn = getattr(self, "btn_topic_apply", None)
+        if btn is None:
+            return
+        now = ((self.topic_category_var.get() or "").strip(), (self.topic_subtype_var.get() or "").strip(),
+               self._topic_tags_value())
+        dirty = tuple(now) != tuple(self._confirmed_topic())
+        try:
+            btn.configure(text="确认分类", state=("normal" if dirty else "disabled"))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_topic_category_selected(self, _event=None) -> None:
         if self._loading_config:
@@ -566,8 +591,69 @@ class ConfigMixin:
         subtypes = self._subtypes_for_category(self.topic_category_var.get(), choices)
         self.topic_subtype_combo["values"] = subtypes
         if self.topic_subtype_var.get() not in subtypes:
-            self.topic_subtype_var.set("")
-        self._on_topic_fields_changed()
+            self.topic_subtype_var.set(subtypes[0] if subtypes else "")
+        self._mark_topic_dirty()  # t203u: 只改界面，按「确认分类」才生效
+
+    def _apply_topic_change(self, _event=None) -> None:
+        """t203u: 确认分类。分类变了 → 搬列表行 + Strata 选标签 + 关窗口重开；只改子类 / 标签 → 原地改。"""
+        from gui.workflow import topic_reassign as tr
+
+        pc = project_manager.PROJECT_CONFIG
+        if not pc:
+            return
+        old_cat, old_sub, old_tags = self._confirmed_topic()
+        cat = (self.topic_category_var.get() or "").strip()
+        sub = (self.topic_subtype_var.get() or "").strip()
+        tags = self._topic_tags_value()
+        if (cat, sub, tags) == (old_cat, old_sub, old_tags):
+            return  # 按钮这时是灰的；回车也不做事
+        channel = (pc.get("channel") or self.shared_channel.cget("text") or "").strip()
+        pid = (pc.get("pid") or self.get_pid() or "").strip()
+        ch_path = config.get_channel_path(channel)
+        backup_dir = os.path.join(config.channel_list_by_topic_dir_abs(ch_path), "_backup")
+        if cat != old_cat and not messagebox.askyesno(
+            "确认分类",
+            f"把这一条从「{old_cat}」移到「{cat}」？\n子类：{sub or '（无）'}\n子类和标签会让 Strata 按分析报告重新选。\n\n"
+            "完成后会关掉魔法工作流和列表窗口，需要重新打开。", parent=self.root):
+            return
+        analyzed = pc.get("analyzed_content") or ""
+        if not analyzed:
+            row = self._load_current_video_detail_row() if hasattr(self, "_load_current_video_detail_row") else None
+            analyzed = (row or {}).get("analyzed_content") or (row or {}).get("summary") or ""
+        try:
+            res = tr.apply_change(ch_path, lambda c: project_manager.topic_category_list_json_path(channel, c),
+                                  pid, (old_cat, old_sub, old_tags), (cat, sub, tags), str(analyzed),
+                                  backup_dir=backup_dir)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("确认分类", f"改列表失败：{e}", parent=self.root)
+            return
+        if res["strata_error"]:
+            print(f"⚠️ Strata 生成标签失败，保留原标签: {res['strata_error']}")
+        cat, sub, tags = res["category"], res["subtype"], res["tags"]
+        self._topic_confirmed = (cat, sub, list(tags))
+        self.topic_subtype_var.set(sub)
+        self.topic_tags_var.set(" | ".join(tags))
+        pc["topic_category"], pc["topic_subtype"], pc["tags"] = cat, sub, list(tags)
+        self.save_config()
+        self._mark_topic_dirty()
+        added = res["added"]
+        print("✅ 确认分类：" + res["msg"] + (f"；新标签 {added}" if added else ""))
+        if not res["moved"]:
+            return
+        try:  # t214u: 列表窗口在另一个进程（GUI_topic），用 bridge 让它整个重启回到开始选择主题列表
+            from cli.bridge import send_bridge_command
+            ok, why = send_bridge_command(screen=config.SCREEN_VIDEO_LIST, op="set", field="restart", value="1", timeout_s=5.0)
+            if not ok:
+                print(f"⚠️ 列表程序没重启（可能没开着）: {why}")
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 列表程序没重启: {e}")
+        messagebox.showinfo(
+            "确认分类",
+            f"{res['msg']}\n子类：{sub}\n标签：{' | '.join(tags)}"
+            + (f"\n新加进 topics.json 的标签：{' | '.join(added)}" if added else "")
+            + "\n\n魔法工作流现在关闭；列表程序重新启动，回到开始选择主题列表。", parent=self.root)
+        self.show_save_confirmation_on_exit = lambda: True  # 已经保存过
+        self.on_closing()
 
     def _on_topic_fields_changed(self, _event=None) -> None:
         if self._loading_config or not project_manager.PROJECT_CONFIG:
