@@ -154,6 +154,60 @@ def ask_llm_and_account(parent, pref_key: str = PICTURE_SUBMIT_PREF, title: str 
     return res["v"]
 
 
+PICTURE_EDIT_MODES = (
+    ("modify", "修改图片",
+     "按画风、说明文字（说明文字 / 关键字做背景 等）和内容来源（场景描述里的 视觉 / 讲话 / 人物）修改这张图。"),
+    ("cover", "从封面提取",
+     "把现在的图当封面，从里面取出这一场的画面。不加字，不改画风。"),
+    ("cast", "补全/修正人物",
+     "按 视觉、讲话 和人物肖像图，补上缺的人物或改正对不上的人物。不加字，不改画风，不画对话泡泡。"),
+)
+
+
+def ask_picture_edit_mode(parent, anchor=None, *, initial: str = "modify", step_no: int = 0):
+    """t216u: 图片修改第一步：选类型。返回 "modify" / "cover" / "cast"，取消返回 None。"""
+    box = tk.Toplevel(parent)
+    box.title("图片修改 · 选类型")
+    box.transient(parent)
+    box.resizable(False, False)
+    frm = ttk.Frame(box, padding=14)
+    frm.pack(fill=tk.BOTH, expand=True)
+    valid = {k for k, _t, _d in PICTURE_EDIT_MODES}
+    if initial not in valid or (initial == "cover" and step_no <= 0):
+        initial = "modify"
+    var = tk.StringVar(master=box, value=initial)
+    for key, title, desc in PICTURE_EDIT_MODES:
+        if key == "cover" and step_no > 0:
+            title = f"{title}（第 {step_no} 步）"
+        rb = ttk.Radiobutton(frm, text=title, value=key, variable=var)
+        rb.pack(anchor=tk.W, pady=(6, 0))
+        note = desc if not (key == "cover" and step_no <= 0) else "这一场没有步骤号（第 N 步），用不了。"
+        ttk.Label(frm, text=note, foreground="#666", wraplength=520, justify=tk.LEFT).pack(anchor=tk.W, padx=(22, 0))
+        if key == "cover" and step_no <= 0:
+            rb.state(["disabled"])
+    res = {"v": None}
+
+    def go(_e=None):
+        res["v"] = var.get()
+        box.destroy()
+
+    btns = ttk.Frame(frm)
+    btns.pack(fill=tk.X, pady=(12, 0))
+    ok_btn = ttk.Button(btns, text="下一步", command=go, default="active")
+    ok_btn.pack(side=tk.RIGHT)
+    ttk.Button(btns, text="取消", command=box.destroy).pack(side=tk.RIGHT, padx=(0, 8))
+    box.bind("<Return>", go)
+    box.bind("<Escape>", lambda _e: box.destroy())
+    try:
+        _place_popup_near(box, anchor if anchor is not None else parent, below=True)
+    except Exception:  # noqa: BLE001
+        pass
+    ok_btn.focus_set()
+    box.grab_set()
+    parent.wait_window(box)
+    return res["v"]
+
+
 def open_picture_prompt_dialog(
     parent,
     anchor,
@@ -170,6 +224,7 @@ def open_picture_prompt_dialog(
     batch_scenes=None,
     run_batch=None,
     get_step_no=None,
+    mode=None,
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
 
@@ -177,8 +232,21 @@ def open_picture_prompt_dialog(
 
     ``saved_choice`` 是项目里记下的上次选择；关窗或提交时 ``save_choice(dict)`` 记回去。
     """
+    step_no = 0
+    if callable(get_step_no):
+        try:
+            step_no = int(get_step_no() or 0)
+        except (TypeError, ValueError):
+            step_no = 0
+    if mode is None:  # t216u: 第一步选类型，第二步才是这个窗口
+        prev = (saved_choice or {}).get("mode") if isinstance(saved_choice, dict) else None
+        mode = ask_picture_edit_mode(parent, anchor, initial=prev or "modify", step_no=step_no)
+        if mode is None:
+            return
+    if mode == "cover" and step_no <= 0:
+        mode = "modify"
     dlg = tk.Toplevel(parent)
-    dlg.title("图片修改")
+    dlg.title("图片修改 · " + dict((k, t) for k, t, _d in PICTURE_EDIT_MODES).get(mode, ""))
     dlg.transient(parent)
     dlg.resizable(False, False)
     dlg.withdraw()
@@ -209,12 +277,6 @@ def open_picture_prompt_dialog(
     # 与全集生成相同：叙事风格 | 说明文字 | 写进提示词的内容；画风改变放到下面一行。
     _story_box, story_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
     # 叙事风格第 5 项：提取第 N 步（N = 当前场景在这一集里的序号）
-    step_no = 0
-    if callable(get_step_no):
-        try:
-            step_no = int(get_step_no() or 0)
-        except (TypeError, ValueError):
-            step_no = 0
     if step_no > 0:
         ttk.Radiobutton(
             _story_box, text=f"提取第 {step_no} 步（从封面/信息图取出这一步，画成单张场景图）",
@@ -232,7 +294,8 @@ def open_picture_prompt_dialog(
         text_buttons.append(btn)
 
     _fields, field_buttons = pack_scene_field_choices(
-        groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N
+        groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N,
+        title="内容来源（场景描述）",
     )
 
     task_box = ttk.LabelFrame(bottom, text="画风改变", padding=(8, 4))
@@ -300,6 +363,8 @@ def open_picture_prompt_dialog(
             "background": bool(bg_include_var.get()),
             "fix_cast": bool(fix_cast_var.get()),
             **{k: v for k, v in _step_saved.items()},  # t114u: 提取模式下记用户原来的勾选
+            **_mode_saved,  # t216u: 封面提取 / 补全人物 强制的选项不覆盖用户原来的选择
+            "mode": mode,
         }
 
     def remember() -> None:
@@ -344,6 +409,12 @@ def open_picture_prompt_dialog(
             btn.configure(state=("disabled" if extract else "normal"))
         for btn in field_buttons:
             btn.configure(state=("disabled" if extract or step_mode else "normal"))
+        if mode == "cover":
+            hint.config(foreground="", text=f"从封面提取：把现在的图当封面，取出第 {step_no} 步这一场的画面。画风不变，不加字。可以写「注意 / FYI」。")
+            return
+        if mode == "cast":
+            hint.config(foreground="", text="补全/修正人物：按 视觉、讲话 和人物肖像图补上缺的人物、改正对不上的人物。画风不变，不加字，不画对话泡泡。")
+            return
         if step_mode:
             hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格）和说明文字（只管这一步的字），其他选项不进提示词。")
             return
@@ -363,6 +434,9 @@ def open_picture_prompt_dialog(
         dlg.destroy()
 
     def on_go(backend: str = "grok", account: str = "") -> None:
+        if mode == "cast" and not fix_on():
+            messagebox.showwarning("图片修改", "补全/修正人物用不了：" + (_tip["text"] or "没有人物肖像图。"), parent=dlg)
+            return
         if narrative_var.get() == "step" and step_no > 0:
             # 提取第 N 步：沿用 Step Image 提示词，当前选中的图当输入，结果走图片修改的正常回填
             scene = get_scene() if get_scene is not None else None
@@ -652,6 +726,49 @@ def open_picture_prompt_dialog(
         fix_note.config(text="" if ok else why)
         refresh()
 
+    # t216u: 第二步按类型只露出相关的选项
+    _mode_saved: dict = {}
+
+    def _apply_mode() -> None:
+        if mode == "modify":
+            fix_box.pack_forget()
+            if fix_cast_var.get():
+                _mode_saved["fix_cast"] = True
+                fix_cast_var.set(False)
+            if narrative_var.get() == "step":
+                _mode_saved["narrative"] = "step"
+                narrative_var.set("narration")
+            for rb in _story_box.winfo_children():
+                if isinstance(rb, ttk.Radiobutton) and str(rb.cget("value")) == "step":
+                    rb.pack_forget()
+            ttk.Label(
+                main, foreground="#666", wraplength=760, justify=tk.LEFT,
+                text="FYI：这是「修改图片」：按上面的画风、说明文字和内容来源改这张图。"
+                     "要从封面取出这一场，或补全/修正人物，请关掉重开，第一步选别的类型。",
+            ).pack(anchor=tk.W, pady=(6, 0))
+            return
+        forced = {"task": (task_var, "keep"), "text": (text_var, "keep")}
+        if mode == "cover":
+            forced["narrative"] = (narrative_var, "step")
+            forced["fix_cast"] = (fix_cast_var, False)
+        else:
+            forced["fix_cast"] = (fix_cast_var, True)
+            forced["narrative"] = (narrative_var, "narration" if narrative_var.get() == "step" else narrative_var.get())
+        for key, (var, val) in forced.items():
+            cur = var.get()
+            if cur != val:
+                _mode_saved[key] = cur
+            var.set(val)
+        for w in (_story_box, text_box, task_box):
+            w.pack_forget()
+        if mode == "cover":
+            _fields.pack_forget()
+            fix_box.pack_forget()
+        else:
+            fix_cb.pack_forget()  # 补全人物一定开着；不能用时 fix_note 里写原因
+            _fields.pack_forget()
+        refresh()
+
     from gui.slide_prompt_dialog import big_submit_button
 
     big_submit_button(dlg, bottom, on_submit, text="提交").pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
@@ -665,5 +782,6 @@ def open_picture_prompt_dialog(
     override_var.trace_add("write", _sync_fix_cast)
     actor_var.trace_add("write", _sync_fix_cast)
     _sync_fix_cast()
+    _apply_mode()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

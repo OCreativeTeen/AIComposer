@@ -4199,8 +4199,10 @@ H3_LIP_SYNC_LINE = (
     "only the person who is speaking at that moment moves their lips, everyone else keeps their lips closed and only "
     "listens; when the speaker changes, the moving mouth switches to the new speaker at once; lip sync starts at 0.0 s on "
     "the very first syllable: the first speaker's mouth is already open and forming that syllable in the very first frame, "
-    "with no silent closed-mouth lead-in, no pause and no delay before the lips move."
-)  # t158u: 声音一开始嘴就动  # t150u: 对口型要求（Strata 打磨也要原样保留）
+    "with no silent closed-mouth lead-in, no pause and no delay before the lips move; "
+    "every line is spoken exactly once, in the given order: no line or part of a line is repeated, restarted or "
+    "said again, and nobody starts a line over."
+)  # t219u: H3 会把第一句说两次  # t158u: 声音一开始嘴就动  # t150u: 对口型要求（Strata 打磨也要原样保留）
 
 
 _REMAP_WARNED: set = set()
@@ -4359,9 +4361,13 @@ def h3_on_camera_line(names: list) -> str:
 def h3_speech_pace_line(speed: float, seconds: float) -> str:
     """t151u: 不加音频时让模型说快一点（导入时按同一档放慢还原）。没有句号，Strata 原样保留。"""
     x = 1.0 / max(0.5, float(speed or 1.0))
+    if x < 1.08:  # t219u: 几乎原速时不说 fast，免得提前说完又重复补时间
+        return (f"Speech pace: everyone speaks at a natural, steady conversational speed (about {x:.2f} times normal) "
+                f"with short pauses, so that all the lines fit into the {round(float(seconds or 0)):d} seconds; "
+                "each line is said only once and the lip movements stay exactly in sync with the speech.")
     return (f"Speech pace: everyone speaks fast, about {x:.2f} times normal conversational speed, brisk and clear "
             f"with only very short pauses, so that all the lines fit into the {round(float(seconds or 0)):d} seconds; "
-            "the lip movements stay exactly in sync with this faster speech.")
+            "each line is said only once and the lip movements stay exactly in sync with this faster speech.")
 
 
 def _h3_dialogue_sentences(rows, turns, *, lang: str, audio_mode: str, notes: dict, timeline: list) -> list:
@@ -4400,7 +4406,9 @@ def _h3_dialogue_sentences(rows, turns, *, lang: str, audio_mode: str, notes: di
         else:
             lead = "".join(x + ", " for x in (when, quiet) if x)
         body = who_s
-        sent = f"{lead}{body}: <d>[{lang}] {text}</d>"
+        # t219u: 发送前会转简体(t210u)，标签写 Chinese，避免 [Traditional Chinese]+简体字不一致
+        tag = "Chinese" if "Chinese" in str(lang) else lang
+        sent = f"{lead}{body}: <d>[{tag}] {text}</d>"
         out.append(sent[0].upper() + sent[1:])  # 每句一个大写开头（不加句号：整段对话一起原样保留）
     return out
 
