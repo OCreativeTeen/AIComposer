@@ -221,19 +221,21 @@ def speaking_has_interactive_dialogue(speaking: str) -> bool:
     return any(not bool(getattr(t, "monologue", False)) for t in speaking_turns_nonempty(speaking))
 
 
-def scene_speaking_source(scene) -> str:
+def scene_speaking_source(scene, *, allow_story_content: bool = False) -> str:
     """Speaking text used for video speaker-mark semantics.
 
-    Prefer ``speaking``. If it is empty, fall back to ``story_content`` only when
-    that field itself contains ``<N>`` / ``<Ns>`` / legacy monologue marks
-    (the Story Act box stores its text in ``story_content``). Unmarked Story Act
-    prose is not treated as a speaking script.
+    Always prefer the scene's own ``speaking`` field. Empty speaking means no
+    speech for Story Speak (do not narrate visual or unmarked story_content).
+    Fall back to ``story_content`` only when ``allow_story_content`` is true
+    (Story Act box storage) AND that field itself contains speaker marks.
     """
     if not isinstance(scene, dict):
         return ""
     text = str(scene.get("speaking") or "").strip()
     if text:
         return text
+    if not allow_story_content:
+        return ""
     sc = str(scene.get("story_content") or "").strip()
     if sc and (SPEAKER_TOKEN_RE.search(sc) or speaking_has_monologue(sc)):
         return sc

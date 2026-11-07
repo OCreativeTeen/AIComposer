@@ -154,7 +154,7 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
             self.assertNotIn("mouth is already open and forming that syllable", text)
             self.assertNotIn("No narrator, no voice-over.", text)
         self.assertIn("no lip-sync", raw.lower())
-        self.assertIn("voice-over", raw.lower())
+        self.assertIn("off-mouth delivery", raw.lower())
         self.assertIn("Lip sync:", h3)
         self.assertIn("no lip sync", h3.lower())
         self.assertIn("On camera:", h3)
@@ -226,7 +226,7 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         )
         self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, inner)
         self.assertIn("do not speak on camera", inner.lower())
-        self.assertIn("inner voice", inner.lower())
+        self.assertIn("off-mouth delivery", inner.lower())
         self.assertNotIn("lip-synced to that person", inner)
 
     def test_final_guard_restores_identity_and_strips_conflicts(self):
@@ -283,8 +283,99 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         act = story_style_mode_text("story_act", True)
         self.assertIn("<N> 与 <Ns> 是同一个人", speak)
         self.assertIn("嘴巴闭合", speak)
-        self.assertIn("画外心声", act)
-        self.assertIn("不对口型", act)
+        self.assertIn("绝不能念出来", speak)
+        self.assertIn("讲话」原文", act)
+        self.assertIn("不念视觉描述", act)
+        self.assertIn("嘴巴不动", act)
+
+    def test_spoken_words_only_from_speaking_not_visual(self):
+        from config_prompt import (
+            SPOKEN_SOURCE_RULE, SILENT_VISUAL_PREFIX, SPOKEN_TRANSCRIPT_BEGIN,
+            restore_spoken_transcript, ensure_spoken_transcript_block,
+            build_video_flow_prompt, SINGLE_INNER_MONOLOGUE_RULE, H3_LIP_SYNC_LINE,
+        )
+        from utility.speaking_marks import scene_speaking_source
+
+        visual = '他低声说“窗外的夜色真安静”，然后坐回沙发。'
+        male_actor = "人物1: man/youth/chinese/阿明\n人物2: woman/youth/chinese/小美"
+        s1 = "<1s> 我想了很久。还是算了。\n也许明天会不一样。"
+        raw1 = self._flow(s1, extra={"visual": visual, "actor": male_actor, "story_content": "这段不该被念。"})
+        self.assertIn(SPOKEN_SOURCE_RULE, raw1)
+        self.assertIn(SPOKEN_TRANSCRIPT_BEGIN, raw1)
+        self.assertIn("我想了很久。还是算了。", raw1)
+        self.assertIn("也许明天会不一样。", raw1)
+        self.assertIn("silent picture direction", raw1.lower())
+        self.assertIn("MALE", raw1.upper())
+        self.assertIn("阿明", raw1)
+        self.assertNotIn("这段不该被念。", raw1.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0])
+        quoted = "窗外的夜色真安静"
+        transcript = raw1.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertNotIn(quoted, transcript)
+        self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, raw1)
+        self.assertNotIn("inner voice-over", raw1.lower())
+
+        s2 = "<1> 你回来了。<2> 我只是出去走走。"
+        raw2 = self._flow(s2, extra={"visual": visual, "actor": male_actor, "story_content": "邻场独白不该出现。"})
+        self.assertIn(SPOKEN_SOURCE_RULE, raw2)
+        self.assertNotIn(SINGLE_INNER_MONOLOGUE_RULE, raw2)
+        self.assertIn("你回来了。", raw2)
+        self.assertIn("我只是出去走走。", raw2)
+        self.assertNotIn("我想了很久。还是算了。", raw2)
+        self.assertIn("lip-synced to that person", raw2)
+        t2 = raw2.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertNotIn(quoted, t2)
+        self.assertNotIn("邻场独白不该出现。", t2)
+
+        h3_2 = self._h3(s2, extra={"visual": visual, "actor": male_actor})
+        self.assertIn(H3_LIP_SYNC_LINE, h3_2)
+        self.assertIn(SILENT_VISUAL_PREFIX, h3_2)
+        self.assertNotIn(SINGLE_INNER_MONOLOGUE_RULE, h3_2)
+
+        empty = self._flow("", extra={"visual": visual, "speaking": "", "story_content": "<1s> 不该当讲话。"})
+        self.assertTrue("speak nothing" in empty.lower() or "nobody speaks" in empty.lower())
+        et = empty.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertNotIn(quoted, et)
+        self.assertNotIn("<1s> 不该当讲话。", et)
+        self.assertEqual(scene_speaking_source({"speaking": "", "story_content": "<1s> 不该当讲话。"}), "")
+        self.assertIn(
+            "<1s> 不该当讲话。",
+            scene_speaking_source({"speaking": "", "story_content": "<1s> 不该当讲话。"}, allow_story_content=True),
+        )
+
+        original = ensure_spoken_transcript_block("raw visual: " + visual, [{"speaking": s2, "actor": male_actor, "visual": visual}])
+        malicious = (
+            "Narrator: " + visual + " The camera explains the living room. "
+            "Then they talk about something else entirely."
+        )
+        restored = restore_spoken_transcript(original, malicious)
+        self.assertIn(SPOKEN_TRANSCRIPT_BEGIN, restored)
+        self.assertIn("你回来了。", restored)
+        self.assertIn("我只是出去走走。", restored)
+        block = restored.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertNotIn("Then they talk about something else entirely.", block)
+
+    def test_guard_swaps_do_not_invent_picture_narration(self):
+        from config_prompt import (
+            SPEAKER_MARK_IDENTITY_RULE, SINGLE_INNER_MONOLOGUE_RULE,
+            H3_LIP_SYNC_LINE, H3_INNER_VO_NO_LIPSYNC_LINE,
+            ensure_speaker_semantics_rules, SPOKEN_SOURCE_RULE,
+        )
+        polished = (
+            "Some rewritten clip. " + H3_LIP_SYNC_LINE + " "
+            "On camera: 阿明 speaks on camera, visibly moving their lips with every word "
+            "(spoken dialogue, not a voice-over or inner monologue). "
+            "No narrator, no voice-over. their lips moving in sync with the voice track."
+        )
+        guarded = ensure_speaker_semantics_rules(
+            polished, has_speaking=True, has_monologue=True, single_inner=True,
+        )
+        self.assertIn(SPOKEN_SOURCE_RULE, guarded)
+        self.assertIn(SPEAKER_MARK_IDENTITY_RULE, guarded)
+        self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, guarded)
+        self.assertIn(H3_INNER_VO_NO_LIPSYNC_LINE, guarded)
+        self.assertNotIn(H3_LIP_SYNC_LINE, guarded)
+        self.assertNotIn("not a voice-over or inner monologue", guarded)
+
 
 
 if __name__ == "__main__":

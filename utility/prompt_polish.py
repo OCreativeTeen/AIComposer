@@ -20,7 +20,8 @@ Keep ALL hard facts:
 - The sentence "Clean film image: only the scene fills the frame." copied verbatim near the top AND again as the last line.
 - People's names exactly as written (do not romanize or translate names).
 - Speaker identity: <N> and <Ns> are the IDENTICAL actor N (any digits, e.g. <12>=<12s>); the letter s is a speech mode (self-talk / inner thought), not another person, portrait, costume, or voice. Copy any sentence starting "Speaker marks:" verbatim.
-- Self-talk / inner monologue: copy sentences starting "Self-talk (自言自语):" and "Entire-scene inner monologue:" verbatim. A scene with exactly one speaking turn marked <Ns> (count parser turns, not punctuation sentences or wrapped lines) is that same actor's audible inner voice / thinking heard as voice-over: mouth closed for the entire scene, no lip sync, not mute, no on-screen text, not another narrator. Do not rewrite this as visible speaking or claim that every line makes the lips move. Interactive <N> lines still have lip sync.
+- Spoken transcript: copy the block from BEGIN_SPOKEN_TRANSCRIPT through END_SPOKEN_TRANSCRIPT verbatim. Only those lines are spoken. Visual, caption, actor, reference, FYI and direction text are silent and must never be read, summarized, or turned into narration. Copy any sentence starting "Spoken words:" verbatim.
+- Self-talk: copy sentences starting "Self-talk (自言自语):" and "Entire-scene self-talk:" verbatim. A scene with exactly one speaking turn marked <Ns> is that same actor delivering the exact supplied speaking text off-mouth (lips closed, no lip sync), audible not mute — not narration of actions or setting, not another narrator. Interactive <N> lines still have lip sync.
 - Directions inside the scene: when something is turned, shown or handed to a person, name that person as the target and say it turns sideways toward them inside the scene, never toward the camera or viewer. People never address the camera.
 - Cast lock: keep the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. A change of pose or place is the same person moving there (for example "小偉 himself walks over and sits down on the chair"), never a second copy.
 Remove repetition, field names, meta explanations and instructions about how to read the prompt.
@@ -45,9 +46,9 @@ Rules:
 - Cast lock: copy the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. When the description really changes someone's pose or place (sits down, stands up, walks to...), write it as that same person moving there from where they are, never as a second copy; a person already sitting or standing in <Picture 1> simply stays there, so never invent a move. Do not describe the same move a second time in other words.
 - Copy every sentence that contains a <d> block exactly as given, together with the speaker description in front of it (for example "The young man 林浩 with a young male voice (voice Leo) (S2) says:"), including the bracketed description of each person, the times, the "while ... listens with closed lips" part and the "lip movement switches to ..." part. Rewrite only the sentences without <d>.
 - Lip sync and speaker mapping are the most important facts of this prompt. Copy the sentence starting "Speaker map:" and the sentence starting "Lip sync:" verbatim, with every bracketed person description. Never drop, shorten, swap or soften the lip-sync emphasis, who speaks, who stays silent with closed lips, the switch of the moving mouth when the speaker changes, or each speaker's seat/side (left/right) and clothing in the brackets. Every (S1)/(S2) id always means the same person as in the Speaker map; never move a speaker to the other person's seat or outfit.
-- Self-talk / 自言自语 / 自言自語 (t241/t250/t283): if the prompt contains the sentence starting "Self-talk (自言自语):" or "Entire-scene inner monologue:" or "Speaker marks:", copy each verbatim. Never drop them. <N> and <Ns> are the identical actor N (s is speech mode, not another person). Self-talk lines have NO lip sync (mouth closed); only interactive dialogue has lip sync. A single self-talk turn is that same actor's audible inner voice-over for the whole scene (mouth closed, not mute, not another narrator).
+- Self-talk / 自言自语 / 自言自語 (t241/t250/t283/t284): if the prompt contains the sentence starting "Self-talk (自言自语):" or "Entire-scene self-talk:" or "Speaker marks:" or "Spoken words:", copy each verbatim. Copy BEGIN_SPOKEN_TRANSCRIPT ... END_SPOKEN_TRANSCRIPT verbatim. Never drop them. <N> and <Ns> are the identical actor N (s is speech mode, not another person). Self-talk lines have NO lip sync (mouth closed) and are that actor's exact speaking text, not picture narration; only interactive dialogue has lip sync. Visual / "Silent picture direction" text is never spoken.
 - Actor-is-truth for positioning (t223): each speaker's left/right/seat comes ONLY from the Speaker map brackets (which come from the actor parenthesis). If "What happens while they talk" (or any action sentence) puts a named person on the opposite side or in the other person's seat, ignore that positioning — do not rewrite, swap, or merge seats from the action text; keep the Speaker map seats. You may keep story actions, gestures and props from the action text.
-- Copy the sentence starting "On camera:" verbatim. If that sentence describes inner monologue / closed mouth / the same actor's voice-over, keep that meaning: do not rewrite it as visible lip movement and do not add "never as a voice-over". If it describes interactive spoken dialogue, a person who speaks is seen speaking on camera with moving lips, never as a different narrator: never describe an interactive speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is interactive dialogue, write the actions as happening while they talk and add no silence or quiet wording.
+- Copy the sentence starting "On camera:" verbatim. If that sentence describes closed-mouth / off-mouth delivery of the exact speaking text, keep that meaning: do not rewrite it as visible lip movement and do not invent picture narration. If it describes interactive spoken dialogue, a person who speaks is seen speaking on camera with moving lips, never as a different narrator: never describe an interactive speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is interactive dialogue, write the actions as happening while they talk and add no silence or quiet wording.
 - Keep EVERY copy of this exact sentence verbatim (there are three): "NEVER add any subtitles, captions or on-screen text of the dialogue!" Do not drop, paraphrase, or merge them.
 Output only the final prompt: no preface, no notes, no markdown fences."""
 
@@ -138,7 +139,8 @@ def restore_direction_lines(original: str, polished: str) -> str:
 
 
 _H3_LOCKED = ("Speaker map: ", "Lip sync: ", "On camera: ", "Speech pace: ",
-              "Speaker marks: ", "Self-talk (自言自语): ", "Entire-scene inner monologue: ")  # t150u / t283u
+              "Speaker marks: ", "Self-talk (自言自语): ", "Entire-scene self-talk: ",
+              "Entire-scene inner monologue: ", "Spoken words: ")  # t150u / t283u / t284u
 
 
 def _locked_sentence(text: str, prefix: str):
@@ -297,15 +299,17 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         print(f"[Strata 精简] 禁字幕第一行恢复跳过：{_e}")
     out = restore_direction_lines(prompt, out)  # t181u
     out = restore_h3_locked_lines(prompt, out)  # t150u / t283u: locked speaker/lip-sync/identity sentences
-    from config_prompt import (  # t238u / t241u / t283u
+    from config_prompt import (  # t238u / t241u / t283u / t284u
         ensure_h3_no_subtitle_rules,
         ensure_h3_monologue_no_lipsync_rules,
         ensure_speaker_semantics_rules,
+        restore_spoken_transcript,
     )
 
+    out = restore_spoken_transcript(prompt, out)
     _has_mono = ("自言自语" in (prompt or "") or "自言自語" in (prompt or "") or "Self-talk" in (prompt or ""))
-    _single_inner = "Entire-scene inner monologue:" in (prompt or "")
-    _has_speaking = _has_mono or _single_inner or "Speaker marks:" in (prompt or "")
+    _single_inner = ("Entire-scene self-talk:" in (prompt or "") or "Entire-scene inner monologue:" in (prompt or ""))
+    _has_speaking = _has_mono or _single_inner or "Speaker marks:" in (prompt or "") or "BEGIN_SPOKEN_TRANSCRIPT" in (prompt or "")
     if str(backend or "").startswith("minimax"):
         out = restore_h3_dialogue(prompt, out)  # t172u: 对话部分一律用原文
         out = restore_h3_locked_lines(prompt, out)  # after dialogue restore
@@ -329,7 +333,7 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
     if str(backend or "").startswith("minimax"):
         out = ensure_h3_no_subtitle_rules(out)  # t238u: 最终再核对三遍
         _has_mono2 = ("自言自语" in (prompt or "") or "自言自語" in (prompt or "") or "Self-talk" in (prompt or ""))
-        _single_inner2 = "Entire-scene inner monologue:" in (prompt or "")
+        _single_inner2 = ("Entire-scene self-talk:" in (prompt or "") or "Entire-scene inner monologue:" in (prompt or ""))
         out = ensure_h3_monologue_no_lipsync_rules(out, has_monologue=_has_mono2)  # t241u
         out = ensure_speaker_semantics_rules(
             out, has_speaking=_has_speaking or _has_mono2, has_monologue=_has_mono2, single_inner=_single_inner2,
@@ -344,6 +348,7 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         out = ensure_video_no_subtitle_first_line(out)
     except Exception as _e:  # noqa: BLE001
         print(f"[Strata 精简] 最终禁字幕第一行确保跳过：{_e}")
+    out = restore_spoken_transcript(prompt, out)
     why = f"Strata 精简完成：{len(prompt)} → {len(out)} 字（{secs:.1f} 秒）"
     print(f"[Strata 精简] {why}")
     return out, why
@@ -358,7 +363,7 @@ You get: the speaker list (speaker id, name, actor description with an authorita
 Actor-is-truth for positioning (t223): the actor parenthesis for each speaker (clothing, hair, seat, left/right) is the ONLY source of who sits/stands where for that (S) id. Match the person in Picture 1 by that clothing and seat. IGNORE visual-text positioning entirely when an actor parenthesis exists — do not use, rewrite, or merge left/right/seat from the visual text into the description.
 For EVERY speaker id write one short English description (at most 35 words) with: clothing and colours, hair and face, facial expression, approximate position and pose in Picture 1 (left / right / centre, foreground / background, standing / sitting / lying, near what), and any distinctive feature. Keep the actor's seat (left/right) and clothing. You may merge expression, gesture and action from the visual description for THIS person (never their seat/side). Follow the actor parenthesis + the matching person in Picture 1.
 Use the portrait to recognise the person in Picture 1. If a person is not visible in Picture 1, describe them from the portrait and say they are not in view yet. Do not invent other people. Do not use the person's name or any brackets inside the description.
-<N> and <Ns> are the same person (s is speech mode, not another character). If the scene is an entire-scene inner monologue / self-talk, a natural thinking pose is allowed. For interactive spoken dialogue, describe the face as visible: never mention a hand on the chin or over the mouth, looking down, a bowed head, a turned-away or hidden face.
+<N> and <Ns> are the same person (s is speech mode, not another character). If the scene is an entire-scene self-talk turn, a natural thinking pose is allowed. Visual text is only for appearance, never spoken words. For interactive spoken dialogue, describe the face as visible: never mention a hand on the chin or over the mouth, looking down, a bowed head, a turned-away or hidden face.
 Return only JSON, for example: {"S1": "...", "S2": "..."}"""
 
 
