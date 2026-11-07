@@ -260,16 +260,15 @@ class PromptFlowsMixin:
         )
         aspect = config_prompt.output_aspect_line(_project_video_size())
         jobs = []
-        from utility.file_util import get_file_path
+        from utility.scene_image_slots import cover_extract_source
         for k, sc in enumerate(story, 1):
             body = config_prompt.build_step_image_clipbody(
                 k, visual_style=style, keep_style=True, caption="keywords", extract_only=True, fyi="",
             )
-            try:  # t206u: 和手动一样，用这一场自己的 clip_image（封面拷贝）
-                own = get_file_path(sc, "clip_image")
+            try:  # 优先用冻结的封面原图 zero_image_last，避免已改过的 clip 当输入
+                src = cover_extract_source(sc, cover)
             except Exception:  # noqa: BLE001
-                own = ""
-            src = own if own and os.path.isfile(own) else cover
+                src = cover if cover and os.path.isfile(cover) else ""
             if backend == "gemini":  # 同一个 Gemini 对话：比例行由批量那边放
                 jobs.append((sc, body, [src], {"aspect": aspect, "actors": [], "base": src}))
             else:

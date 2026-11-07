@@ -368,6 +368,11 @@ class ImagesMixin:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return
+        from utility.scene_image_slots import is_frozen_zero_last_write
+
+        if is_frozen_zero_last_write(scene, image_type):
+            messagebox.showinfo("放入", "Zero 结束图是创建时的封面原图，不再从视频抽帧覆盖。", parent=self.root)
+            return
         is_last = str(image_type).endswith("_last")
         track = str(image_type).split("_")[0]
         video_path = scene.get(track) or ""
@@ -405,6 +410,11 @@ class ImagesMixin:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return
+        from utility.scene_image_slots import is_frozen_zero_last_write
+
+        if is_frozen_zero_last_write(scene, image_type):
+            messagebox.showinfo("放入", "Zero 结束图是创建时的封面原图，不能换成旁边那场的图。", parent=self.root)
+            return
         is_last = str(image_type).endswith("_last")
         base = image_type[: -len("_last")] if is_last else image_type
         if is_last:
@@ -439,6 +449,8 @@ class ImagesMixin:
             return
         if not img_paths:
             return
+        from utility.scene_image_slots import is_frozen_zero_last_write
+
         is_last = str(image_type).endswith("_last")
         if is_last:
             start_key = image_type[: -len("_last")]
@@ -446,6 +458,9 @@ class ImagesMixin:
         else:
             start_key = image_type
             last_key = image_type + "_last"
+        if is_frozen_zero_last_write(scene, last_key):
+            messagebox.showinfo("放入", "Zero 结束图是创建时的封面原图，不能挪走或覆盖。", parent=self.root)
+            return
         file_path = self.workflow.ffmpeg_processor.resize_image_smart(img_paths[0])
         if not file_path or not os.path.isfile(file_path):
             messagebox.showerror("放入", "新图没有处理好。", parent=self.root)
@@ -545,6 +560,11 @@ class ImagesMixin:
         name = self._preview_track_title(first_type)
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not isinstance(scene, dict):
+            return
+        from utility.scene_image_slots import is_frozen_zero_last_write
+
+        if is_frozen_zero_last_write(scene, last_type):
+            show_auto_close_popup(self.root, "对调", "Zero 结束图是创建时的封面原图，不能和对调起始图对换。", duration_ms=2200)
             return
         first = scene.get(first_type) or ""
         last = scene.get(last_type) or ""
@@ -982,6 +1002,8 @@ class ImagesMixin:
             messagebox.showerror("错误", "文件不存在", parent=self.root)
             return
 
+        from utility.scene_image_slots import is_frozen_zero_last_write
+
         selected_scens = [self.workflow.get_scene_by_index(self.current_scene_index)]
         if not image_type.startswith('clip'):
             dialog = messagebox.askyesno("确认替换", f"确定要替换所有当前故事的 {image_type} 吗？")
@@ -990,7 +1012,15 @@ class ImagesMixin:
                     self.workflow.get_scene_by_index(self.current_scene_index)
                 )
 
-        for scene in selected_scens:
+        writable = [s for s in selected_scens if isinstance(s, dict) and not is_frozen_zero_last_write(s, image_type)]
+        skipped = len(selected_scens) - len(writable)
+        if not writable:
+            messagebox.showinfo("放入", "Zero 结束图是创建时的封面原图，不能拖放或粘贴覆盖。", parent=self.root)
+            return
+        if skipped:
+            print(f"🧊 跳过 {skipped} 场已冻结的 zero_image_last")
+
+        for scene in writable:
             refresh_scene_media(scene, image_type, ".webp", file_path, True)
             self._pool_clip_slot_image(scene, image_type, file_path)
 
@@ -1020,6 +1050,11 @@ class ImagesMixin:
             
             image_path = current_scene.get(image_type)
             if not image_path or not os.path.exists(image_path):
+                from utility.scene_image_slots import is_frozen_zero_last_write
+
+                # Frozen original cover: never invent a replacement from the zero video.
+                if is_frozen_zero_last_write(current_scene, image_type):
+                    return
                 # take the first part string from image_type
                 video_type = image_type.split("_")[0]
                 video_path = current_scene.get(video_type)
@@ -1095,7 +1130,9 @@ class ImagesMixin:
             print(f"❌ 加载图片预览失败: {e}")
 
     def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False) -> None:
-        """图片修改返回了一张图：写成这一场（默认当前场景）的 clip_image；是当前场景时刷新预览。"""
+        """图片修改返回了一张图：独立写成这一场的 clip_image、clip_image_last 和 zero_image。
+
+        冻结的 zero_image_last（封面原图）不动。是当前场景时刷新预览。"""
         import tempfile
 
         if pil_img is None or not hasattr(pil_img, "save"):
@@ -1129,19 +1166,37 @@ class ImagesMixin:
                 raise RuntimeError("返回的图没有写成文件")
             messagebox.showerror("图片修改", "返回的图没有写成文件。", parent=self.root)
             return
-        refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
-        self._pool_clip_slot_image(scene, "clip_image", file_path)
-        self.workflow.save_scenes_to_json()
-        if scene is not current:
-            print(f"✅ 图片修改已更新另一场 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
+        from utility.scene_image_slots import write_edited_scene_images
+
+        try:
+            written = write_edited_scene_images(scene, file_path)
+        except Exception as exc:
+            if scene is not current:
+                raise
+            messagebox.showerror("图片修改", f"返回的图没有写入场景图：{exc}", parent=self.root)
             return
-        self.display_image_on_canvas_for_track("clip_image")
+        if not written:
+            if scene is not current:
+                raise RuntimeError("返回的图没有写入场景图")
+            messagebox.showerror("图片修改", "返回的图没有写入场景图。", parent=self.root)
+            return
+        for slot in ("clip_image", "clip_image_last"):
+            if slot in written:
+                self._pool_clip_slot_image(scene, slot, written[slot])
+        self.workflow.save_scenes_to_json()
+        names = "、".join(os.path.basename(written[s]) for s in ("clip_image", "clip_image_last", "zero_image") if s in written)
+        if scene is not current:
+            print(f"✅ 图片修改已更新另一场 clip/zero 图: {names}")
+            return
+        for slot in ("clip_image", "clip_image_last", "zero_image"):
+            if slot in written:
+                self.display_image_on_canvas_for_track(slot)
         if defer_video:
             # 批量：静态 clip 视频等整批做完再一起重做（_run_still_clip_videos 同时只能跑一个）。
-            print(f"✅ 图片修改已更新 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
+            print(f"✅ 图片修改已更新 clip_image / clip_image_last / zero_image: {names}")
             return
-        print(f"✅ 图片修改已更新 clip_image: {os.path.basename(scene.get('clip_image') or file_path)}")
-        self._after_clip_image_changed(scene, "图片修改返回的图已换成这一场的 clip 图片，并加进了本集图片库。")
+        print(f"✅ 图片修改已更新 clip_image / clip_image_last / zero_image: {names}")
+        self._after_clip_image_changed(scene, "图片修改返回的图已写成这一场的起始图、结束图和 Zero 起始图，并加进了本集图片库。")
 
     def _frame_or_fallback(self, video_path: str, first: bool):
         img = self.workflow.ffmpeg_processor.extract_frame(video_path, first)

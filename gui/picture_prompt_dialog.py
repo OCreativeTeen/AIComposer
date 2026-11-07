@@ -42,7 +42,9 @@ def _clean_choice(saved) -> dict:
             choice[key] = bool(saved[key])
     if saved.get("actor_override") in {label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES}:
         choice["actor_override"] = saved["actor_override"]
-    if saved.get("image") in ("clip_image", "clip_image_last"):
+    from utility.scene_image_slots import IMAGE_CHOICE_KEYS
+
+    if saved.get("image") in IMAGE_CHOICE_KEYS:
         choice["image"] = saved["image"]
     choice["fyi_history"] = clean_fyi_history(saved)
     choice["background"] = bool(saved.get("background", True))

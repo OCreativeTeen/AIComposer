@@ -627,14 +627,15 @@ def open_video_prompt_dialog(
         images = []
         missing = []
         if get_image is not None:
-            # 多画面（起始 + 终止）照旧两张都给；单画面用上面选中的那张。
-            start = get_image("clip_image" if frames == "two" else chosen_image()) or ""
+            from utility.scene_image_slots import resolve_video_prompt_images
+
+            # 多画面（起始 + 终止）仍用 clip_image + clip_image_last；单画面用选择器（含 Zero 两张）。
+            start, end = resolve_video_prompt_images(frames, chosen_image(), get_image)
             if start:
                 images.append(start)
             else:
                 missing.append("起始画面")
             if frames == "two":
-                end = get_image("clip_image_last") or ""
                 if end:
                     images.append(end)
                 else:

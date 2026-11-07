@@ -397,6 +397,12 @@ class MediaScanner:
 
 
     def last_image_replacement(self, current_scene, video_path, media_type):
+        # 视频生成/导入只更新 clip 图槽；zero 视频不得改写 zero_image / zero_image_last。
+        from utility.scene_image_slots import video_import_updates_image_slots
+
+        if not video_import_updates_image_slots(media_type):
+            print("🧊 导入或生成 zero 视频时不改写 zero 图片（封面原图 zero_image_last 保持冻结）")
+            return
         last_image = self.workflow.ffmpeg_processor.extract_frame(video_path, False)
 
         if last_image is None:

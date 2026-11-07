@@ -1110,7 +1110,7 @@ class MagicWorkflow(EpisodeOpsMixin):
                 self._share_one_media(scenes, "zero_image", ".webp", first)
             if last_frame and os.path.isfile(last_frame):
                 self._share_one_media(scenes, "zero_image_last", ".webp", last_frame)
-            print(f"ZERO: shared video+audio+frames on {len(scenes)} scenes (one file each, no copies)")
+            print(f"ZERO: shared video+audio+frames on {len(scenes)} scenes (cover-origin stills kept)")
             return
 
         if ext not in audio_ext:
@@ -1136,25 +1136,29 @@ class MagicWorkflow(EpisodeOpsMixin):
             return
         self._share_one_media(scenes, "zero_audio", ".wav", wav)
         self._share_one_media(scenes, "zero", ".mp4", video)
-        # zero 的图既是开头图，也是结尾图，所有场景共用同一张。
+        # 无封面冻结时：zero 的图既是开头图，也是结尾图，所有场景共用同一张。
+        # 有封面冻结的场：保留各自独立的 zero_image / zero_image_last。
         self._share_one_media(scenes, "zero_image", ".webp", image)
         self._share_one_media(scenes, "zero_image_last", ".webp", image)
-        print(f"ZERO: shared image+audio on {len(scenes)} scenes (one file each, no copies)")
+        print(f"ZERO: shared image+audio on {len(scenes)} scenes (cover-origin stills kept)")
 
     @staticmethod
     def _share_one_media(scenes, slot, ext, source) -> str:
-        """整集共用的背景只存一份。第一场放进项目，其余场景直接指向同一个文件，不再各拷一份。"""
-        owner = None
-        for scene in scenes:
-            if isinstance(scene, dict):
-                owner = scene
-                break
+        """整集共用的背景只存一份。第一场放进项目，其余场景直接指向同一个文件，不再各拷一份。
+
+        Cover-origin scenes keep their own zero_image / zero_image_last (independent
+        cover copies); those slots are not shared onto them.
+        """
+        from utility.scene_image_slots import should_skip_shared_zero_image
+
+        writable = [s for s in scenes if isinstance(s, dict) and not should_skip_shared_zero_image(s, slot)]
+        owner = writable[0] if writable else None
         if owner is None:
             return ""
         refresh_scene_media(owner, slot, ext, source, True)
         path = owner.get(slot) or ""
-        for scene in scenes:
-            if isinstance(scene, dict) and scene is not owner:
+        for scene in writable:
+            if scene is not owner:
                 scene[slot] = path
         return path
 
@@ -1834,12 +1838,18 @@ class MagicWorkflow(EpisodeOpsMixin):
         """新场景另存本场各槽位的图，并在本集文件夹里另占一页 webp。别的场景页码不动。"""
         if not isinstance(source, dict) or not isinstance(dup, dict):
             return
+        from utility.scene_image_slots import COVER_ORIGIN_KEY, mark_cover_origin, scene_has_frozen_zero_last
+
+        restore_cover_origin = scene_has_frozen_zero_last(source) or scene_has_frozen_zero_last(dup)
+        dup.pop(COVER_ORIGIN_KEY, None)
         for key in self._SCENE_PICTURE_KEYS:
             path = source.get(key)
             if not isinstance(path, str) or not path or not os.path.isfile(path):
                 continue
             ext = os.path.splitext(path)[1] or ".webp"
             refresh_scene_media(dup, key, ext, path, True)
+        if restore_cover_origin:
+            mark_cover_origin(dup)
         self._attach_new_episode_page(source, dup)
 
     _INSERTED_MEDIA_KEYS = (
@@ -1883,6 +1893,13 @@ class MagicWorkflow(EpisodeOpsMixin):
         """
         if not isinstance(dup, dict) or not isinstance(current, dict):
             return
+        from utility.scene_image_slots import COVER_ORIGIN_KEY, mark_cover_origin, scene_has_frozen_zero_last
+
+        # Bridge last frames come from a neighbor, not the frozen original cover.
+        restore_cover_origin = (not bridge) and (
+            scene_has_frozen_zero_last(current) or scene_has_frozen_zero_last(dup)
+        )
+        dup.pop(COVER_ORIGIN_KEY, None)
         for key, ext in self._INSERTED_MEDIA_KEYS:
             self._copy_media_slot(dup, key, self._existing_media_path(current, key), ext)
         tracks = ("clip", "narration", "zero")
@@ -1890,6 +1907,8 @@ class MagicWorkflow(EpisodeOpsMixin):
             for key in self._SCENE_PICTURE_KEYS:
                 self._copy_media_slot(dup, key, self._existing_media_path(current, key), ".webp")
             self._attach_new_episode_page(current, dup)
+            if restore_cover_origin:
+                mark_cover_origin(dup)
             return
         for track in tracks:
             start_key = f"{track}_image"
@@ -2220,12 +2239,22 @@ class MagicWorkflow(EpisodeOpsMixin):
 
     @staticmethod
     def _has_own_clip_image(scene: dict) -> bool:
-        """场景有"自己的"首图：不是 add_story_scene 随机填进去的那张频道图（zero_image 的拷贝）。"""
+        """场景有"自己的"首图：不是 add_story_scene 随机填进去的那张频道图（zero_image 的拷贝）。
+
+        Cover-origin scenes keep clip_image and zero_image in sync (both receive
+        edits, and both start as copies of the cover), so a byte-compare would
+        look like the old template copy and allow another seed to overwrite
+        user edits. If the freeze marker is set and clip_image exists, it is own.
+        """
         import filecmp
+
+        from utility.scene_image_slots import scene_has_frozen_zero_last
 
         clip = get_file_path(scene, "clip_image")
         if not clip:
             return False
+        if scene_has_frozen_zero_last(scene):
+            return True
         zero = get_file_path(scene, "zero_image")
         try:
             if zero and filecmp.cmp(clip, zero, shallow=False):
@@ -2250,7 +2279,7 @@ class MagicWorkflow(EpisodeOpsMixin):
         frm = tk.Frame(win, padx=12, pady=10)
         frm.pack(fill=tk.BOTH, expand=True)
         covers_ok = n_scenes <= 4
-        tip = f"共 {n_scenes} 场。点一张封面：拷进每一场的首图 / 尾图（已有首图的场不动）。"
+        tip = f"共 {n_scenes} 场。点一张封面：拷进每一场的 Clip/Zero 起始图与结束图（Zero 结束图之后不再改；已有自己首图的场不动）。"
         if not covers_ok:
             tip = f"共 {n_scenes} 场，超过 4 场，封面不能用；可以用 PDF 分页。"
         tk.Label(frm, text=tip, justify=tk.LEFT, wraplength=640).pack(anchor=tk.W, pady=(0, 8))
@@ -2306,26 +2335,25 @@ class MagicWorkflow(EpisodeOpsMixin):
         return result[0]
 
     def _seed_scenes_from_cover(self, pc: dict) -> bool:
-        """1-6 场 + 有封面：封面拷进每一场的 clip_image 和 clip_image_last（已有 clip_image 的场不动）。
+        """1-6 场 + 有封面：封面独立拷进每一场的 clip_image、clip_image_last、zero_image、
+        zero_image_last（四份真实文件，内容相同）。已有自己首图的场不动。
+        成功后打上 cover_origin=cover，此后 zero_image_last 视为封面原图、不再改写。
         t172u: 拷进去以后记下 cover_seeded_path，魔法工作流窗口起来后自动从封面逐场提取第 N 步。"""
+        from utility.scene_image_slots import seed_scene_images_from_cover
+
         cover = self._seed_cover_path(pc)
         if not cover or not (1 <= len(self.scenes) <= 6):
             return False
-        ext = os.path.splitext(cover)[1].lower() or ".webp"
-        if ext not in (".webp", ".png", ".jpg", ".jpeg"):
-            ext = ".webp"
         done = 0
         for scene in self.scenes:
             if not isinstance(scene, dict) or self._has_own_clip_image(scene):
                 continue
             try:
-                refresh_scene_media(scene, "clip_image", ext, cover, make_replacement_copy=True)
-                if not get_file_path(scene, "clip_image_last"):
-                    refresh_scene_media(scene, "clip_image_last", ext, cover, make_replacement_copy=True)
+                seed_scene_images_from_cover(scene, cover)
                 done += 1
             except Exception as e:  # noqa: BLE001
-                print(f"⚠️ 封面写入场景 clip_image 失败: {e}")
-        print(f"✅ 封面 {os.path.basename(cover)} 已拷进 {done}/{len(self.scenes)} 场的 clip_image / clip_image_last")
+                print(f"⚠️ 封面写入场景四槽失败: {e}")
+        print(f"✅ 封面 {os.path.basename(cover)} 已独立拷进 {done}/{len(self.scenes)} 场的 clip/zero 起始图与结束图")
         if done:
             self.cover_seeded_path = cover
         return True
@@ -2595,9 +2623,11 @@ class MagicWorkflow(EpisodeOpsMixin):
             self.write_scene_page_png(current_scene, image_path)
 
         current_scene[target_field + "_split"] = vertical_line_position
-        clip_image_last = get_file_path(current_scene, target_field + "_last")
-        if not clip_image_last:
-            current_scene[target_field + "_last"] = image_path
+        from utility.scene_image_slots import is_frozen_zero_last_write
+        last_field = target_field + "_last"
+        clip_image_last = get_file_path(current_scene, last_field)
+        if not clip_image_last and not is_frozen_zero_last_write(current_scene, last_field):
+            current_scene[last_field] = image_path
 
         #self.ask_replace_scene_info_from_image(current_scene, image_path)
         self.save_scenes_to_json()
@@ -3126,6 +3156,9 @@ class MagicWorkflow(EpisodeOpsMixin):
         src_zero_image_last = get_file_path(story, "zero_image_last") if isinstance(story, dict) else ""
 
         story = story.copy()
+        from utility.scene_image_slots import COVER_ORIGIN_KEY, mark_cover_origin, scene_has_frozen_zero_last
+        restore_cover_origin = scene_has_frozen_zero_last(story)
+        story.pop(COVER_ORIGIN_KEY, None)
         story.pop("narrator", None)
         story["id"] = next_root_id
         story.pop("environment", None)
@@ -3159,6 +3192,8 @@ class MagicWorkflow(EpisodeOpsMixin):
             refresh_scene_media(story, "zero_image", ".webp", src_zero_image, True)
         if src_zero_image_last and os.path.isfile(src_zero_image_last):
             refresh_scene_media(story, "zero_image_last", ".webp", src_zero_image_last, True)
+        if restore_cover_origin:
+            mark_cover_origin(story)
 
 
         if not self.scenes:
@@ -3204,5 +3239,6 @@ class MagicWorkflow(EpisodeOpsMixin):
             refresh_scene_media(story, "clip", ".mp4", zero, True)
             refresh_scene_media(story, "clip_audio", ".wav", zero_audio, True)
             refresh_scene_media(story, "clip_image", ".webp", zero_image, True)
+            # zero_image_last is not rewritten here; cover-origin scenes keep the frozen original.
 
         self.save_scenes_to_json()

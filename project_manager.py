@@ -1844,18 +1844,33 @@ def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, full_expor
 media_count = 0
 pid = None
 
-def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
+def allocate_scene_media_path(scene, media_type, media_postfix) -> str:
+    """Return a new unused path under the project media dir; does not touch the scene dict."""
     global media_count, pid, PROJECT_CONFIG
     scene_id = scene.get("id", int(datetime.now().timestamp() * 1000) + media_count)
     new_media_stem = media_type + "_" + str(scene_id) + "_" + str(int(datetime.now().timestamp()*100 + media_count%100))
     media_count = (media_count + 1) % 100
-
-    old_media_path = scene.get(media_type, None)
     if pid is None and PROJECT_CONFIG:
         pid = PROJECT_CONFIG.get('pid')
     if not pid:
         raise ValueError("无法获取项目ID，请先选择项目")
-    scene[media_type] = config.get_media_path(pid) + "/" + new_media_stem + media_postfix
+    return config.get_media_path(pid) + "/" + new_media_stem + media_postfix
+
+
+def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
+    """Copy replacement into a new per-slot file and point scene[media_type] at it.
+
+    Frozen cover original (zero_image_last on cover-origin scenes) is left unchanged.
+    """
+    from utility.scene_image_slots import is_frozen_zero_last_write
+
+    if is_frozen_zero_last_write(scene, media_type):
+        old_media_path = scene.get(media_type, None)
+        print("🧊 zero_image_last 已冻结（创建时的封面原图），跳过写入")
+        return old_media_path, old_media_path
+
+    old_media_path = scene.get(media_type, None)
+    scene[media_type] = allocate_scene_media_path(scene, media_type, media_postfix)
 
     if replacement:
         safe_copy_overwrite(replacement, scene[media_type])
