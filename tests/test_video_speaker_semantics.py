@@ -447,6 +447,107 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         self.assertIn("才寫了三行，怎麼就像跑完一場馬拉松。", block)
         self.assertNotIn("or legacy", restored.lower())
 
+    def test_two_cast_single_inner_only_marked_actor_speaks(self):
+        from config_prompt import (
+            AUDIBLE_FROM_SPEAKING_RULE, SINGLE_INNER_ONE_VOICE_RULE, SPEAK_LINE_ONCE_RULE,
+            SINGLE_INNER_MONOLOGUE_RULE, H3_ALTERNATING_SPEAKERS_CLAUSE,
+            H3_SINGLE_INNER_SILENT_CAST_CLAUSE, H3_LIP_SYNC_LINE, H3_MIXED_LIP_SYNC_LINE,
+            ensure_speaker_semantics_rules, SPEAKER_MARK_IDENTITY_RULE,
+        )
+
+        two = "人物1: man/mature/chinese/阿哲\n人物2: woman/mature/chinese/小雨"
+        line = "才寫了三行，怎麼就像跑完一場馬拉松。"
+        s1 = f"<1s> {line}"
+        raw1 = self._flow(s1, actor=two)
+        h31 = self._h3(s1, actor=two)
+        mm1 = self._mm(s1)
+        for text in (raw1, h31, mm1):
+            self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, text)
+            self.assertIn(AUDIBLE_FROM_SPEAKING_RULE, text)
+            self.assertIn(SINGLE_INNER_ONE_VOICE_RULE, text)
+            self.assertIn(SPEAK_LINE_ONCE_RULE, text)
+            self.assertIn(SPEAKER_MARK_IDENTITY_RULE, text)
+            self.assertNotIn(H3_ALTERNATING_SPEAKERS_CLAUSE, text)
+            self.assertNotIn("legacy", text.lower())
+        self.assertIn(H3_SINGLE_INNER_SILENT_CAST_CLAUSE, h31)
+        self.assertIn("exactly 1 audible voice (S1)", h31)
+        self.assertIn("(S2) has no speaking turn", h31)
+        self.assertIn("小雨", h31)
+        self.assertIn("阿哲", h31)
+        d_at = h31.find("<d>")
+        self.assertGreater(d_at, 0)
+        sent_start = max(h31.rfind(".", 0, d_at), h31.rfind("!", 0, d_at)) + 1
+        pre_d = h31[sent_start:d_at]
+        self.assertIn("阿哲", pre_d)
+        self.assertNotIn("小雨", pre_d)
+        after_d = h31[d_at:]
+        self.assertIn("小雨", after_d.split("overall_soundscape", 1)[0])
+        self.assertIn("never speaks, repeats, or echoes this line", after_d)
+        self.assertIn("MALE", raw1.upper())
+        self.assertIn(line, raw1)
+        self.assertEqual(raw1.split("BEGIN_SPOKEN_TRANSCRIPT", 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0].count(line), 1)
+
+        s2 = f"<2s> {line}"
+        raw2 = self._flow(s2, actor=two)
+        h32 = self._h3(s2, actor=two)
+        for text in (raw2, h32):
+            self.assertIn(SINGLE_INNER_ONE_VOICE_RULE, text)
+            self.assertIn(AUDIBLE_FROM_SPEAKING_RULE, text)
+            self.assertNotIn(H3_ALTERNATING_SPEAKERS_CLAUSE, text)
+        self.assertIn("exactly 1 audible voice (S2)", h32)
+        self.assertIn("(S1) has no speaking turn", h32)
+        d_at2 = h32.find("<d>")
+        sent_start2 = max(h32.rfind(".", 0, d_at2), h32.rfind("!", 0, d_at2)) + 1
+        pre2 = h32[sent_start2:d_at2]
+        self.assertIn("小雨", pre2)
+        self.assertNotIn("阿哲", pre2)
+        self.assertIn("FEMALE", raw2.upper())
+
+        twelve_actor = "\n".join(
+            [f"人物1: man/mature/chinese/阿哲", "人物2: woman/mature/chinese/小雨"]
+            + [f"人物{i}: woman/youth/chinese/配角{i}" for i in range(3, 13)]
+        )
+        s12 = "<12s> 我想了很久。还是算了。"
+        h312 = self._h3(s12, actor=twelve_actor)
+        raw12 = self._flow(s12, actor=twelve_actor)
+        self.assertIn("<12>=<12s>", raw12)
+        self.assertIn("exactly 1 audible voice (S12)", h312)
+        self.assertIn(SINGLE_INNER_ONE_VOICE_RULE, h312)
+
+        normal = "<1> 你好。<2> 今天怎么样？"
+        raw_n = self._flow(normal, actor=two)
+        h3_n = self._h3(normal, actor=two)
+        self.assertNotIn(SINGLE_INNER_ONE_VOICE_RULE, raw_n)
+        self.assertNotIn(SINGLE_INNER_ONE_VOICE_RULE, h3_n)
+        self.assertIn(H3_ALTERNATING_SPEAKERS_CLAUSE, h3_n)
+        self.assertIn(AUDIBLE_FROM_SPEAKING_RULE, raw_n)
+        self.assertIn("lip-synced to that person", raw_n)
+        self.assertNotIn("(S2) has no speaking turn", h3_n)
+
+        mixed = "<1s> 我有点累。<2> 那你先休息。"
+        raw_m = self._flow(mixed, actor=two)
+        h3_m = self._h3(mixed, actor=two)
+        self.assertNotIn(SINGLE_INNER_ONE_VOICE_RULE, raw_m)
+        self.assertNotIn(SINGLE_INNER_ONE_VOICE_RULE, h3_m)
+        self.assertIn(H3_MIXED_LIP_SYNC_LINE, h3_m)
+        self.assertIn(H3_ALTERNATING_SPEAKERS_CLAUSE, h3_m)
+        self.assertNotIn(H3_LIP_SYNC_LINE, h3_m)
+
+        polished = (
+            "Strata rewrite. " + H3_ALTERNATING_SPEAKERS_CLAUSE + " "
+            "First the woman says the line, then the man repeats it as an echo. "
+            + H3_LIP_SYNC_LINE
+        )
+        guarded = ensure_speaker_semantics_rules(
+            polished, has_speaking=True, has_monologue=True, single_inner=True,
+        )
+        self.assertNotIn(H3_ALTERNATING_SPEAKERS_CLAUSE, guarded)
+        self.assertIn(H3_SINGLE_INNER_SILENT_CAST_CLAUSE, guarded)
+        self.assertIn(AUDIBLE_FROM_SPEAKING_RULE, guarded)
+        self.assertIn(SINGLE_INNER_ONE_VOICE_RULE, guarded)
+        self.assertIn(SPEAK_LINE_ONCE_RULE, guarded)
+        self.assertNotIn(H3_LIP_SYNC_LINE, guarded)
+
 
 if __name__ == "__main__":
     unittest.main()
