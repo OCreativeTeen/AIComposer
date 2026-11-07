@@ -162,16 +162,20 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         self.assertIn("Speaker map:", h3)
         self.assertNotIn("only that person's mouth moves", h3)
 
-    def test_legacy_chinese_parenthetical_is_single_inner(self):
-        from utility.speaking_marks import speaking_is_single_inner_monologue
+    def test_legacy_chinese_parenthetical_is_not_selftalk(self):
+        from utility.speaking_marks import speaking_is_single_inner_monologue, speaking_has_monologue, split_speaking_pair
         from config_prompt import SINGLE_INNER_MONOLOGUE_RULE
 
         speaking = "<2>（自言自语）我怎么又这样。"
-        self.assertTrue(speaking_is_single_inner_monologue(speaking))
+        self.assertFalse(speaking_is_single_inner_monologue(speaking))
+        self.assertFalse(speaking_has_monologue(speaking))
+        self.assertIsNone(split_speaking_pair(speaking))
         raw = self._flow(speaking)
         h3 = self._h3(speaking)
-        self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, raw)
-        self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, h3)
+        self.assertNotIn(SINGLE_INNER_MONOLOGUE_RULE, raw)
+        self.assertNotIn(SINGLE_INNER_MONOLOGUE_RULE, h3)
+        self.assertNotIn("legacy", raw.lower())
+        self.assertNotIn("legacy", h3.lower())
 
     def test_normal_story_speak_still_lip_syncs(self):
         from config_prompt import SINGLE_INNER_MONOLOGUE_RULE, H3_LIP_SYNC_LINE, SPEAKER_MARK_IDENTITY_RULE
@@ -376,6 +380,72 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         self.assertNotIn(H3_LIP_SYNC_LINE, guarded)
         self.assertNotIn("not a voice-over or inner monologue", guarded)
 
+
+    def test_generated_prompts_have_no_legacy_syntax(self):
+        from config_prompt import (
+            SPEAKER_MARK_IDENTITY_RULE, SINGLE_INNER_MONOLOGUE_RULE,
+            H3_MONOLOGUE_NO_LIPSYNC_RULE, SPOKEN_TRANSCRIPT_BEGIN,
+            ensure_speaker_semantics_rules, ensure_h3_monologue_no_lipsync_rules,
+            restore_spoken_transcript, ensure_spoken_transcript_block,
+        )
+        from utility.prompt_polish import restore_h3_locked_lines, _SYS_GENERAL, _SYS_H3
+
+        speaking = "<1s> 才寫了三行，怎麼就像跑完一場馬拉松。"
+        raw = self._flow(speaking)
+        h3 = self._h3(speaking)
+        mm = self._mm(speaking)
+        for text in (raw, h3, mm):
+            self.assertNotIn("legacy", text.lower())
+            self.assertNotIn("（自言自语）", text)
+            self.assertNotIn("（自言自語）", text)
+            self.assertNotIn("[自言自语]", text)
+            self.assertNotIn("Self-talk (自言自语)", text)
+            self.assertNotIn("count parser turns", text.lower())
+        for rule in (SPEAKER_MARK_IDENTITY_RULE, SINGLE_INNER_MONOLOGUE_RULE, H3_MONOLOGUE_NO_LIPSYNC_RULE):
+            self.assertNotIn("legacy", rule.lower())
+            self.assertNotIn("（自言自语）", rule)
+            self.assertNotIn("（自言自語）", rule)
+        for sys_txt in (_SYS_GENERAL, _SYS_H3):
+            self.assertNotIn("legacy", sys_txt.lower())
+            self.assertNotIn("（自言自语）", sys_txt)
+            self.assertNotIn("Self-talk (自言自语)", sys_txt)
+
+        transcript = raw.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertIn("才寫了三行，怎麼就像跑完一場馬拉松。", transcript)
+        self.assertNotIn("[自言自语]", transcript)
+        self.assertNotIn("（自言自语）", transcript)
+
+        h3_t = h3.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertIn("才寫了三行，怎麼就像跑完一場馬拉松。", h3_t)
+        self.assertNotIn("[自言自语]", h3_t)
+
+        guarded = ensure_speaker_semantics_rules(
+            "Some rewritten clip.", has_speaking=True, has_monologue=True, single_inner=True,
+        )
+        guarded = ensure_h3_monologue_no_lipsync_rules(guarded, has_monologue=True)
+        self.assertNotIn("legacy", guarded.lower())
+        self.assertNotIn("（自言自语）", guarded)
+        self.assertNotIn("（自言自語）", guarded)
+        self.assertNotIn("[自言自语]", guarded)
+        self.assertIn(H3_MONOLOGUE_NO_LIPSYNC_RULE, guarded)
+        self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, guarded)
+
+        original = ensure_spoken_transcript_block(h3, [_scene(speaking)])
+        malicious = (
+            "Strata rewrite without locked self-talk rules. "
+            "Speaker marks: <N> and <Ns> (and legacy <N>（自言自语） / <N>（自言自語）) refer to people. "
+            "BEGIN_SPOKEN_TRANSCRIPT\nsomeone says aloud: WRONG TEXT [自言自语]\nEND_SPOKEN_TRANSCRIPT"
+        )
+        restored = restore_h3_locked_lines(original, malicious)
+        restored = restore_spoken_transcript(original, restored)
+        self.assertNotIn("legacy", restored.lower())
+        self.assertNotIn("[自言自语]", restored.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0])
+        self.assertIn(SPEAKER_MARK_IDENTITY_RULE, restored)
+        self.assertIn(H3_MONOLOGUE_NO_LIPSYNC_RULE, restored)
+        self.assertIn(SINGLE_INNER_MONOLOGUE_RULE, restored)
+        block = restored.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
+        self.assertIn("才寫了三行，怎麼就像跑完一場馬拉松。", block)
+        self.assertNotIn("or legacy", restored.lower())
 
 
 if __name__ == "__main__":

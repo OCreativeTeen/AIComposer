@@ -3547,14 +3547,14 @@ from utility.speaking_marks import (  # noqa: E402
 
 # <N> and <Ns> are the same person N; s is a speech mode, never an extra character.
 SPEAKER_MARK_IDENTITY_RULE = (
-    "Speaker marks: <N> and <Ns> (and legacy <N>（自言自语） / <N>（自言自語）) refer to the IDENTICAL actor N "
+    "Speaker marks: <N> and <Ns> refer to the IDENTICAL actor N "
     "in the actor list (any multi-digit N: <1>=<1s>, <2>=<2s>, <3>=<3s>, <12>=<12s>); "
-    "the letter s is a speech mode (self-talk / inner thought), not a new character, extra person, reference image, "
-    "seat, costume, or voice; same identity, look, clothes, reference picture, and voice as <N>."
+    "the lowercase letter s is a speech mode (self-talk / inner thought), not a new character, extra person, "
+    "reference image, seat, costume, or voice; same identity, look, clothes, reference picture, and voice as <N>."
 )
 
 H3_MONOLOGUE_NO_LIPSYNC_RULE = (
-    "Self-talk (自言自语): any line marked <Ns> or legacy <N>（自言自语） is that same actor N delivering "
+    "Self-talk: any line marked <Ns> is that same actor N delivering "
     "the exact supplied speaking text with the mouth closed (off-mouth delivery, no lip sync); "
     "it is NOT interactive dialogue and NOT narration of the picture, actions, or setting; "
     "only the other dialogue lines are interactive; "
@@ -3562,8 +3562,7 @@ H3_MONOLOGUE_NO_LIPSYNC_RULE = (
 )
 
 SINGLE_INNER_MONOLOGUE_RULE = (
-    "Entire-scene self-talk: this scene has exactly one speaking turn and that turn is self-talk "
-    "(<Ns> or legacy 自言自语); count parser turns marked <N>/<Ns>, not punctuation sentences or wrapped lines; "
+    "Entire-scene self-talk: this scene has exactly one speaking turn and that turn is marked <Ns>; "
     "the same actor N delivers the exact supplied speaking line in their own voice as off-mouth delivery "
     "(lips closed, no lip sync), audible not mute; this is NOT narration of actions or setting, not an intro/outro, "
     "and not another narrator; no on-screen text or subtitles of the line."
@@ -3756,7 +3755,7 @@ def portrait_reference_block(refs: list) -> str:
         "Use the portraits only to identify which person in reference image 1 is each speaker.",
         "Each <N> / <Ns> tag is the same speaker N (the letter s is not another person or portrait). "
         "Interactive lines must be delivered by that exact person: lip movement and voice matching that speaker's "
-        "gender, age and voice. Self-talk / inner-monologue lines (<Ns> or legacy 自言自语) use that same person's "
+        "gender, age and voice. Self-talk / inner-monologue lines marked <Ns> use that same person's "
         "voice with no lip movement. Other people stay silent while someone else speaks.",
         "The portraits are identity references only: the video must start from reference image 1's composition. "
         "Do not add new people, do not insert the portraits as extra characters, and do not change the scene, "
@@ -3800,20 +3799,16 @@ def _unquote(text: str) -> str:
     return "".join(ch for ch in str(text or "") if ch not in "\"“”‘’「」『』").strip()
 
 
-def dialogue_script(scene: dict) -> list:
-    """speaking 的 <N> / <Ns> → 逐句台词。同一人连着说的合并成一句。
-    ``<Ns>`` 与旧的 ``<N>（自言自语）`` 都表示该人物独白；标签从台词里去掉，
-    独白标记写在行尾 ``[自言自语]``，供 ``_dialogue_turns`` 识别，不送给配音引擎朗读。"""
+def _merged_speaking_chunks(scene: dict) -> list:
+    """Merge consecutive same-speaker, same-mode turns: ``[(n, text, monologue), ...]``."""
     if not isinstance(scene, dict):
         return []
-    rows = _scene_speakers(scene)
     speaking = str(scene.get("speaking") or "")
     voiceover = str(scene.get("voiceover") or "").strip()
     if voiceover and "<2>" not in speaking:
         speaking = (speaking + " <2> " + voiceover).strip()
-    parsed = parse_speaking_turns(speaking)
     tagged = []
-    for turn in parsed:
+    for turn in parse_speaking_turns(speaking):
         clean = _PAUSE_MARK.sub(" ", turn.text)
         clean = re.sub(r"[ \t]{2,}", " ", clean).strip()
         if clean:
@@ -3826,15 +3821,24 @@ def dialogue_script(scene: dict) -> list:
             merged[-1][1] += " " + chunk
         else:
             merged.append([n, chunk, mono])
+    return merged
+
+
+def dialogue_script(scene: dict) -> list:
+    """speaking 的 <N> / <Ns> → 逐句台词。同一人连着说的合并成一句。
+
+    Self-talk is only ``<Ns>``. Mode stays in parser metadata, not in the
+    spoken line text (no trailing label).
+    """
+    rows = _scene_speakers(scene) if isinstance(scene, dict) else []
     out = []
-    for i, (n, chunk, mono) in enumerate(merged, start=1):
-        flag = " [自言自语]" if mono else ""
+    for n, chunk, _mono in _merged_speaking_chunks(scene):
         if 1 <= n <= len(rows):
             name, _ident, _tone = _speaker_identity(rows[n - 1])
             sex = _speaker_sex_word(rows[n - 1])
-            out.append(f'{name} (Speaker {n}' + (f', {sex} voice' if sex else '') + f') says aloud: {_unquote(chunk)}{flag}')
+            out.append(f'{name} (Speaker {n}' + (f', {sex} voice' if sex else '') + f') says aloud: {_unquote(chunk)}')
         else:
-            out.append(f'Speaker {n} says aloud: {_unquote(chunk)}{flag}')
+            out.append(f'Speaker {n} says aloud: {_unquote(chunk)}')
     return out
 
 
@@ -3916,7 +3920,7 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
             else:
                 lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
                 lines.append(
-                    "Speech: any self-talk (<Ns> or legacy 自言自语) is that same actor's off-mouth delivery of "
+                    "Speech: any self-talk marked <Ns> is that same actor's off-mouth delivery of "
                     "those exact speaking words while they act; no lip-sync on those lines. Interactive ``<N>`` "
                     "dialogue is still not spoken on camera (Story Act). ``story_content`` and visual are never "
                     "said aloud."
@@ -3958,7 +3962,7 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
             lines.append(
                 "Speech: pure drama, no narrator. The people in the picture say only the supplied speaking text, "
                 "one voice at a time, with lip-sync for that person only "
-                "(self-talk / <Ns> lines use that same person's voice with no lip-sync)."
+                "(self-talk marked <Ns> uses that same person's voice with no lip-sync)."
             )
             if flags0["any_mono"]:
                 lines.append(SPEAKER_MARK_IDENTITY_RULE)
@@ -3991,7 +3995,7 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
         lines.append(
             "Dialogue: ``dialogue`` is the script. Speak its lines in this exact order, each only by its labeled "
             "speaker; never swap speakers. One voice at a time; the others listen or react. "
-            "Interactive ``<N>`` lines are lip-synced to that person; self-talk ``<Ns>`` / 自言自语 lines use that "
+            "Interactive ``<N>`` lines are lip-synced to that person; self-talk ``<Ns>`` lines use that "
             "same person's voice with no lip-sync (mouth closed)."
         )
         if flags["any_mono"]:
@@ -4273,21 +4277,13 @@ def minimax_lighting_phrase(visual: str, start_image: str = "") -> str:
 
 
 def _dialogue_turns(scene: dict) -> list:
-    """[(说话人序号, 名字, 身份, 台词, 是否自言自语)]，台词去掉引号与 ``[自言自语]`` 标记。"""
-    rows = _scene_speakers(scene)
+    """[(说话人序号, 名字, 身份, 台词, 是否 <Ns> 自言自语)]，台词不含模式标签。"""
+    rows = _scene_speakers(scene) if isinstance(scene, dict) else []
     out = []
-    for line in dialogue_script(scene):
-        m = re.match(r'^.*?\(?Speaker (\d+)[^)]*?\)? says aloud: (.*)$', line, re.S)
-        if not m:
-            continue
-        n = int(m.group(1))
+    for n, chunk, mono in _merged_speaking_chunks(scene):
         name, ident = (_speaker_identity(rows[n - 1])[:2] if 1 <= n <= len(rows) else (f"person {n}", ""))
-        raw = m.group(2)
-        mono = bool(re.search(r"\[自言自语\]\s*$", raw))
-        if mono:
-            raw = re.sub(r"\s*\[自言自语\]\s*$", "", raw)
-        text = "".join(ch for ch in raw if ch not in _QUOTE_CHARS).strip()
-        out.append((n, name, ident, text, mono))
+        text = "".join(ch for ch in str(chunk) if ch not in _QUOTE_CHARS).strip()
+        out.append((n, name, ident, text, bool(mono)))
     return out
 
 
@@ -4371,7 +4367,7 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
                 lines.append(
                     "They talk, heard as spoken voices" + (f" in {lang}" if lang else "")
                     + ", one speaker at a time. Interactive lines have lips in sync; "
-                    "self-talk (自言自语) lines have NO lip sync (mouth closed). " + " ".join(said)
+                    "self-talk marked <Ns> has NO lip sync (mouth closed). " + " ".join(said)
                 )
             if has_mono:
                 lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
@@ -4480,7 +4476,7 @@ H3_MIXED_LIP_SYNC_LINE = (
     "Lip sync: interactive dialogue lines (markers <N> without s) have every mouth movement match the spoken words "
     "exactly, syllable by syllable; only the person who is speaking that interactive line moves their lips, "
     "everyone else keeps their lips closed; when the speaker changes to another interactive line, the moving mouth "
-    "switches to the new speaker at once; self-talk / inner-monologue lines (<Ns> or legacy 自言自语) have NO lip sync "
+    "switches to the new speaker at once; self-talk / inner-monologue lines marked <Ns> have NO lip sync "
     "— that same actor keeps the mouth closed while their own inner voice is heard; "
     "do not start lip sync at 0.0 s if the first turn is self-talk; "
     "every line is spoken exactly once, in the given order: no line or part of a line is repeated, restarted or "
@@ -5151,8 +5147,8 @@ def _inject_locked_rule(text: str, rule: str) -> str:
         else:
             mid, post = rest, ""
         insert_at = None
-        for key in ("Lip sync:", "On camera:", "Speaker marks:", "Self-talk (自言自语):",
-                    "Entire-scene inner monologue:", "<d>"):
+        for key in ("Lip sync:", "On camera:", "Speaker marks:", "Self-talk:",
+                    "Entire-scene self-talk:", "<d>"):
             i0 = mid.find(key)
             if i0 >= 0 and (insert_at is None or i0 < insert_at):
                 insert_at = i0

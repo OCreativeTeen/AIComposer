@@ -57,13 +57,15 @@ class SpeakingMarksTest(unittest.TestCase):
 
         simp = "<1>（自言自语）跟朋友吃了顿饭。<2> 你今天怎么这么累？"
         trad = "<1>（自言自語）原来我不是坏掉了。"
-        self.assertTrue(parse_speaking_turns(simp)[0].monologue)
+        self.assertFalse(parse_speaking_turns(simp)[0].monologue)
         self.assertEqual(parse_speaking_turns(simp)[0].speaker, 1)
+        self.assertEqual(parse_speaking_turns(simp)[0].text, "（自言自语）跟朋友吃了顿饭。")
         self.assertFalse(parse_speaking_turns(simp)[1].monologue)
-        self.assertTrue(parse_speaking_turns(trad)[0].monologue)
-        self.assertTrue(speaking_has_monologue(simp))
-        self.assertTrue(speaking_has_monologue(trad))
-        self.assertEqual(strip_speaker_marks(simp), "跟朋友吃了顿饭。 你今天怎么这么累？")
+        self.assertFalse(parse_speaking_turns(trad)[0].monologue)
+        self.assertEqual(parse_speaking_turns(trad)[0].text, "（自言自語）原来我不是坏掉了。")
+        self.assertFalse(speaking_has_monologue(simp))
+        self.assertFalse(speaking_has_monologue(trad))
+        self.assertEqual(strip_speaker_marks(simp), "（自言自语）跟朋友吃了顿饭。 你今天怎么这么累？")
 
     def test_leading_split_order_and_authored_copies(self):
         from utility.speaking_marks import expand_scenes_for_new_project
@@ -146,7 +148,13 @@ class SpeakingMarksTest(unittest.TestCase):
         self.assertEqual(out_b[0]["visual"], "V2")
         self.assertIsNone(split_speaking_pair(interior_speaking))
         self.assertIsNone(split_speaking_pair(both_speaking))
-        self.assertIsNone(split_speaking_pair("<1>（自言自语）头。<2> 中。<1s> 尾。"))
+        from utility.speaking_marks import speaking_has_monologue as _has_m
+        self.assertIsNone(split_speaking_pair("<1>（自言自语）头。<2> 中。<1> 尾。"))
+        self.assertFalse(_has_m("<1>（自言自语）头。<2> 中。<1> 尾。"))
+        # A real trailing <1s> still splits; the Chinese parenthesis itself is not a mark.
+        first, second, kind = split_speaking_pair("<1>（自言自语）头。<2> 中。<1s> 尾。")
+        self.assertEqual(kind, "suffix")
+        self.assertIn("<1s>", second)
 
     def test_mixed_list_valid_split_and_invalid_unchanged(self):
         from utility.speaking_marks import expand_scenes_for_new_project
@@ -188,7 +196,9 @@ class SpeakingMarksTest(unittest.TestCase):
         spoken = " ".join(t[1] for t in turns)
         self.assertNotIn("自言自语", spoken)
         self.assertFalse(spoken.strip().startswith("s"))
-        self.assertEqual(strip_speaker_marks("<1s>（自言自语）心里话"), "心里话")
+        self.assertEqual(strip_speaker_marks("<1s>（自言自语）心里话"), "（自言自语）心里话")
+        from utility.speaking_marks import strip_monologue_tag
+        self.assertEqual(strip_monologue_tag("（自言自语）心里话"), (False, "（自言自语）心里话"))
         self.assertEqual(speaker_ids_in_text("<1s> a <2> b"), [1, 2])
 
 

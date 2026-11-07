@@ -97,9 +97,8 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
         from config_prompt import ensure_h3_no_subtitle_rules, ensure_h3_monologue_no_lipsync_rules, ensure_video_no_subtitle_first_line
         prompt = ensure_video_no_subtitle_first_line(prompt)  # t244: 最重要的禁字幕行必须是第一行
         prompt = ensure_h3_no_subtitle_rules(prompt)
-        # t250u: 同时检测简体 自言自语 和繁体 自言自語
         prompt = ensure_h3_monologue_no_lipsync_rules(
-            prompt, has_monologue=("自言自语" in (prompt or "") or "自言自語" in (prompt or "") or "Self-talk" in (prompt or "")))
+            prompt, has_monologue=("Self-talk:" in (prompt or "") or "Entire-scene self-talk:" in (prompt or "")))
     except Exception as _e:  # noqa: BLE001
         print(f"[MiniMax] 禁字幕句核对跳过：{_e}")
     from utility import sd_image_processor as _sdp

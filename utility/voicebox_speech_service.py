@@ -253,7 +253,7 @@ def split_speaking_turns(text: str) -> List[tuple]:
     """把 speaking 按 ``<N>`` / ``<Ns>`` 拆成 ``[(人物序号, 这段话), ...]``。
 
     序号从 1 起，对应 actor 里按书写顺序的第 N 个人。``<Ns>`` 仍是第 N 个人
-    （自言自语；字母 s 不是角色）。标记和 ``（自言自语）`` 不会进入台词。
+    （自言自语；小写字母 s 不是角色）。只有 ``<N>`` / ``<Ns>`` 标记不会进入台词。
     ``<0.5>`` 这种带小数点的静音标记不会被当成换人，会留在这段话里。
     """
     from utility.speaking_marks import parse_speaking_turns
