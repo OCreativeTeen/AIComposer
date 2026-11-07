@@ -1,0 +1,228 @@
+{
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "base.png"
+    },
+    "_meta": {
+      "title": "base / scene image (Picture 1 / image1)"
+    }
+  },
+  "50": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "ref1.png"
+    },
+    "_meta": {
+      "title": "portrait ref 1 (Picture 2 / image2)"
+    }
+  },
+  "51": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "ref2.png"
+    },
+    "_meta": {
+      "title": "portrait ref 2 (Picture 3 / image3)"
+    }
+  },
+  "117": {
+    "class_type": "FluxKontextImageScale",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "scale base (native FluxKontext)"
+    }
+  },
+  "30": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "33": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "34": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "31": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "30",
+        0
+      ],
+      "lora_name": "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1.0
+    },
+    "_meta": {
+      "title": "Lightning 4-step LoRA (default turbo)"
+    }
+  },
+  "66": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "31",
+        0
+      ],
+      "shift": 3.0
+    },
+    "_meta": {
+      "title": "ModelSamplingAuraFlow shift=3"
+    }
+  },
+  "75": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "model": [
+        "66",
+        0
+      ],
+      "strength": 1.0,
+      "pre_cfg": false
+    },
+    "_meta": {
+      "title": "CFGNorm 1.0"
+    }
+  },
+  "39": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "33",
+        0
+      ],
+      "prompt": "Place the people from the reference images into the scene of Picture 1. The person from Picture 2 should keep their face, hair, ethnicity and clothing exactly as in Picture 2. The person from Picture 3 should keep their face, hair, ethnicity and clothing exactly as in Picture 3. Keep the room, lighting, camera angle and composition of Picture 1 unchanged. High quality, natural lighting, sharp details, identity-preserving edit.",
+      "vae": [
+        "34",
+        0
+      ],
+      "image1": [
+        "117",
+        0
+      ],
+      "image2": [
+        "50",
+        0
+      ],
+      "image3": [
+        "51",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "positive"
+    }
+  },
+  "36": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "33",
+        0
+      ],
+      "prompt": "nsfw, worst quality, bad anatomy, watermark, jpeg artifact, deformed face, extra fingers",
+      "vae": [
+        "34",
+        0
+      ],
+      "image1": [
+        "117",
+        0
+      ],
+      "image2": [
+        "50",
+        0
+      ],
+      "image3": [
+        "51",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "negative"
+    }
+  },
+  "88": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "117",
+        0
+      ],
+      "vae": [
+        "34",
+        0
+      ]
+    }
+  },
+  "37": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "75",
+        0
+      ],
+      "positive": [
+        "39",
+        0
+      ],
+      "negative": [
+        "36",
+        0
+      ],
+      "latent_image": [
+        "88",
+        0
+      ],
+      "seed": 42,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0
+    },
+    "_meta": {
+      "title": "Lightning turbo (4 steps / CFG 1.0)",
+      "note": "Default turbo path: UNETLoader (30) -> LoraLoaderModelOnly (31, Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors, strength 1.0) -> ModelSamplingAuraFlow (66, shift=3) -> CFGNorm (75) -> KSampler (37). Official Lightning settings: steps=4, cfg=1.0, euler/simple, denoise=1.0. Quality path without LoRA would be 20/2.5."
+    }
+  },
+  "38": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "37",
+        0
+      ],
+      "vae": [
+        "34",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "38",
+        0
+      ],
+      "filename_prefix": "qwen_edit"
+    }
+  }
+}

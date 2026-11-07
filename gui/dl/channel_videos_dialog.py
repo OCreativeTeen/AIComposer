@@ -25,6 +25,176 @@ from gui.dl.workflow_launch import _launch_gui_wf_from_list_json, _launch_gui_wf
 from gui.downloader import _CHANNEL_LIST_TREE_TITLE_MAX_SRC_CHARS, _apply_video_detail_titles_from_ui, _configure_channel_list_treeview, _configure_video_pick_treeview, _project_look_from_row, _refresh_summary_window_title, _treeview_item_tags_safe, _video_detail_can_create_project, accept_summary_cover_image, schedule_summary_gen_video_clip_review
 
 
+
+def _coerce_view_count_int(value):
+    """把 list JSON / 单元格里的观看次数收成 int；N/A、空、非数字 → None。"""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    s = str(value).strip().replace(",", "")
+    if not s or s.upper() == "N/A":
+        return None
+    try:
+        return int(float(s))
+    except (TypeError, ValueError):
+        return None
+
+
+def cheat_toggle_view_count(current, all_numeric_counts):
+    """双击「观看次数」作弊：在 max(列表数字)+1 与 0 之间切换。
+
+    - current 为 None（N/A/缺失/非数字）→ max+1（列表无数字则 1）
+    - current 已是列表里唯一最高 → 0
+    - current 为 0 → 再回到 max+1（避免全 0 时卡在「唯一最高」）
+    - 其它 → max+1
+    all_numeric_counts：当前树上各行的数字观看次数（已是 int，可含本行）。
+    """
+    nums = [int(n) for n in (all_numeric_counts or []) if isinstance(n, (int, float))]
+    high = (max(nums) + 1) if nums else 1
+    if current is None:
+        return high
+    cur = int(current)
+    if cur == 0:
+        return high
+    if nums and cur == max(nums) and nums.count(cur) == 1:
+        return 0
+    return high
+
+
+def cheat_upload_date_now(now=None):
+    """双击「上传日期」作弊：本机此刻日期，存成频道列表惯用的 YYYYMMDD。"""
+    dt = now or datetime.now()
+    return dt.strftime("%Y%m%d")
+
+
+
+def calculate_video_hot_degree(video, latest_date):
+    """与列表「总热度」同口径：观看次数 / (latest_date - upload_date + 1) 天。
+
+    缺观看、缺日期或 latest_date 时返回 None（单元格显示 N/A）。
+    """
+    if latest_date is None:
+        return None
+    vc = _coerce_view_count_int((video or {}).get("view_count"))
+    if vc is None:
+        vc = 0
+    upload_date = str((video or {}).get("upload_date") or "").strip()
+    ud_8 = upload_date.replace("-", "")[:8] if upload_date else ""
+    if not (ud_8 and len(ud_8) == 8 and ud_8.isdigit()):
+        return None
+    try:
+        date_obj = datetime.strptime(ud_8, "%Y%m%d")
+        days = (latest_date - date_obj).days + 1
+        if days <= 0:
+            days = 1
+        return float(vc) / float(days)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_hot_degree_cell(degree) -> str:
+    """热度单元格：有值两位小数，否则 N/A。"""
+    if degree is None:
+        return "N/A"
+    try:
+        return f"{float(degree):.2f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def _upload_date_sort_key(video) -> str:
+    ud = str((video or {}).get("upload_date") or "").strip()
+    ud_8 = ud.replace("-", "")[:8] if ud else ""
+    return ud_8 if (ud_8 and len(ud_8) == 8 and ud_8.isdigit()) else ""
+
+
+def _duration_sort_key(video) -> int:
+    d = (video or {}).get("duration") or 0
+    try:
+        if isinstance(d, str):
+            d = float(d) if d.strip() else 0
+        return int(float(d))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _text_sort_key(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return " | ".join(str(t) for t in value if t is not None).casefold()
+    return str(value).strip().casefold()
+
+
+def channel_list_sort_key(col: str, video: dict, *, latest_date=None,
+                          status_str: str = "", analyzed_mark: str = "",
+                          title: str = "", channel: str = "", ascending: bool = True):
+    """表头排序用 key。缺省值在升序时靠后、降序时靠前。"""
+    v = video or {}
+
+    if col == "views":
+        n = _coerce_view_count_int(v.get("view_count"))
+        if n is None:
+            return float("inf") if ascending else float("-inf")
+        return float(n)
+    if col == "heat":
+        deg = calculate_video_hot_degree(v, latest_date)
+        if deg is None:
+            return float("inf") if ascending else float("-inf")
+        return float(deg)
+    if col == "duration":
+        return _duration_sort_key(v)
+    if col == "upload_date":
+        k = _upload_date_sort_key(v)
+        if not k:
+            return "￿" if ascending else ""
+        return k
+    if col == "title":
+        return _text_sort_key(title if title != "" else (
+            v.get("project_title") or v.get("title") or v.get("webpage_url") or ""
+        ))
+    if col == "source_channel":
+        return _text_sort_key(channel if channel != "" else (
+            v.get("channel") or v.get("uploader") or ""
+        ))
+    if col == "status":
+        return _text_sort_key(status_str)
+    if col == "analyzed":
+        return _text_sort_key(analyzed_mark)
+    if col == "topic_category":
+        return _text_sort_key(v.get("topic_category"))
+    if col == "topic_subtype":
+        return _text_sort_key(v.get("topic_subtype"))
+    if col == "tags":
+        return _text_sort_key(v.get("tags"))
+    return _text_sort_key(v.get(col))
+
+
+def flip_header_sort_state(current_col, current_ascending, clicked_col):
+    """表头双击：新列 → 升序；同列 → 翻转。返回 (col, ascending)。"""
+    if clicked_col == current_col:
+        return current_col, (not current_ascending)
+    return clicked_col, True
+
+
+CHANNEL_LIST_COL_HEADERS = {
+    "title": "标题",
+    "source_channel": "频道",
+    "views": "观看次数",
+    "heat": "热度",
+    "duration": "时长",
+    "upload_date": "上传日期",
+    "status": "状态",
+    "analyzed": "分析/场景/成片",
+    "topic_category": "主题分类",
+    "topic_subtype": "主题子类型",
+    "tags": "标签",
+}
+
+
 class ChannelVideosDialogImpl:
     def _show_channel_videos_dialog(self, *, auto_open_summary_row_keys: list[str] | None = None):
         # 创建视频管理对话框
@@ -86,7 +256,7 @@ class ChannelVideosDialogImpl:
             command=lambda: (_reload_channel_list_from_disk(), populate_tree()),
         ).pack(side=tk.RIGHT, padx=5)
         
-        # 第二行：过滤和排序控制
+        # 第二行：过滤控制（排序改表头双击）
         control_frame = ttk.Frame(top_frame)
         control_frame.pack(fill=tk.X)
         
@@ -96,28 +266,9 @@ class ChannelVideosDialogImpl:
         min_view_entry = ttk.Entry(control_frame, textvariable=min_view_var, width=15)
         min_view_entry.pack(side=tk.LEFT, padx=(0, 10))
         
-        # 排序方式
-        sort_mode_var = tk.StringVar(value="hot_degree")  # 默认按热度排序
-        
-        def toggle_sort():
-            """切换排序方式"""
-            current_mode = sort_mode_var.get()
-            if current_mode == "hot_degree":
-                sort_mode_var.set("view_count")
-                sort_button.config(text="排序: 观看次数 ↓")
-            elif current_mode == "view_count":
-                sort_mode_var.set("upload_date")
-                sort_button.config(text="排序: 上传日期 ↓")
-            elif current_mode == "upload_date":
-                sort_mode_var.set("duration")
-                sort_button.config(text="排序: 时长 ↓")
-            else:  # duration
-                sort_mode_var.set("hot_degree")
-                sort_button.config(text="排序: 热度 ↓")
-            populate_tree()
-        
-        sort_button = ttk.Button(control_frame, text="排序: 热度 ↓", command=toggle_sort)
-        sort_button.pack(side=tk.LEFT, padx=5)
+        # t233u: 顶部「排序」按钮已去掉；改双击列头排序（默认按热度降序，与旧默认一致）
+        sort_col_var = tk.StringVar(value="heat")
+        sort_ascending_var = tk.BooleanVar(value=False)
         
         # 绑定回车键自动应用过滤
         min_view_entry.bind('<Return>', lambda e: populate_tree())
@@ -232,7 +383,7 @@ class ChannelVideosDialogImpl:
         ).pack(anchor="w", padx=12, pady=(0, 2))
         
         # 创建Treeview显示视频列表
-        columns = ("title", "views", "duration", "upload_date", "status", "analyzed", "topic_category", "topic_subtype", "tags")
+        columns = ("title", "views", "heat", "duration", "upload_date", "status", "analyzed", "topic_category", "topic_subtype", "tags")
         if self.content_mode:
             columns = ("title", "source_channel") + tuple(c for c in columns[1:] if c != "topic_category")
         tree_frame = ttk.Frame(dialog)
@@ -252,18 +403,18 @@ class ChannelVideosDialogImpl:
         tree.heading("title", text="标题")
         if "source_channel" in columns:
             tree.heading("source_channel", text="频道")
-        tree.heading("views", text="观看次数")
-        tree.heading("duration", text="时长")
-        tree.heading("upload_date", text="上传日期")
-        tree.heading("status", text="状态")
-        tree.heading(
-            "analyzed",
-            text="分析/场景/成片",
-        )
-        if "topic_category" in columns:
-            tree.heading("topic_category", text="主题分类")
-        tree.heading("topic_subtype", text="主题子类型")
-        tree.heading("tags", text="标签")
+        def _apply_column_headings():
+            """按当前排序列刷新表头文字（带 ↑/↓）。"""
+            sc = sort_col_var.get()
+            asc = bool(sort_ascending_var.get())
+            for col in columns:
+                base = CHANNEL_LIST_COL_HEADERS.get(col, col)
+                if col == sc:
+                    base = f"{base} {'↑' if asc else '↓'}"
+                tree.heading(col, text=base)
+            tree.heading("#0", text="序号")
+
+        _apply_column_headings()
 
         _configure_channel_list_treeview(tree)
         if self.content_mode:
@@ -339,40 +490,50 @@ class ChannelVideosDialogImpl:
                         continue
                 filtered_videos.append(video)
             
-            # 排序视频
-            sort_mode = sort_mode_var.get()
-            if sort_mode == "hot_degree":
-                # 计算每个视频的热度值（每日观看次数）
-                def calculate_hot_degree(video):
-                    view_count = video.get('view_count', 0)
-                    upload_date = video.get('upload_date', '')
-                    if upload_date and len(upload_date) == 8:
-                        try:
-                            # 热度 = 观看次数 / 日期范围天数
-                            date_obj = datetime.strptime(upload_date, '%Y%m%d')
-                            days = (self.downloader.latest_date - date_obj).days + 1
-                            return view_count / (days if days > 0 else 1)
-                        except:
-                            pass
-                    # 如果无法计算，返回0
-                    return 0.0
-                
-                filtered_videos.sort(key=calculate_hot_degree, reverse=True)
+            # t233u: 按当前表头排序列排序（双击表头切换）
+            sort_col = sort_col_var.get() or "heat"
+            sort_asc = bool(sort_ascending_var.get())
+            latest = self.downloader.latest_date
+            status_cache = {}
+            analyzed_cache = {}
 
-            elif sort_mode == "upload_date":
-                # 按上传日期降序排序（最新的在前）
-                filtered_videos.sort(key=lambda x: x.get('upload_date', ''), reverse=True)
-            elif sort_mode == "view_count":
-                # 按观看次数降序排序
-                filtered_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
-            elif sort_mode == "duration":
-                # 按时长降序排序（时长长的在前）
-                def _duration_key(v):
-                    d = v.get('duration') or 0
-                    if isinstance(d, str):
-                        d = float(d) if d else 0
-                    return int(float(d))
-                filtered_videos.sort(key=_duration_key, reverse=True)
+            def _analyzed_mark_for_sort(video):
+                key = id(video)
+                if key in analyzed_cache:
+                    return analyzed_cache[key]
+                mark = ""
+                if video.get("analyzed_content"):
+                    mark += "✓"
+                if not _scene_content_nonempty(video):
+                    mark += "⚠"
+                if _gen_video_publish_mp4_if_ready(video):
+                    mark += "片"
+                analyzed_cache[key] = mark
+                return mark
+
+            def _status_for_sort(video):
+                key = id(video)
+                if key in status_cache:
+                    return status_cache[key]
+                st, _, _ = self.check_video_status(video)
+                status_cache[key] = st or ""
+                return status_cache[key]
+
+            def _row_sort_key(video):
+                title = _youtube_row_list_display_title(video)
+                channel = (video.get("channel") or video.get("uploader") or "").strip()
+                return channel_list_sort_key(
+                    sort_col,
+                    video,
+                    latest_date=latest,
+                    status_str=_status_for_sort(video) if sort_col == "status" else "",
+                    analyzed_mark=_analyzed_mark_for_sort(video) if sort_col == "analyzed" else "",
+                    title=title,
+                    channel=channel,
+                    ascending=sort_asc,
+                )
+
+            filtered_videos.sort(key=_row_sort_key, reverse=not sort_asc)
             
             # 检查视频状态并填充数据
             downloaded_count = 0
@@ -399,21 +560,19 @@ class ChannelVideosDialogImpl:
                 # 格式化观看次数
                 view_count = video.get('view_count', 0)
                 view_str = f"{view_count:,}" if view_count else "N/A"
+
+                # 热度（与顶栏「热度」同口径）
+                heat_degree = calculate_video_hot_degree(video, self.downloader.latest_date)
+                heat_str = format_hot_degree_cell(heat_degree)
+                if heat_degree is not None and heat_degree > hottest_degree:
+                    hottest_degree = heat_degree
                 
                 # 格式化上传日期（支持 YYYYMMDD 或 YYYY-MM-DD，有日期即显示，不再依赖 latest_date）
                 ud_raw = video.get('upload_date') or ''
                 upload_date = str(ud_raw).strip() if ud_raw else ''
                 ud_8 = (upload_date.replace('-', '')[:8] if upload_date else '')
-                if ud_8 and len(ud_8) == 8:
+                if ud_8 and len(ud_8) == 8 and ud_8.isdigit():
                     upload_date_str = f"{ud_8[:4]}-{ud_8[4:6]}-{ud_8[6:]}"
-                    if self.downloader.latest_date:
-                        try:
-                            days = (self.downloader.latest_date - datetime.strptime(ud_8, '%Y%m%d')).days + 1
-                            degree = view_count / (days if days > 0 else 1)
-                            if hottest_degree < degree:
-                                hottest_degree = degree
-                        except (ValueError, TypeError):
-                            pass
                 else:
                     upload_date_str = "N/A"
                 
@@ -460,6 +619,7 @@ class ChannelVideosDialogImpl:
                 row_values = [
                     row_title,
                     view_str,
+                    heat_str,
                     duration_str,
                     upload_date_str,
                     status_str,
@@ -1113,6 +1273,15 @@ class ChannelVideosDialogImpl:
                 if scene_style is None and vd.get("scene_style") is not None:
                     scene_style = vd.get("scene_style")
                 lang = (language or getattr(self, "language", None) or "tw").strip() or "tw"
+                # t235u: 没显式传入时优先用这一条 / profile 上的全场内容，避免落回全局 LAST_*
+                if narrator is None or visual_style is None or dialogue_mode is None:
+                    _lv, _lt, _ln = _project_look_from_row(vd)
+                    if narrator is None:
+                        narrator = _ln
+                    if visual_style is None:
+                        visual_style = _lv
+                    if dialogue_mode is None:
+                        dialogue_mode = _lt
                 result, selected_config = create_project_with_initial_raw(
                     parent=self.root,
                     channel=ch,
@@ -1129,7 +1298,14 @@ class ChannelVideosDialogImpl:
                     setting_region=setting_region,
                     setting_era=setting_era,
                     scene_style=scene_style,
-                    story_style=(vd.get("story_style") or "").strip() or None,
+                    story_style=(
+                        (vd.get("story_style") or "").strip()
+                        or (
+                            (vd.get(project_manager.PROJECT_PROFILE_KEY) or {}).get("story_style") or ""
+                            if isinstance(vd.get(project_manager.PROJECT_PROFILE_KEY), dict) else ""
+                        ).strip()
+                        or None
+                    ),
                     # t110u: 项目名 = 选定/手改的名称;没有才用首场 caption
                     title=(title or vd.get(project_manager.PENDING_PROJECT_TITLE_KEY) or "").strip() or None,
                 )
@@ -1216,6 +1392,18 @@ class ChannelVideosDialogImpl:
                             ac = cfg.get("analyzed_content") or vd.get("analyzed_content")
                             sc = cfg.get("scene_content") or vd.get("scene_content")
                             _look_vs, _look_talk, _look_nar = _project_look_from_row(vd, cfg)
+                            # t235u: 参照已有项目新建时，地域 / 时代 / 场景风格 / 故事风格也从 cfg∪vd 带上（勿丢）
+                            _clone_region = (
+                                (cfg.get("setting_region") or vd.get("setting_region") or "").strip() or None
+                            )
+                            _clone_era = (
+                                (cfg.get("setting_era") or vd.get("setting_era") or "").strip() or None
+                            )
+                            _clone_ss = cfg.get("scene_style")
+                            if _clone_ss is None:
+                                _clone_ss = vd.get("scene_style")
+                            if isinstance(cfg, dict) and (cfg.get("story_style") or "").strip():
+                                vd["story_style"] = (cfg.get("story_style") or "").strip()
                             _create_new_project_from_raw(
                                 ac,
                                 sc,
@@ -1227,6 +1415,9 @@ class ChannelVideosDialogImpl:
                                 topic_tags_kw=_topic_tags_val(cfg),
                                 superseded_pid=cfg_pid,
                                 dialogue_mode=_look_talk,
+                                setting_region=_clone_region,
+                                setting_era=_clone_era,
+                                scene_style=_clone_ss,
                                 title=(cfg.get("video_title") or "").strip() or None,
                             )
                             return
@@ -1367,7 +1558,127 @@ class ChannelVideosDialogImpl:
         def on_enter_key(event):
             on_focus(event, low_priority=False)
 
+        def _tree_data_column_name(col_id: str):
+            """Treeview identify_column → 数据列名（#0 为序号树列）。"""
+            if not col_id or col_id == "#0":
+                return "#0"
+            try:
+                idx = int(str(col_id).lstrip("#")) - 1
+            except (TypeError, ValueError):
+                return None
+            if 0 <= idx < len(columns):
+                return columns[idx]
+            return None
+
+        def _format_views_cell(view_count) -> str:
+            vc = _coerce_view_count_int(view_count)
+            # 与 populate_tree 一致：0 / 空 / N/A → 显示 N/A
+            if not vc:
+                return "N/A"
+            return f"{vc:,}"
+
+        def _format_upload_date_cell(ud_raw) -> str:
+            upload_date = str(ud_raw or "").strip()
+            ud_8 = (upload_date.replace("-", "")[:8] if upload_date else "")
+            if ud_8 and len(ud_8) == 8 and ud_8.isdigit():
+                return f"{ud_8[:4]}-{ud_8[4:6]}-{ud_8[6:]}"
+            return "N/A"
+
+        def _refresh_tree_item_views_upload(item, video_detail: dict) -> None:
+            vals = list(tree.item(item, "values") or ())
+            try:
+                views_i = columns.index("views")
+                date_i = columns.index("upload_date")
+            except ValueError:
+                return
+            if views_i < len(vals):
+                vals[views_i] = _format_views_cell(video_detail.get("view_count"))
+            if "heat" in columns:
+                heat_i = columns.index("heat")
+                if heat_i < len(vals):
+                    vals[heat_i] = format_hot_degree_cell(
+                        calculate_video_hot_degree(video_detail, self.downloader.latest_date)
+                    )
+            if date_i < len(vals):
+                vals[date_i] = _format_upload_date_cell(video_detail.get("upload_date"))
+            tree.item(item, values=tuple(vals))
+            tags = list(_treeview_item_tags_safe(tree, item) or ())
+            # tags: key, title, video_file, audio_file, view_count, upload_date, ...
+            if len(tags) >= 6:
+                vc = video_detail.get("view_count", 0)
+                tags[4] = str(vc if vc is not None else "")
+                tags[5] = str(video_detail.get("upload_date") or "")
+                tree.item(item, tags=tuple(tags))
+
+        def _cheat_double_click_column(item, col_name: str) -> bool:
+            """观看次数 / 上传日期列双击作弊；成功处理返回 True（不再开摘要）。"""
+            if col_name not in ("views", "upload_date"):
+                return False
+            item_tags = _treeview_item_tags_safe(tree, item)
+            if not item_tags:
+                return False
+            video_detail = self.get_video_detail(item_tags[0])
+            if not video_detail:
+                return False
+            if col_name == "views":
+                all_nums = []
+                for iid in tree.get_children(""):
+                    t = _treeview_item_tags_safe(tree, iid)
+                    if not t:
+                        continue
+                    vd = self.get_video_detail(t[0])
+                    if not vd:
+                        continue
+                    n = _coerce_view_count_int(vd.get("view_count"))
+                    if n is not None:
+                        all_nums.append(n)
+                cur = _coerce_view_count_int(video_detail.get("view_count"))
+                video_detail["view_count"] = cheat_toggle_view_count(cur, all_nums)
+            else:
+                video_detail["upload_date"] = cheat_upload_date_now()
+            try:
+                _normalize_channel_videos_for_storage(
+                    self.downloader.channel_videos, self.channel_path or ""
+                )
+            except Exception:
+                pass
+            _write_channel_list_json_file(
+                self.downloader.channel_list_json, self.downloader.channel_videos
+            )
+            _refresh_tree_item_views_upload(item, video_detail)
+            return True
+
+        def _sort_by_header_column(col_name: str) -> None:
+            """双击表头：该列首次升序，再次翻转；刷新表头箭头并重填列表。"""
+            if not col_name or col_name == "#0" or col_name not in columns:
+                return
+            new_col, new_asc = flip_header_sort_state(
+                sort_col_var.get(), bool(sort_ascending_var.get()), col_name
+            )
+            sort_col_var.set(new_col)
+            sort_ascending_var.set(new_asc)
+            _apply_column_headings()
+            populate_tree()
+
         def on_double_click(event):
+            # t233u: 表头双击排序；t232u: 观看次数/上传日期单元格双击作弊
+            x = getattr(event, "x", None)
+            y = getattr(event, "y", None)
+            if x is not None and y is not None:
+                try:
+                    region = tree.identify_region(x, y)
+                except tk.TclError:
+                    region = ""
+                col_name = _tree_data_column_name(tree.identify_column(x))
+                if region == "heading":
+                    _sort_by_header_column(col_name)
+                    return "break"
+                item = tree.identify_row(y)
+                if item and col_name in ("views", "upload_date"):
+                    if item not in tree.selection():
+                        tree.selection_set(item)
+                    if _cheat_double_click_column(item, col_name):
+                        return "break"
             on_focus(event, low_priority=True, prefer_project=True)
 
         def on_focus(event, low_priority=False, prefer_project=False):

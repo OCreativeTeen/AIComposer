@@ -89,8 +89,16 @@ class PromptFlowsMixin:
             def _on_image_response(pil_img):
                 self._replace_current_clip_image_from_pil(pil_img)
 
-            extra = {"image_backend": "gemini"} if str(backend or "").strip().lower() == "gemini" else {}
-            if account:
+            # t229u / t234u: grok（默认）/ gemini / moss / qn（本机 ComfyUI）
+            b = str(backend or "").strip().lower()
+            extra = {}
+            if b == "gemini":
+                extra["image_backend"] = "gemini"
+            elif b == "moss":
+                extra["image_backend"] = "moss"
+            elif b == "qn":
+                extra["image_backend"] = "qn"
+            if account and b not in ("moss", "qn"):
                 extra["chrome_account"] = account
             self.llm_api.show_manual_window(
                 prompt, "", images=images, on_image_response=_on_image_response,
@@ -213,22 +221,32 @@ class PromptFlowsMixin:
             return
         n = len(story)
         picked = None
-        try:  # t176u: 直接用上次「图片修改」记住的 LLM + 账户；没有记录 / 账户不在了才弹选择窗
+        try:  # t176u / t237u: 封面逐场提取固定用 Grok（QN/MOSS 效果差；手动「图片修改」仍可选 QN/MOSS）
             import config
             from utility import chrome_account
 
             last = dict(config.load_yt_tools_prefs().get(PICTURE_SUBMIT_PREF) or {})
             llm = str(last.get("llm") or "").strip().lower()
             acct = chrome_account.normalize(last.get("account") or "")
-            if llm in ("grok", "gemini") and chrome_account.profile_dir(acct):
-                picked = (llm, acct)
-                print(f"🖼 从封面逐场提取：用上次的选择 {llm} / {acct or '默认账户'}")
+            if llm in ("qn", "moss"):
+                print(f"🖼 从封面逐场提取：上次是 {llm.upper()}，改回 Grok")
+                # 顺手把记住的后端改回 grok，避免下次又误用；账户先留着
+                try:
+                    config.save_yt_tools_prefs({PICTURE_SUBMIT_PREF: {"llm": "grok", "account": acct}})
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 封面提取：没有把上次后端改回 Grok：{exc}")
+                llm = "grok"
+            if llm == "grok" and chrome_account.profile_dir(acct):
+                picked = ("grok", acct)
+                print(f"🖼 从封面逐场提取：用 Grok / {acct or '默认账户'}")
         except Exception as exc:  # noqa: BLE001
             print(f"从封面逐场提取：读上次的选择失败，改为弹窗：{exc}")
         if not picked:
+            # 只选 Chrome 账户；后端固定 Grok（取消 = 不做）
             picked = ask_llm_and_account(
                 self.root, pref_key=PICTURE_SUBMIT_PREF,
-                title=f"从封面提取每一场的图（共 {n} 场，取消 = 不做）",
+                title=f"从封面提取每一场的图（Grok · 共 {n} 场，取消 = 不做）",
+                fixed_backend="grok",
             )
         if not picked:
             print("ℹ️ 从封面逐场提取：取消，没有做。")
@@ -263,7 +281,7 @@ class PromptFlowsMixin:
 
     def _run_picture_batch(self, jobs: list, backend: str, skipped: list, account: str = "", *, auto: bool = False,
                            remix_visual: bool = False) -> None:
-        """图片修改 · 本集所有场景：每一场单独走 CLI自动（Grok / Gemini 网页图生图），结果写回那一场。
+        """图片修改 · 本集所有场景：每一场单独走 CLI自动（Grok / Gemini 网页图生图，或本机 MOSS ComfyUI），结果写回那一场。
 
         手动窗口只能一场一场贴，所以批量直接调 CLI自动 用的同一个 make_image。
         """
@@ -275,8 +293,15 @@ class PromptFlowsMixin:
         if not jobs:
             messagebox.showinfo("图片修改", "本集没有可处理的场景。\n" + "\n".join(skipped[:20]), parent=self.root)
             return
-        use_gemini = str(backend or "").strip().lower() == "gemini"
-        who = "Gemini" if use_gemini else "Grok"
+        b = str(backend or "").strip().lower()
+        use_gemini = b == "gemini"
+        use_moss = b == "moss"
+        use_qn = b == "qn"
+        who = (
+            "MOSS" if use_moss else
+            "QN" if use_qn else
+            ("Gemini" if use_gemini else "Grok")
+        )
         win = tk.Toplevel(self.root)
         win.title(f"图片修改 · 本集 {len(jobs)} 场（{who}）")
         win.transient(self.root)
@@ -363,8 +388,9 @@ class PromptFlowsMixin:
                 print(f"⚠️ 调整视觉：{label} 写回界面 / 保存失败 {exc}")
 
         def remix_worker():
-            """t198u: 一场一场地把视觉 + 刚写回的图交给 Strata 看图改写（和视觉双击 Remix 同一个函数）。
-            看图失败就不动视觉（不退回纯文字改写），只记日志。"""
+            """t198u / t223u new-project cover-analysis path: same remix_scene_full as visual Remix —
+            actors first (count = distinct 讲话 speakers; seats actor-is-truth), then visual.
+            On look-failure leave visual unchanged (no text-only fallback); log only."""
             from utility.visual_remix import remix_scene_full
             import config
 
@@ -428,6 +454,46 @@ class PromptFlowsMixin:
             def status(msg, h=head):
                 ui(lambda: var.set(f"{h}\n{msg}"))
             return status
+
+        def moss_worker():
+            """t229u: 本机 ComfyUI 跑 moss_edit_3ref_api.json；每一场单独提交。"""
+            from utility.sd_image_processor import generate_image_moss_edit
+            n = len(jobs)
+            for k, job in enumerate(jobs, 1):
+                scene, prompt, images = job[0], job[1], job[2]
+                if stop["flag"]:
+                    failed.append(f"其余 {n - k + 1} 场：已停止")
+                    break
+                label = in_episode_label(scene, k)
+                head = f"正在处理第 {k}/{n} 张（本集{label}，MOSS）"
+                ui(lambda h=head: var.set(h))
+                try:
+                    img = generate_image_moss_edit(prompt, list(images), status=scene_status(head))
+                    if img is None or not hasattr(img, "save"):
+                        raise RuntimeError("没有拿到图")
+                    ui(lambda s=scene, i=img, l=label: apply(s, i, l))
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"{label}：{exc}")
+
+        def qn_worker():
+            """t234u: 本机 ComfyUI 跑 qwen_edit_3ref_api.json；每一场单独提交。"""
+            from utility.sd_image_processor import generate_image_qwen_edit
+            n = len(jobs)
+            for k, job in enumerate(jobs, 1):
+                scene, prompt, images = job[0], job[1], job[2]
+                if stop["flag"]:
+                    failed.append(f"其余 {n - k + 1} 场：已停止")
+                    break
+                label = in_episode_label(scene, k)
+                head = f"正在处理第 {k}/{n} 张（本集{label}，QN）"
+                ui(lambda h=head: var.set(h))
+                try:
+                    img = generate_image_qwen_edit(prompt, list(images), status=scene_status(head))
+                    if img is None or not hasattr(img, "save"):
+                        raise RuntimeError("没有拿到图")
+                    ui(lambda s=scene, i=img, l=label: apply(s, i, l))
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"{label}：{exc}")
 
         def per_call_worker():
             """Grok（或旧方式）：每一场单独调 make_image。"""
@@ -580,11 +646,16 @@ class PromptFlowsMixin:
             from utility import chrome_account
 
             try:
-                with chrome_account.use(account):  # t129u: 选的 Chrome 账户
-                    if use_gemini:
-                        gemini_session_worker()
-                    else:
-                        per_call_worker()
+                if use_moss:
+                    moss_worker()
+                elif use_qn:
+                    qn_worker()
+                else:
+                    with chrome_account.use(account):  # t129u: 选的 Chrome 账户
+                        if use_gemini:
+                            gemini_session_worker()
+                        else:
+                            per_call_worker()
             finally:
                 # 经 UI 线程排在最后一个 apply 之后：图都写回、clip 队列清空后才 finish
                 ui(lambda: (clip_q.put(None), remix_q.put(None)))
@@ -765,11 +836,10 @@ class PromptFlowsMixin:
 
         def _video_download_dir() -> str:
             """导入视频「下载」来源看的目录：用户 Downloads（存在时），否则项目 download 文件夹。"""
-            from gui.workflow.wf_common import _user_downloads_folder
-
-            folder = _user_downloads_folder()
-            if folder and os.path.isdir(folder):
-                return folder
+            # generated clips go to the working dir (D:\AI_MEDIA\working), not Downloads
+            folder = config.WORKING_DIR
+            os.makedirs(folder, exist_ok=True)
+            return folder
             folder = config.get_project_path(self.workflow.pid) + "/download"
             os.makedirs(folder, exist_ok=True)
             return folder
@@ -828,6 +898,66 @@ class PromptFlowsMixin:
             cfg["video_prompt"] = choice
             save_project_config(parent=self.root)
 
+        def apply_look(look: dict) -> None:
+            """t235u: 提交确认里改过的全场内容写回主窗口（画面风格 / 场景风格 / 讲员 / 地域 · 时代）。"""
+            look = dict(look or {})
+            vs = config.match_visual_style(look.get("visual_style") or "")
+            if vs and hasattr(self, "scene_visual_style"):
+                try:
+                    self.scene_visual_style.set(vs)
+                except Exception:  # noqa: BLE001
+                    pass
+            ss = config_prompt.normalize_scene_style(look.get("scene_style"))
+            if hasattr(self, "scene_style"):
+                try:
+                    self.scene_style.set(ss or config_prompt.SCENE_STYLE_LABELS[0])
+                except Exception:  # noqa: BLE001
+                    pass
+            region = (look.get("region") or "").strip()
+            era = (look.get("era") or "").strip()
+            if region not in config_prompt.SETTING_PLACES:
+                region, era = "", ""
+            eras = config_prompt.setting_era_labels(region)
+            if era not in eras:
+                era = eras[0] if eras else ""
+            if hasattr(self, "setting_region"):
+                try:
+                    self.setting_region.set(region)
+                    if hasattr(self, "setting_era"):
+                        self.setting_era["values"] = eras
+                        self.setting_era.set(era)
+                except Exception:  # noqa: BLE001
+                    pass
+            nar = (look.get("narrator") or "").strip()
+            pc = project_manager.PROJECT_CONFIG
+            if isinstance(pc, dict):
+                if pc.get("narrator") != nar:
+                    pc["narrator"] = nar
+                project_manager.LAST_NARRATOR = nar
+            if callable(getattr(self, "_refresh_narrator_button", None)):
+                try:
+                    self._refresh_narrator_button(nar)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                project_manager.remember_setting_place(region, era)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                project_manager.remember_scene_style(ss)
+            except Exception:  # noqa: BLE001
+                pass
+            if vs:
+                try:
+                    project_manager.LAST_VISUAL_STYLE = vs
+                except Exception:  # noqa: BLE001
+                    pass
+            if callable(getattr(self, "_save_project_look", None)):
+                try:
+                    self._save_project_look()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 全场内容写回项目失败：{exc}")
+
         def on_story_style(key: str) -> None:
             """生场视频里选了叙事风格：写 project story_style，同步主窗口「故事风格」，记为上次选择。"""
             key = config_prompt.normalize_story_style(key)
@@ -871,6 +1001,7 @@ class PromptFlowsMixin:
             saved_choice=(project_manager.PROJECT_CONFIG or {}).get("video_prompt"),
             save_choice=save_video_choice,
             on_story_style=on_story_style,
+            apply_look=apply_look,
             get_actor_portraits=lambda sc: config_prompt.scene_speaker_portraits(sc, self._actor_entry_portrait),
             on_scene_record=lambda: self.workflow.save_scenes_to_json() if self.workflow else None,  # t151u
             episode={

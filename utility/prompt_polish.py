@@ -11,7 +11,8 @@ POLISH_TIMEOUT_S = 60.0
 _SYS_GENERAL = """You are an expert prompt editor for AI video generation (Grok Imagine / Google Veo).
 Rewrite the user's video prompt into ONE concise, precise video-generation prompt in English.
 Keep ALL hard facts:
-- The OUTPUT FORMAT line(s) at the very top, copied verbatim as the first lines.
+- CRITICAL (t244): If the prompt begins with a line containing "MOST IMPORTANT / CRITICAL REQUIREMENT:" and "永远不许加任何字幕", you MUST keep that ENTIRE first line VERBATIM as the very first line of your output. NEVER delete, paraphrase, shorten, translate, move, or reorder this line. It is a non-negotiable system requirement that must survive all polishing.
+- The OUTPUT FORMAT line(s) at the very top (after the critical requirement line if present), copied verbatim as the first lines.
 - Every dialogue line verbatim (same words and punctuation, same order), each with its speaker's name and that speaker's voice (gender, age, voice name).
 - Who is in the clip and the cast lock (exactly these people, nobody else), their look and age.
 - Lighting / time of day and the real-time continuity of the moment.
@@ -26,7 +27,8 @@ Output only the final prompt text: no preface, no notes, no markdown fences."""
 
 _SYS_H3 = """You are an expert prompt editor for the MiniMax H3 audio-video model.
 The user gives a prompt already in the official H3 format. Return an improved prompt in EXACTLY the same structure:
-1. The first line copied verbatim, then one blank line.
+CRITICAL (t244): If the prompt begins with a line containing "MOST IMPORTANT / CRITICAL REQUIREMENT:" and "永远不许加任何字幕", you MUST keep that ENTIRE first line VERBATIM as the very first line of your output. NEVER delete, paraphrase, shorten, translate, move, or reorder this line. It is a non-negotiable system requirement that must survive all polishing.
+1. The first line (the critical requirement or the H3 mode line) copied verbatim, then one blank line.
 2. Then exactly these three fields, each starting on its own line, in this order:
 integrated_multimodal_description: [Shot 1] ...
 overall_soundscape: ...
@@ -40,8 +42,11 @@ Rules:
 - Directions inside the scene: when something is turned, shown or handed to a person ("轉向 David", "turns toward David"), write it with that person as the explicit target, turning sideways inside the scene toward them, never toward the camera or viewer. Copy every sentence containing "not toward the camera" or "Everyone stays inside the scene" verbatim. People never address the camera.
 - Cast lock: copy the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. When the description really changes someone's pose or place (sits down, stands up, walks to...), write it as that same person moving there from where they are, never as a second copy; a person already sitting or standing in <Picture 1> simply stays there, so never invent a move. Do not describe the same move a second time in other words.
 - Copy every sentence that contains a <d> block exactly as given, together with the speaker description in front of it (for example "The young man 林浩 with a young male voice (voice Leo) (S2) says:"), including the bracketed description of each person, the times, the "while ... listens with closed lips" part and the "lip movement switches to ..." part. Rewrite only the sentences without <d>.
-- Lip sync and speaker mapping are the most important facts of this prompt. Copy the sentence starting "Speaker map:" and the sentence starting "Lip sync:" verbatim, with every bracketed person description. Never drop, shorten or soften the lip-sync emphasis, who speaks, who stays silent with closed lips, or the switch of the moving mouth when the speaker changes. Every (S1)/(S2) id always means the same person as in the Speaker map.
+- Lip sync and speaker mapping are the most important facts of this prompt. Copy the sentence starting "Speaker map:" and the sentence starting "Lip sync:" verbatim, with every bracketed person description. Never drop, shorten, swap or soften the lip-sync emphasis, who speaks, who stays silent with closed lips, the switch of the moving mouth when the speaker changes, or each speaker's seat/side (left/right) and clothing in the brackets. Every (S1)/(S2) id always means the same person as in the Speaker map; never move a speaker to the other person's seat or outfit.
+- Self-talk / 自言自语 / 自言自語 (t241/t250): if the prompt contains the sentence starting "Self-talk (自言自语):", copy it verbatim. Never drop it. Self-talk lines have NO lip sync (mouth closed); only interactive dialogue has lip sync.
+- Actor-is-truth for positioning (t223): each speaker's left/right/seat comes ONLY from the Speaker map brackets (which come from the actor parenthesis). If "What happens while they talk" (or any action sentence) puts a named person on the opposite side or in the other person's seat, ignore that positioning — do not rewrite, swap, or merge seats from the action text; keep the Speaker map seats. You may keep story actions, gestures and props from the action text.
 - Copy the sentence starting "On camera:" verbatim. A person who speaks is seen speaking on camera with moving lips, never as a voice-over: never describe a speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is dialogue, write the actions as happening while they talk and add no silence or quiet wording.
+- Keep EVERY copy of this exact sentence verbatim (there are three): "NEVER add any subtitles, captions or on-screen text of the dialogue!" Do not drop, paraphrase, or merge them.
 Output only the final prompt: no preface, no notes, no markdown fences."""
 
 
@@ -166,11 +171,40 @@ def restore_h3_locked_lines(original: str, polished: str) -> str:
 
 
 def split_reference_block(prompt: str) -> tuple:
-    """t150u: 参考图工作流最前面的 REFERENCE PICTURES 段落不交给 Strata 改：(段落 + 空行, H3 正文)。"""
+    """t150u/t246: 参考图工作流的 REFERENCE PICTURES 段落不交给 Strata 改：(前缀 + 段落 + 空行, H3 正文)。
+    
+    t246: 正确处理禁字幕行前缀。如果存在，先剥离，找到 REFERENCE PICTURES，然后重新组装。
+    返回 (ref_block_with_critical_prefix, body)，其中 ref_block 包含禁字幕行（若有）和 REFERENCE PICTURES。
+    """
     text = prompt or ""
-    if text.startswith("REFERENCE PICTURES:") and "\n\n" in text:
-        head, rest = text.split("\n\n", 1)
-        return head + "\n\n", rest
+    
+    # t246: 检查是否以禁字幕行开头
+    try:
+        from config_prompt import VIDEO_NO_SUBTITLE_CRITICAL_LINE
+        critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
+    except ImportError:
+        critical = None
+    
+    critical_prefix = ""
+    working_text = text
+    
+    if critical:
+        first_line = text.split('\n', 1)[0].strip() if text else ""
+        if first_line == critical.strip():
+            # 移除第一行和紧随的空行
+            rest = text[len(first_line):].lstrip('\n')
+            critical_prefix = critical + "\n\n"
+            working_text = rest.strip()
+    
+    # 现在检查 REFERENCE PICTURES
+    if working_text.startswith("REFERENCE PICTURES:") and "\n\n" in working_text:
+        head, rest = working_text.split("\n\n", 1)
+        return critical_prefix + head + "\n\n", rest
+    
+    # 没有 REFERENCE PICTURES，返回禁字幕行前缀（若有）作为 head 的一部分
+    if critical_prefix:
+        return critical_prefix, working_text
+    
     return "", text
 
 
@@ -252,10 +286,22 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         print(f"[Strata 精简] {why}")
         return prompt, why
     secs = time.monotonic() - started
+    # t244: 打磨后立即恢复禁字幕第一行（Strata可能删除或重排序它）
+    try:
+        from config_prompt import ensure_video_no_subtitle_first_line
+        out = ensure_video_no_subtitle_first_line(out)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[Strata 精简] 禁字幕第一行恢复跳过：{_e}")
     out = restore_direction_lines(prompt, out)  # t181u
     if str(backend or "").startswith("minimax"):
         out = restore_h3_dialogue(prompt, out)  # t172u: 对话部分一律用原文
         out = restore_h3_locked_lines(prompt, out)  # t150u: 讲话人对应 + 对口型那两句一律用原句
+        from config_prompt import ensure_h3_no_subtitle_rules, ensure_h3_monologue_no_lipsync_rules  # t238u / t241u
+
+        out = ensure_h3_no_subtitle_rules(out)  # 禁字幕句必须仍有三遍
+        # t250u: 同时检测简体 自言自语 和繁体 自言自語
+        _has_mono = ("自言自语" in (prompt or "") or "自言自語" in (prompt or "") or "Self-talk" in (prompt or ""))
+        out = ensure_h3_monologue_no_lipsync_rules(out, has_monologue=_has_mono)  # t241u
         _first = prompt.strip().splitlines()[0].strip()
         _lines = out.strip().splitlines()
         if _lines and _lines[0].strip() != _first and "integrated_multimodal_description:" in out:
@@ -268,6 +314,19 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         why = f"{bad}，用原提示词（{secs:.1f} 秒）"
         print(f"[Strata 精简] {why}")
         return prompt, why
+    if str(backend or "").startswith("minimax"):
+        from config_prompt import ensure_h3_no_subtitle_rules, ensure_h3_monologue_no_lipsync_rules
+
+        out = ensure_h3_no_subtitle_rules(out)  # t238u: 最终再核对三遍
+        # t250u: 同时检测简体 自言自语 和繁体 自言自語
+        _has_mono2 = ("自言自语" in (prompt or "") or "自言自語" in (prompt or "") or "Self-talk" in (prompt or ""))
+        out = ensure_h3_monologue_no_lipsync_rules(out, has_monologue=_has_mono2)  # t241u
+    # t244: 最终再次确保禁字幕第一行存在（在所有其他恢复步骤之后）
+    try:
+        from config_prompt import ensure_video_no_subtitle_first_line
+        out = ensure_video_no_subtitle_first_line(out)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[Strata 精简] 最终禁字幕第一行确保跳过：{_e}")
     why = f"Strata 精简完成：{len(prompt)} → {len(out)} 字（{secs:.1f} 秒）"
     print(f"[Strata 精简] {why}")
     return out, why
@@ -278,8 +337,9 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
 # 再把描述放进提示词（Speaker map 和每个人第一次说话的地方），然后照常打磨。Strata 看不了图就只用文字。
 
 _SYS_DESCRIBE = """You describe the people of ONE video scene so that a video model can tell them apart and move the lips of the right person.
-You get: the speaker list (speaker id, name, actor description), the scene's visual description, the scene's first frame (Picture 1) and, for some speakers, a portrait.
-For EVERY speaker id write one short English description (at most 35 words) with: clothing and colours, hair and face, facial expression, approximate position and pose in Picture 1 (left / right / centre, foreground / background, standing / sitting / lying, near what), and any distinctive feature. Merge in the person-specific details that the visual description gives for THIS person (clothing, expression, pose, position, what they hold or do, features); each speaker line below quotes them. Where the pictures and the visual description disagree about the look, follow the pictures.
+You get: the speaker list (speaker id, name, actor description with an authoritative parenthesis about clothing and seat/side), the scene's visual description, the scene's first frame (Picture 1) and, for some speakers, a portrait.
+Actor-is-truth for positioning (t223): the actor parenthesis for each speaker (clothing, hair, seat, left/right) is the ONLY source of who sits/stands where for that (S) id. Match the person in Picture 1 by that clothing and seat. IGNORE visual-text positioning entirely when an actor parenthesis exists — do not use, rewrite, or merge left/right/seat from the visual text into the description.
+For EVERY speaker id write one short English description (at most 35 words) with: clothing and colours, hair and face, facial expression, approximate position and pose in Picture 1 (left / right / centre, foreground / background, standing / sitting / lying, near what), and any distinctive feature. Keep the actor's seat (left/right) and clothing. You may merge expression, gesture and action from the visual description for THIS person (never their seat/side). Follow the actor parenthesis + the matching person in Picture 1.
 Use the portrait to recognise the person in Picture 1. If a person is not visible in Picture 1, describe them from the portrait and say they are not in view yet. Do not invent other people. Do not use the person's name or any brackets inside the description.
 Every listed person speaks in the video, so describe the face as visible: never mention a hand on the chin or over the mouth, looking down, a bowed head, a turned-away or hidden face.
 Return only JSON, for example: {"S1": "...", "S2": "..."}"""
@@ -313,7 +373,8 @@ def _strata_client(timeout_s: float):
 
 def describe_speakers(speakers: list, scene_image: str = "", visual: str = "", timeout_s: float = POLISH_TIMEOUT_S,
                       use_images: bool = True) -> tuple:
-    """speakers = [(序号, 名字, 身份/actor 文字, 肖像路径或 "")]。返回 ({序号: 描述}, 说明, 是否看了图)。
+    """speakers = [(序号, 名字, 身份/actor 文字, 肖像路径或 "", 人物括号或省略)]。
+    返回 ({序号: 描述}, 说明, 是否看了图)。
     失败返回 ({}, 原因, False)；图片请求被拒时自动退回只用文字再问一次。"""
     import json
     import os
@@ -325,11 +386,23 @@ def describe_speakers(speakers: list, scene_image: str = "", visual: str = "", t
         from config_prompt import h3_visual_person_note as _vnote
     except Exception:  # noqa: BLE001
         _vnote = None
-    _names = [nm for _n, nm, _i, _p in speakers]
-    for n, name, ident, portrait in speakers:
-        _v = _vnote(str(visual or ""), name, _names) if _vnote else ""  # t151u: 场景描述里讲这个人的小句
-        lines.append(f"- S{n}: {name}" + (f", {ident}" if ident else "") + (", portrait given" if portrait and use_images else "")
-                     + (f"; the visual description says about this person: {_v}" if _v else ""))
+    _names = [nm for _n, nm, *_r in speakers]
+    for n, name, ident, portrait, *rest in speakers:
+        _actor = str(rest[0]).strip() if rest else ""
+        _v = _vnote(str(visual or ""), name, _names) if _vnote else ""  # t151u: scene clauses about this person
+        try:
+            from config_prompt import drop_all_side_clauses as _drop_all
+            if _actor and _v:
+                _v = _drop_all(_v)  # t223u: ignore visual positioning entirely when actor exists
+        except Exception:  # noqa: BLE001
+            pass
+        lines.append(
+            f"- S{n}: {name}"
+            + (f", {ident}" if ident else "")
+            + (f", actor parenthesis (authoritative clothing/seat): {_actor}" if _actor else "")
+            + (", portrait given" if portrait and use_images else "")
+            + (f"; visual about this person (expression/action only; IGNORE all left/right/seat — actor is sole position source): {_v}" if _v else "")
+        )
     lines.append("")
     lines.append("Visual description of the scene: " + (str(visual or "").strip() or "(none)"))
     content = [{"type": "text", "text": "\n".join(lines)}]
@@ -340,7 +413,7 @@ def describe_speakers(speakers: list, scene_image: str = "", visual: str = "", t
                 content += [{"type": "text", "text": "Picture 1 (the scene, first frame of the video):"},
                             {"type": "image_url", "image_url": {"url": _image_data_url(scene_image)}}]
                 seen = True
-            for n, name, _ident, portrait in speakers:
+            for n, name, _ident, portrait, *_rest in speakers:
                 if portrait and os.path.isfile(portrait):
                     content += [{"type": "text", "text": f"Portrait of S{n} {name}:"},
                                 {"type": "image_url", "image_url": {"url": _image_data_url(portrait, 512)}}]

@@ -148,7 +148,13 @@ IMAGINE_SUBMIT_LABELS = ("编辑", "Edit", "Submit", "提交", "Send", "发送",
 # - resolution: button[aria-label="视频分辨率"][aria-haspopup="menu"] -> [role="menuitemradio"] "480p|720p|1080p"
 # - duration:   button[aria-label="视频时长"][aria-haspopup="menu"]   -> [role="menuitemradio"] "6s|10s|15s"
 # - (also 视频音频 toggle, 宽高比 menu)
+# t251u: Video mode button may be icon-only (video-camera SVG). Use exact aria-label/title only.
 IMAGINE_VIDEO_MODE_LABELS = ("视频", "Video")
+# t251u: Additional exact aria-label / title patterns for icon-only video toggle (NOT navigation/library)
+IMAGINE_VIDEO_ICON_ARIA_LABELS = ("video", "Video", "视频", "影片", "Create video", "生成视频")
+# t251u: Highly specific SVG icon identifiers (lucide, heroicons, data-icon attrs)
+# Note: data-lucide="video" means lucideIcon="video", so we check if lucideIcon equals "video"
+IMAGINE_VIDEO_ICON_SVG_IDS = ("lucide-video", "heroicon-video", "video-camera", "videocam", "video")
 IMAGINE_VIDEO_RES_LABELS = ("视频分辨率", "Video resolution", "Resolution")
 IMAGINE_VIDEO_DUR_LABELS = ("视频时长", "Video duration", "Duration")
 IMAGINE_VIDEO_TIMEOUT_S = 15 * 60
@@ -176,29 +182,65 @@ IMAGINE_COPY_LABELS = ("复制图像", "Copy image")
 IMAGINE_DOWNLOAD_LABELS = ("下载", "Download")
 
 IMAGINE_FIND_SUBMIT_JS = """(labels) => {
+  // t240u: also match the round blue up-arrow (often no / empty aria-label) inside the composer.
   const input = document.querySelector('[data-testid="chat-input"]');
   if (!input) return null;
   const ed = input.querySelector('[contenteditable="true"]') || input;
   const er = ed.getBoundingClientRect();
   const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   let scope = input;
-  for (let i = 0; i < 4 && scope.parentElement; i++) scope = scope.parentElement;
-  // t117u: a long prompt makes the editor tall (scrolls at ~160px), so the send arrow sits BELOW the
-  // editor's middle; the old "within 80px of the editor centre" test dropped it. Prefer the real
-  // form submit (aria-label 提交, type=submit), then any labelled button right of / below the editor.
+  for (let i = 0; i < 6 && scope.parentElement; i++) scope = scope.parentElement;
+  const form = ed.closest('form') || input.closest('form') || scope;
   const all = [...scope.querySelectorAll('button')].filter(vis);
-  const labelled = (b) => labels.includes((b.getAttribute('aria-label') || '').trim());
+  const labOf = (b) => (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+  const labelled = (b) => {
+    const a = labOf(b);
+    if (labels.includes(a)) return true;
+    return /^(Submit|Send|提交|发送|生成|Generate|Edit|编辑)$/i.test(a);
+  };
+  const hasUpArrow = (b) => {
+    const svg = b.querySelector('svg');
+    if (!svg) return false;
+    const paths = [...svg.querySelectorAll('path, polyline, line, polygon')].map(
+      (el) => (el.getAttribute('d') || '') + ' ' + (el.getAttribute('points') || '')
+    ).join(' ').toLowerCase();
+    // common up-arrow / send chevron path fragments, or lucide/heroicons arrow-up
+    if (/arrow|send|m12 19|m5 12|l12 5|l19 12|0 -1|v-/.test(paths)) return true;
+    if (/arrow-up|lucide-arrow|icon-arrow|send/i.test(svg.getAttribute('class') || '' + (svg.outerHTML || '').slice(0, 200))) return true;
+    // round-ish button (aspect ~1) containing any svg, sitting bottom-right of composer
+    const r = b.getBoundingClientRect();
+    const roundish = r.width >= 28 && r.width <= 64 && Math.abs(r.width - r.height) <= 12;
+    return roundish && !!svg;
+  };
+  const inComposerRight = ({r}) => r.left >= er.left + er.width * 0.45
+    && r.top + r.height / 2 >= er.top - 40 && r.top <= er.bottom + 180;
+  const mark = (b) => {
+    const r = b.getBoundingClientRect();
+    b.setAttribute('data-grok-cdp-submit', '1');
+    return {aria: labOf(b) || (b.type === 'submit' ? 'type=submit' : 'arrow'),
+            disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true',
+            x: r.left + r.width / 2, y: r.top + r.height / 2};
+  };
+  // 1) type=submit + known label
   let cands = all.filter((b) => b.type === 'submit' && labelled(b));
+  // 2) labelled or type=submit in the composer right zone
   if (!cands.length) cands = all.filter((b) => labelled(b) || b.type === 'submit');
-  cands = cands.map((b) => ({b, r: b.getBoundingClientRect()}))
-    .filter(({r}) => r.left >= er.left + er.width * 0.5 && r.top + r.height / 2 >= er.top - 40
-                     && r.top <= er.bottom + 160)
+  let ranked = cands.map((b) => ({b, r: b.getBoundingClientRect()})).filter(inComposerRight)
     .sort((x, y) => y.r.left - x.r.left);
-  if (!cands.length) return null;
-  const {b, r} = cands[0];
-  b.setAttribute('data-grok-cdp-submit', '1');
-  return {aria: b.getAttribute('aria-label') || '', disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true',
-          x: r.left + r.width / 2, y: r.top + r.height / 2};
+  if (ranked.length) return mark(ranked[0].b);
+  // 3) form's own submit
+  if (form) {
+    const fs = [...form.querySelectorAll('button[type="submit"], button')].filter(vis)
+      .filter((b) => b.type === 'submit' || labelled(b) || hasUpArrow(b));
+    const fr = fs.map((b) => ({b, r: b.getBoundingClientRect()})).filter(inComposerRight)
+      .sort((x, y) => y.r.left - x.r.left);
+    if (fr.length) return mark(fr[0].b);
+  }
+  // 4) round up-arrow svg button bottom-right of composer (current grok.com/imagine UI)
+  const arrows = all.filter(hasUpArrow).map((b) => ({b, r: b.getBoundingClientRect()}))
+    .filter(inComposerRight).sort((x, y) => (y.r.left - x.r.left) || (y.r.top - x.r.top));
+  if (arrows.length) return mark(arrows[0].b);
+  return null;
 }"""
 
 IMAGINE_STATE_JS = """(args) => {
@@ -779,10 +821,23 @@ def _wait_submitted(page, before: dict, timeout_s: float) -> bool:
 
 
 def _imagine_submit(page, status: Status) -> None:
-    """t117u: find the send arrow (aria-label 提交 / type=submit), wait until enabled, real mouse click,
-    verify the page started generating; one retry only if the prompt is verifiably still unsent."""
+    """t117u / t240u: find the send arrow (aria-label / type=submit / round up-arrow svg), wait until
+    enabled, real mouse click; if no button, press Enter. Verify generation started."""
     before = _imagine_state(page)
     pt = _wait_submit_enabled(page, status)
+    if not pt:
+        # t240u fallback: focus editor and press Enter (composer often submits on Enter)
+        _say(status, "没找到提交按钮，试按 Enter 提交…")
+        try:
+            ed = page.locator('[data-testid="chat-input"] [contenteditable="true"]').first
+            if ed.count():
+                ed.click(timeout=3000)
+            page.keyboard.press("Enter")
+            if _wait_submitted(page, before, IMAGINE_SUBMIT_CONFIRM_S):
+                return
+        except Exception as exc:
+            print(f"[grok_cdp] Enter submit fallback failed: {exc}")
+        # continue into existing helper path below
     if pt and not pt.get("disabled"):
         for attempt in (1, 2):
             _say(status, f"提交生成（{pt.get('aria') or 'submit'}）…" + ("（重试）" if attempt == 2 else ""))
@@ -1057,26 +1112,62 @@ def _menu_pick(page, trigger_labels, item_text: str, status: Status = None) -> b
         return False
 
 
-# t115u: Imagine 输入框的模式单选 button[role=radio][aria-label=图片|视频],选中的 aria-checked="true";
-# 视频模式还会出现 视频分辨率 / 视频时长 按钮(720p / 10s)。
+# t115u / t240u: Imagine 模式 pill（图片 / 视频）。旧 UI 是 role=radio + aria-checked;
+# 新 UI 常是带「图片」文字的 pill，选中靠 aria-pressed / aria-selected / data-state / class。
 IMAGINE_IMAGE_MODE_LABELS = ("图片", "Image")
 IMAGINE_MODE_STATE_JS = """([imgLabels, vidLabels]) => {
   const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
-  const radios = [...document.querySelectorAll('button[role="radio"]')].filter(vis);
-  const pick = (labs) => radios.find((b) => labs.includes((b.getAttribute('aria-label') || '').trim()));
+  const labOf = (b) => (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+  const textOf = (b) => (b.innerText || b.textContent || '').replace(/\\s+/g, ' ').trim();
+  const matchLab = (b, labs) => {
+    const a = labOf(b), t = textOf(b);
+    if (labs.includes(a) || labs.includes(t)) return true;
+    // pill may be "图片" with an icon; allow startsWith / contains exact token
+    return labs.some((lab) => a === lab || t === lab || t.startsWith(lab) || new RegExp('(?:^|\\\\b)' + lab + '(?:\\\\b|$)').test(t));
+  };
+  const isSelected = (b) => {
+    if (!b) return null;
+    const ariaChecked = b.getAttribute('aria-checked');
+    if (ariaChecked === 'true') return true;
+    if (ariaChecked === 'false') return false;
+    const pressed = b.getAttribute('aria-pressed');
+    if (pressed === 'true') return true;
+    if (pressed === 'false') return false;
+    const selected = b.getAttribute('aria-selected');
+    if (selected === 'true') return true;
+    if (selected === 'false') return false;
+    const ds = (b.getAttribute('data-state') || '').toLowerCase();
+    if (['on', 'checked', 'active', 'selected', 'open'].includes(ds)) return true;
+    if (['off', 'unchecked', 'inactive', 'closed'].includes(ds)) return false;
+    const cls = (b.className && b.className.toString ? b.className.toString() : String(b.className || '')).toLowerCase();
+    if (/\\b(selected|active|bg-\\S*primary|bg-\\S*accent|ring-|is-active|is-selected)\\b/.test(cls)) return true;
+    // sibling radio group: if this one has a filled/elevated look vs peers — soft signal only
+    return null;
+  };
+  // Prefer composer-scoped buttons (near chat-input); fall back to whole page.
+  const input = document.querySelector('[data-testid="chat-input"]');
+  let scope = input || document.body;
+  for (let i = 0; i < 6 && scope && scope.parentElement; i++) scope = scope.parentElement;
+  const pool = [...(scope || document).querySelectorAll('button, [role="radio"], [role="tab"]')].filter(vis);
+  const pick = (labs) => pool.find((b) => matchLab(b, labs))
+    || [...document.querySelectorAll('button, [role="radio"], [role="tab"]')].filter(vis).find((b) => matchLab(b, labs));
   const img = pick(imgLabels), vid = pick(vidLabels);
   let videoCtl = false;
   for (const b of document.querySelectorAll('button')) {
     if (!vis(b)) continue;
-    const a = (b.getAttribute('aria-label') || '').trim();
-    const t = (b.innerText || '').trim();
+    const a = labOf(b);
+    const t = textOf(b);
     if (/^(视频分辨率|视频时长|Video resolution|Video duration)$/i.test(a) || /^(480p|720p|1080p|6s|10s|15s)$/i.test(t)) { videoCtl = true; break; }
   }
+  const imageSel = isSelected(img);
+  const videoSel = isSelected(vid);
   return {
     hasImage: !!img, hasVideo: !!vid,
-    image: img ? img.getAttribute('aria-checked') === 'true' : null,
-    video: vid ? vid.getAttribute('aria-checked') === 'true' : null,
+    image: imageSel,
+    video: videoSel,
     videoCtl,
+    imageLab: img ? (labOf(img) || textOf(img)).slice(0, 32) : '',
+    videoLab: vid ? (labOf(vid) || textOf(vid)).slice(0, 32) : '',
   };
 }"""
 
@@ -1090,49 +1181,365 @@ def _imagine_mode_state(page) -> dict:
 
 
 def _is_image_mode(st: dict) -> bool:
+    """Strict: explicitly selected image, not video, no video controls."""
     return bool(st) and st.get("image") is True and not st.get("video") and not st.get("videoCtl")
 
 
-def _ensure_image_mode(page, status: Status = None) -> None:
-    """切到「图片」模式并确认;已经是就不点(避免切换成视频)。确认不了就抛 RuntimeError,不提交。"""
-    st = _imagine_mode_state(page)
+def _image_mode_ok_enough(st: dict, *, clicked: bool = False) -> bool:
+    """t240u: allow proceed when UI selection attrs are ambiguous but we are clearly not in video.
+    If we already clicked the 图片 pill and video is not selected / no videoCtl, treat as OK."""
     if _is_image_mode(st):
-        return
-    for attempt in range(2):
-        clicked = False
-        for lab in IMAGINE_IMAGE_MODE_LABELS:
-            loc = page.locator(f'button[role="radio"][aria-label="{lab}"]')
+        return True
+    if not st:
+        return False
+    if st.get("video") is True or st.get("videoCtl"):
+        return False
+    if st.get("image") is True:
+        return True
+    # Uncertain selection attrs (null) but 图片 control exists and video is not on.
+    if clicked and st.get("hasImage") and st.get("video") is not True and not st.get("videoCtl"):
+        return True
+    # Already looks like image selected via soft signals, video absent.
+    if st.get("hasImage") and st.get("image") is not False and st.get("video") is not True and not st.get("videoCtl"):
+        # Only soft-OK when image was detected as selected OR we never saw a video toggle on.
+        if st.get("image") is True or (clicked and st.get("hasVideo") and st.get("video") is False):
+            return True
+        if clicked and st.get("hasImage") and not st.get("videoCtl"):
+            return True
+    return False
+
+
+def _click_image_mode_button(page) -> bool:
+    """Click the 图片 / Image mode pill. Tries several selectors for old+new Imagine UI."""
+    selectors = []
+    for lab in IMAGINE_IMAGE_MODE_LABELS:
+        selectors.extend([
+            f'button[role="radio"][aria-label="{lab}"]',
+            f'button[aria-label="{lab}"]',
+            f'[role="radio"][aria-label="{lab}"]',
+            f'[role="tab"][aria-label="{lab}"]',
+            f'button:has-text("{lab}")',
+        ])
+    for sel in selectors:
+        loc = page.locator(sel)
+        try:
+            n = loc.count()
+        except Exception:
+            continue
+        for i in range(min(n, 4)):
             try:
-                if loc.count() and loc.first.is_visible():
-                    loc.first.click(timeout=5000)  # 真实鼠标点击(pointer 事件),不用 el.click()
-                    clicked = True
-                    break
+                el = loc.nth(i)
+                if el.is_visible():
+                    el.click(timeout=5000)
+                    return True
             except Exception as exc:
-                print(f"[grok_cdp] image mode click failed: {exc}")
+                print(f"[grok_cdp] image mode click failed ({sel}): {exc}")
+    # Last resort: JS find + click near composer
+    try:
+        ok = page.evaluate(
+            """(labs) => {
+              const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
+              const input = document.querySelector('[data-testid="chat-input"]');
+              let scope = input || document.body;
+              for (let i = 0; i < 6 && scope.parentElement; i++) scope = scope.parentElement;
+              const nodes = [...scope.querySelectorAll('button, [role="radio"], [role="tab"]')].filter(vis);
+              const hit = nodes.find((b) => {
+                const a = (b.getAttribute('aria-label') || '').trim();
+                const t = (b.innerText || '').replace(/\\s+/g, ' ').trim();
+                return labs.includes(a) || labs.includes(t) || labs.some((l) => t.startsWith(l));
+              });
+              if (!hit) return false;
+              hit.click();
+              return true;
+            }""",
+            list(IMAGINE_IMAGE_MODE_LABELS),
+        )
+        return bool(ok)
+    except Exception as exc:
+        print(f"[grok_cdp] image mode JS click failed: {exc}")
+        return False
+
+
+def _ensure_image_mode(page, status: Status = None) -> None:
+    """切到「图片」模式并确认。t240u: 点了「图片」但选中态读不准时，只要不像视频就继续提交。"""
+    st = _imagine_mode_state(page)
+    if _image_mode_ok_enough(st, clicked=False):
+        return
+    clicked_any = False
+    for attempt in range(2):
+        clicked = _click_image_mode_button(page)
+        clicked_any = clicked_any or clicked
         time.sleep(0.8)
         st = _imagine_mode_state(page)
-        if _is_image_mode(st):
-            _say(status, "已切到「图片」模式")
+        if _image_mode_ok_enough(st, clicked=clicked_any):
+            _say(status, "已切到「图片」模式" if clicked_any else "已在「图片」模式")
             return
         if not clicked:
             break
+    # t240u: if we did click 图片 and still uncertain (not clearly video), proceed rather than abort.
+    if clicked_any and not st.get("video") and not st.get("videoCtl"):
+        print(f"[grok_cdp] image mode uncertain after click, proceeding: {st}")
+        _say(status, "「图片」模式未读到选中态，已点过「图片」，继续提交")
+        return
     print(f"[grok_cdp] image mode not confirmed: {st}")
     raise RuntimeError("Grok Imagine 没能确认在「图片」模式（可能还是视频模式），没有提交")
 
 
+def _video_mode_verified(page) -> bool:
+    """t251u/t252u/t253u: Verify video mode is active: video selected AND image NOT selected.
+    
+    CRITICAL (t253 bug fix): Image explicitly selected MUST veto ALL success paths.
+    Controls alone (720p/15s/9:16) are NEVER enough without affirmative video-mode evidence.
+    Stale controls from previous session must not cause false positive when image selected.
+    
+    Detection requires BOTH:
+    - Affirmative video evidence (video pill selected OR video controls + video pill found)
+    - NO image veto (image not explicitly selected via aria-checked/pressed/selected)
+    """
+    st = _imagine_mode_state(page)
+    
+    # VETO: If image is explicitly selected, video mode is NOT active (even with stale controls)
+    if st.get("image") is True:
+        return False
+    
+    # Strategy 1: explicit video selection detected AND image not selected
+    if st.get("video") is True:
+        return True
+    
+    # Strategy 2: hasVideo pill AND videoCtl visible AND image not True
+    # But ONLY if we also check for image veto in JS
+    if st.get("hasVideo") and st.get("videoCtl") and st.get("image") is not True:
+        # Double-check with JS that image is not explicitly selected
+        pass  # Fall through to JS check which has image veto
+    
+    # Strategy 3 (t252u/t253u): JS probe with STRICT image veto
+    try:
+        confirmed = page.evaluate(
+            """() => {
+              const vis = (el) => { 
+                if (!el) return false;
+                const r = el.getBoundingClientRect(); 
+                return r.width > 4 && r.height > 4; 
+              };
+              const input = document.querySelector('[data-testid="chat-input"]');
+              if (!input) return false;
+              let scope = input;
+              for (let i = 0; i < 6 && scope.parentElement; i++) scope = scope.parentElement;
+              
+              const buttons = [...scope.querySelectorAll('button')].filter(vis);
+              
+              // Find image and video pills
+              const imagePill = buttons.find((b) => {
+                const text = (b.innerText || '').replace(/\\s+/g, '').trim();
+                const label = (b.getAttribute('aria-label') || '').trim();
+                return text === '图片' || label === '图片' || text.includes('图片') ||
+                       text.toLowerCase() === 'image' || label.toLowerCase() === 'image';
+              });
+              const videoPill = buttons.find((b) => {
+                const text = (b.innerText || '').replace(/\\s+/g, '').trim();
+                const label = (b.getAttribute('aria-label') || '').trim();
+                return text === '视频' || label === '视频' || text.includes('视频') ||
+                       text.toLowerCase() === 'video' || label.toLowerCase() === 'video';
+              });
+              
+              if (!videoPill) return false;
+              
+              // Check selection state helper
+              const isSelected = (pill) => {
+                if (!pill) return false;
+                const pressed = pill.getAttribute('aria-pressed');
+                const selected = pill.getAttribute('aria-selected');
+                const checked = pill.getAttribute('aria-checked');
+                const dataState = (pill.getAttribute('data-state') || '').toLowerCase();
+                const cls = (pill.className || '').toString().toLowerCase();
+                
+                if (pressed === 'true' || selected === 'true' || checked === 'true') return true;
+                if (['on', 'active', 'selected', 'checked'].includes(dataState)) return true;
+                if (/\\b(active|selected|bg-.*primary|bg-.*accent|is-active|is-selected)\\b/.test(cls)) return true;
+                return false;
+              };
+              
+              // Check if explicitly NOT selected
+              const isExplicitlyUnselected = (pill) => {
+                if (!pill) return false;
+                const pressed = pill.getAttribute('aria-pressed');
+                const selected = pill.getAttribute('aria-selected');
+                const checked = pill.getAttribute('aria-checked');
+                return pressed === 'false' || selected === 'false' || checked === 'false';
+              };
+              
+              const imageSelected = isSelected(imagePill);
+              const videoSelected = isSelected(videoPill);
+              const imageExplicitlyUnselected = isExplicitlyUnselected(imagePill);
+              const videoExplicitlyUnselected = isExplicitlyUnselected(videoPill);
+              
+              // CRITICAL VETO: If image is explicitly selected, return false immediately
+              if (imageSelected) return false;
+              
+              // If video is explicitly selected and image is not, confirmed
+              if (videoSelected && !imageSelected) return true;
+              
+              // If video is explicitly unselected, not in video mode
+              if (videoExplicitlyUnselected) return false;
+              
+              // Check for visible video controls
+              const hasResolution = buttons.some((b) => {
+                const t = (b.innerText || '').trim();
+                const a = (b.getAttribute('aria-label') || '').toLowerCase();
+                return /^(480p|720p|1080p)$/i.test(t) || a.includes('分辨率') || a.includes('resolution');
+              });
+              const hasDuration = buttons.some((b) => {
+                const t = (b.innerText || '').trim();
+                const a = (b.getAttribute('aria-label') || '').toLowerCase();
+                return /^(6s|10s|15s)$/i.test(t) || a.includes('时长') || a.includes('duration');
+              });
+              const hasAspect = buttons.some((b) => {
+                const t = (b.innerText || '').trim();
+                const a = (b.getAttribute('aria-label') || '').toLowerCase();
+                return /^(9:16|16:9|1:1)$/i.test(t) || a.includes('宽高比') || a.includes('aspect');
+              });
+              
+              const controlsVisible = hasResolution && hasDuration;
+              
+              // Controls + video pill found + image explicitly UNselected = video mode
+              // This handles the screenshot case: 视频 pill active, controls visible, image inactive
+              if (controlsVisible && hasAspect && imageExplicitlyUnselected) return true;
+              
+              // Controls visible alone is NOT enough (could be stale) - need some video affirmative
+              // Require video pill to have SOME selected-looking state or image to be explicitly off
+              return false;
+            }"""
+        )
+        if confirmed:
+            return True
+    except Exception as exc:
+        print(f"[grok_cdp] video mode JS probe failed: {exc}")
+    
+    return False
+
+
+def _click_video_mode_button_scoped(page) -> bool:
+    """t251u/t252u: Click video mode button with strict composer scoping.
+    
+    t252: User screenshot shows actual UI has "视频" pill (camera icon + text), no role="radio".
+    Must detect and click this pill pattern, scoped strictly to composer area.
+    
+    Safety rules:
+    - All selectors scoped to composer area (near chat-input)
+    - Match "视频" text in button innerText (actual UI pattern from screenshot)
+    - Also try exact aria-label/title matches
+    - No generic 'sibling with SVG' heuristic (could click audio/mic/send)
+    - Specific video icon attributes only as fallback (lucide-video, data-icon="video")
+    - Fail safely if no confident match found
+    """
+    # Use JS for all button finding to ensure consistent scoping
+    try:
+        ok = page.evaluate(
+            """([vidLabels, vidIconLabels, vidSvgIds, imgLabels]) => {
+              const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 8 && r.height > 8; };
+              const labOf = (b) => (b.getAttribute('aria-label') || '').trim();
+              const titleOf = (b) => (b.getAttribute('title') || '').trim();
+              const textOf = (b) => (b.innerText || '').replace(/\\s+/g, '').trim();
+              
+              // STRICT: Scope to composer area only (near chat-input)
+              const input = document.querySelector('[data-testid="chat-input"]');
+              if (!input) return false;
+              let scope = input;
+              for (let i = 0; i < 6 && scope.parentElement; i++) scope = scope.parentElement;
+              
+              // Only consider buttons INSIDE the scoped composer container
+              const buttons = [...scope.querySelectorAll('button, [role="radio"], [role="tab"]')].filter(vis);
+              
+              // t252u: Primary strategy - find button with "视频" text (actual UI from screenshot)
+              let vidBtn = buttons.find((b) => {
+                const t = textOf(b);
+                const a = labOf(b);
+                // Match "视频" text exactly or as part of button text
+                return t === '视频' || a === '视频' || vidLabels.includes(t) || vidLabels.includes(a);
+              });
+              
+              // Fallback: try icon-only aria-label/title matches
+              if (!vidBtn) {
+                vidBtn = buttons.find((b) => {
+                  const a = labOf(b), title = titleOf(b);
+                  return vidIconLabels.includes(a) || vidIconLabels.includes(title);
+                });
+              }
+              
+              // Last resort: specific SVG icon identifiers on sibling of image button
+              if (!vidBtn) {
+                const imgBtn = buttons.find((b) => {
+                  const t = textOf(b), a = labOf(b);
+                  return t === '图片' || a === '图片' || imgLabels.includes(t) || imgLabels.includes(a);
+                });
+                if (imgBtn) {
+                  const parent = imgBtn.parentElement;
+                  if (parent) {
+                    const siblings = [...parent.children].filter((el) => {
+                      const b = el.matches('button') ? el : el.querySelector('button');
+                      return b && b !== imgBtn && vis(b);
+                    }).map((el) => el.matches('button') ? el : el.querySelector('button'));
+                    
+                    vidBtn = siblings.find((b) => {
+                      if (!b) return false;
+                      const svg = b.querySelector('svg');
+                      if (!svg) return false;
+                      const svgClass = (svg.getAttribute('class') || '').toLowerCase();
+                      const svgId = (svg.getAttribute('id') || '').toLowerCase();
+                      const dataIcon = (svg.getAttribute('data-icon') || b.getAttribute('data-icon') || '').toLowerCase();
+                      const lucideIcon = (svg.getAttribute('data-lucide') || '').toLowerCase();
+                      
+                      for (const id of vidSvgIds) {
+                        if (svgClass.includes(id) || svgId.includes(id) || dataIcon.includes(id) || lucideIcon.includes(id)) {
+                          return true;
+                        }
+                      }
+                      const svgLabel = (svg.getAttribute('aria-label') || '').toLowerCase();
+                      return svgLabel && (svgLabel.includes('video') || svgLabel.includes('视频'));
+                    });
+                  }
+                }
+              }
+              
+              if (!vidBtn) return false;
+              
+              // Safety: don't click if this looks like send/mic/attach/remove/audio
+              const a = labOf(vidBtn).toLowerCase();
+              const t = titleOf(vidBtn).toLowerCase();
+              const text = textOf(vidBtn).toLowerCase();
+              const dangerLabels = ['send', 'submit', 'mic', 'microphone', 'attach', 'upload', 'remove', 'delete', 'close', 'audio', '发送', '麦克风', '上传', '删除', '音频'];
+              for (const d of dangerLabels) {
+                if (a.includes(d) || t.includes(d) || text.includes(d)) return false;
+              }
+              
+              vidBtn.click();
+              return true;
+            }""",
+            [list(IMAGINE_VIDEO_MODE_LABELS), list(IMAGINE_VIDEO_ICON_ARIA_LABELS), 
+             list(IMAGINE_VIDEO_ICON_SVG_IDS), list(IMAGINE_IMAGE_MODE_LABELS)],
+        )
+        return bool(ok)
+    except Exception as exc:
+        print(f"[grok_cdp] video mode JS click failed: {exc}")
+        return False
+
+
 def _set_video_mode(page, resolution: str, duration: str, status: Status = None) -> None:
-    clicked = False
-    for lab in IMAGINE_VIDEO_MODE_LABELS:
-        loc = page.locator(f'button[role="radio"][aria-label="{lab}"]')
-        try:
-            if loc.count():
-                loc.first.click(timeout=5000)
-                clicked = True
-                break
-        except Exception:
-            continue
-    if not clicked:
-        raise RuntimeError("没找到 Grok Imagine 的「视频」模式按钮")
+    """t251u: Robust video mode selection with strict scoping and verification."""
+    # Check if already in verified video mode
+    if _video_mode_verified(page):
+        _say(status, "已在「视频」模式")
+    else:
+        # Try to click video mode button (scoped to composer)
+        clicked = _click_video_mode_button_scoped(page)
+        if not clicked:
+            raise RuntimeError("没找到 Grok Imagine 的「视频」模式按钮（可以继续手动粘贴）")
+        time.sleep(0.8)
+        # Verify video mode: must be selected AND image NOT selected
+        if not _video_mode_verified(page):
+            time.sleep(0.5)
+            if not _video_mode_verified(page):
+                raise RuntimeError("点击了疑似视频按钮但无法确认视频模式（需视频选中且图片未选中）")
     time.sleep(0.8)
     if not _menu_pick(page, IMAGINE_VIDEO_RES_LABELS, resolution, status):
         raise RuntimeError(f"没能把视频分辨率设成 {resolution}")
@@ -1234,6 +1641,11 @@ def _save_video(page, st: dict, dest_dir: str, status: Status = None) -> str:
 def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
                       resolution: str = "720p", duration: str = "10s") -> str:
     """Prepared Imagine tab (image attached): prompt, 视频 mode 720p/15s, submit, wait, save mp4 → path."""
+    try:  # t244: 最重要的禁字幕行必须是第一行（发送前最后一道保障）
+        from config_prompt import ensure_video_no_subtitle_first_line
+        prompt = ensure_video_no_subtitle_first_line(prompt)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[Grok Video] 禁字幕第一行注入跳过：{_e}")
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     bt = _bt()
     prompt = (prompt or "").strip()
@@ -1265,6 +1677,11 @@ def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
 def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = None, *,
                resolution: str = "720p", duration: str = "10s") -> str:
     """Grok Imagine image→video: attach ``image_path`` + ``prompt``; returns the saved mp4 path."""
+    try:  # t244: 最重要的禁字幕行必须是第一行（发送前最后一道保障）
+        from config_prompt import ensure_video_no_subtitle_first_line
+        prompt = ensure_video_no_subtitle_first_line(prompt)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[Grok Video] 禁字幕第一行注入跳过：{_e}")
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prepare_imagine(image_path, status)
     return run_imagine_video(prompt, dest_dir, status, resolution=resolution, duration=duration)

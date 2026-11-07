@@ -433,6 +433,7 @@ def _configure_channel_list_treeview(tree: ttk.Treeview) -> None:
     for col, width, anchor in (
         ("#0", 46, "center"),
         ("views", 66, "e"),
+        ("heat", 72, "e"),
         ("duration", 50, "center"),
         ("upload_date", 86, "center"),
         ("status", 150, "center"),
@@ -1109,7 +1110,10 @@ class MediaGUIManager:
         t = (self.fetch_text_content(video_detail) or "").strip()
         if t:
             return t
-        return video_detail.get("analyzed_content")
+        return _pnb.analyzed_content_text(
+            video_detail.get("analyzed_content"),
+            video_detail.get("language") or getattr(self, "language", "") or "",
+        )
 
 
 
@@ -1207,7 +1211,7 @@ class MediaGUIManager:
     ) -> list | None:
         """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
         has_override = content_override is not None and str(content_override).strip()
-        if not has_override and not (video_detail.get("analyzed_content") or "").strip():
+        if not has_override and not _pnb.analyzed_content_text(video_detail.get("analyzed_content")):
             return None
         _, prompt = self._combined_prompt_text_for_label(
             video_detail,
@@ -1280,7 +1284,7 @@ class MediaGUIManager:
         if not prompt_label:
             prompt_label = _prompt_choice_entries(channel_key)[0][0]
         has_override = content_override is not None and str(content_override).strip()
-        if not has_override and not (video_detail.get("analyzed_content") or "").strip():
+        if not has_override and not _pnb.analyzed_content_text(video_detail.get("analyzed_content")):
             messagebox.showwarning(
                 "提示",
                 "智能生成需要 analyzed_content 作为 {content} 原始材料。\n请先在「分析」中填写或生成内容。",
@@ -1604,7 +1608,10 @@ class MediaGUIManager:
         rewritten = (rewritten or "").strip()
         if not rewritten:
             return False
-        old = (video_detail.get("analyzed_content") or "").rstrip() if append else ""
+        old = _pnb.analyzed_content_text(
+            video_detail.get("analyzed_content"),
+            video_detail.get("language") or getattr(self, "language", "") or "",
+        ).rstrip() if append else ""
         video_detail["analyzed_content"] = (old + "\n\n" + rewritten) if old else rewritten
         return True
 

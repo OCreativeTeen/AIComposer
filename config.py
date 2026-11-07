@@ -933,17 +933,20 @@ def _env_list(name: str, default: str, sep: str = ",") -> list:
 
 
 # 本机 Strata（OpenAI 兼容）
-STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.227:8080/v1")
+STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.185:8080/v1")
 # Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
 VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://127.0.0.1:17493")  # t195u: Voicebox 装在本机（原来在 192.168.1.30）
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
-COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.185:8188")  # dead placeholder
+COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.36:8188")  # dead placeholder
+# t229u / t230u: MOSS 图片编辑 ComfyUI 在 asus2060（192.168.1.30:8188），不是本机 127.0.0.1
+COMFYUI_MOSS_URL = _env("COMFYUI_MOSS_URL", "http://192.168.1.30:8188")
+# t234u: Qwen(QN) 图片编辑与 MOSS 同机 ComfyUI；可用 COMFYUI_QN_URL 覆盖，默认同 MOSS
+COMFYUI_QN_URL = _env("COMFYUI_QN_URL", COMFYUI_MOSS_URL)
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder
-# t148u: MiniMax H3 图生视频的 ComfyUI（192.168.1.36，启动要加 --listen 0.0.0.0）
+# t148u / t239u: MiniMax H3 图生视频的 ComfyUI（192.168.1.36 5070Ti 桌面，启动要加 --listen 0.0.0.0）
 COMFYUI_VIDEO_URL = _env("COMFYUI_VIDEO_URL", "http://192.168.1.36:8188")
-# t194u: 两台 ComfyUI 跑 MiniMax H3：RTX 5070 Ti（192.168.1.36，原 3090 换掉了）和 RTX 5060（192.168.1.30）。
-# 地址可用 COMFYUI_VIDEO_URL_5070TI / COMFYUI_VIDEO_URL_5060 覆盖。旧的 COMFYUI_VIDEO_URL_3090 / _5070 不再读
-# （_5070 原来指向已经撤掉的 .185）。
+# t194u / t239u: 两台 ComfyUI 跑 MiniMax H3：RTX 5070 Ti（192.168.1.36 桌面）和 RTX 5060（192.168.1.30）。
+# 地址可用 COMFYUI_VIDEO_URL_5070TI / COMFYUI_VIDEO_URL_5060 覆盖。旧的 COMFYUI_VIDEO_URL_3090 / _5070 不再读。
 # workflow：每个选项用哪个 workflow/ 下的工作流。两台都是 Blackwell → 都用 _5070.json（nvfp4、exact_low_vram）；
 # MiniMax_H3_api_3090.json 留在仓库里，现在没有选项用它。
 MINIMAX_VARIANTS = {
@@ -952,7 +955,7 @@ MINIMAX_VARIANTS = {
     "minimax_5060": {"label": "MiniMax 5060", "url": _env("COMFYUI_VIDEO_URL_5060", "http://192.168.1.30:8188"),
                      "workflow": "MiniMax_H3_api_5070.json"},
 }
-# t194u: 旧的保存值 → 新键（.185 已撤，旧 minimax_5070 和 minimax_3090 都换成 .36 的 5070Ti）
+# t194u / t239u: 旧的保存值 → 新键（minimax / minimax_3090 / minimax_5070 → minimax_5070ti，现指向 .185）
 MINIMAX_LEGACY_KEYS = {"minimax": "minimax_5070ti", "minimax_3090": "minimax_5070ti", "minimax_5070": "minimax_5070ti"}
 # t190u: 「MiniMax 双机」：单场轮流挑空闲的一台，全集两台并行（utility/minimax_dual.py）
 MINIMAX_DUAL_KEY = "minimax_dual"
@@ -964,7 +967,7 @@ def minimax_backend_options() -> tuple:
     return tuple((k, v["label"]) for k, v in MINIMAX_VARIANTS.items()) + ((MINIMAX_DUAL_KEY, MINIMAX_DUAL_LABEL),)
 
 
-MINIMAX_DEFAULT_VARIANT = "minimax_5070ti"  # t194u: 旧的「minimax」/ 不认识的 → 5070Ti（.36）
+MINIMAX_DEFAULT_VARIANT = "minimax_5070ti"  # t194u / t239u: 旧的「minimax」/ 不认识的 → 5070Ti（.185）
 
 
 def is_minimax(backend) -> bool:

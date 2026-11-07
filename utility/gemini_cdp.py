@@ -1980,6 +1980,11 @@ def _video_upload(page, path: str, status: Status, allow_conversation: bool = Fa
 def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = None, *,
                orientation: str = "landscape", model: str = "") -> str:
     """Gemini 视频：/videos 页，选模型、设 横向/纵向、贴起始图、贴提示词、发送，等 mp4 下载到 dest_dir。返回路径。"""
+    try:  # t244: 最重要的禁字幕行必须是第一行（发送前最后一道保障）
+        from config_prompt import ensure_video_no_subtitle_first_line
+        prompt = ensure_video_no_subtitle_first_line(prompt)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[Gemini Video] 禁字幕第一行注入跳过：{_e}")
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prompt = (prompt or "").strip()
     if not prompt:

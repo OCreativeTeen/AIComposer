@@ -231,6 +231,11 @@ def open_picture_prompt_dialog(
     勾了「人物」且这一场有人物时，交给 LLM 的图 = 选中的场景图 + 各人物形象图（按 Actors 顺序，最多共 5 张）。
 
     ``saved_choice`` 是项目里记下的上次选择；关窗或提交时 ``save_choice(dict)`` 记回去。
+
+    t249: 「修改图片」模式下：
+    - 内容来源（visual/speaking/actor）临时默认全部 False，不使用也不覆盖 saved_choice
+    - 不弹出「是/否/取消」scope 对话框，始终只处理当前场景
+    - 关闭时不保存 modify 模式的临时内容来源设置，原 saved_choice 保持不变
     """
     step_no = 0
     if callable(get_step_no):
@@ -252,6 +257,20 @@ def open_picture_prompt_dialog(
     dlg.withdraw()
 
     last = _clean_choice(saved_choice)
+
+    # t249: 「修改图片」模式下内容来源临时默认全部 False，不覆盖 saved_choice
+    # 保存原始 saved_choice 的内容来源设置，关闭时用于恢复（不保存 modify 模式的临时设置）
+    _modify_mode_source_override = (mode == "modify")
+    _original_source_flags = {
+        "visual": last["visual"],
+        "speaking": last["speaking"],
+        "actor": last["actor"],
+    }
+    if _modify_mode_source_override:
+        last["visual"] = False
+        last["speaking"] = False
+        last["actor"] = False
+
     main = ttk.Frame(dlg, padding=10)
     main.pack(fill=tk.BOTH, expand=True)
     hint = ttk.Label(main, wraplength=760, justify=tk.LEFT)
@@ -350,13 +369,20 @@ def open_picture_prompt_dialog(
     bottom.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
 
     def current_choice() -> dict:
+        # t249: 「修改图片」模式下，内容来源使用原始保存值，不保存临时的 False 覆盖
+        if _modify_mode_source_override:
+            source_flags = dict(_original_source_flags)
+        else:
+            source_flags = {
+                "visual": bool(visual_var.get()),
+                "speaking": bool(speaking_var.get()),
+                "actor": bool(actor_var.get()),
+            }
         return {
             "task": task_var.get(),
             "text": text_var.get(),
             "narrative": narrative_var.get(),
-            "visual": bool(visual_var.get()),
-            "speaking": bool(speaking_var.get()),
-            "actor": bool(actor_var.get()),
+            **source_flags,
             "actor_override": override_var.get(),
             "image": image_to_save(),
             "fyi_history": get_fyi_history(),
@@ -592,9 +618,11 @@ def open_picture_prompt_dialog(
             meta = {"aspect": aspect, "actors": actor_images, "base": images[0] if images else ""}
             return prompt, images, meta
 
+        # t249: 「修改图片」模式下始终只处理当前场景，不弹 scope 对话框
+        # 「从封面提取」和「补全/修正人物」模式保留原有 batch 逻辑
         scope = "scene"
         batch_list, k_no, m_no = [], 0, 0
-        if callable(batch_scenes) and callable(run_batch):
+        if mode != "modify" and callable(batch_scenes) and callable(run_batch):
             got = batch_scenes()
             if isinstance(got, tuple):
                 batch_list, k_no, m_no = got
@@ -657,8 +685,8 @@ def open_picture_prompt_dialog(
                 open_manual(prompt, images)
 
     def on_submit() -> None:
-        """t129u: 一个「提交」键：先问 LLM（Grok / Gemini）和 Chrome 账户，记住上次的选择。"""
-        picked = ask_llm_and_account(dlg)
+        """t129u / t229u: 「提交」先问后端（Grok / Gemini / MOSS / QN）和 Chrome 账户；MOSS/QN 本机 ComfyUI，不用账户。"""
+        picked = ask_llm_and_account(dlg, extra_backends=(("moss", "MOSS"), ("qn", "QN")))
         if picked:
             on_go(picked[0], picked[1])
 

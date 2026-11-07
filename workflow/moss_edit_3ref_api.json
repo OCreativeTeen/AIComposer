@@ -1,0 +1,274 @@
+{
+  "8": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "base.png"
+    },
+    "_meta": {
+      "title": "base / scene image (image_0)"
+    }
+  },
+  "29": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.0,
+      "resolution_steps": 16
+    }
+  },
+  "27": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "29",
+        0
+      ]
+    }
+  },
+  "28": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": {
+      "width": [
+        "27",
+        0
+      ],
+      "height": [
+        "27",
+        1
+      ],
+      "batch_size": 1
+    }
+  },
+  "30": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "moss_image_sft_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "31": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "30",
+        0
+      ],
+      "lora_name": "moss_image_edit_lora_rank_64_bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "32": {
+    "class_type": "SkipLayerGuidanceDiTSimple",
+    "inputs": {
+      "model": [
+        "31",
+        0
+      ],
+      "double_layers": "",
+      "single_layers": "22",
+      "start_percent": 0.0,
+      "end_percent": 1.0
+    }
+  },
+  "33": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3.5_9b_w4a8_gptq.safetensors",
+      "type": "moss_image",
+      "device": "default"
+    }
+  },
+  "34": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae_small.safetensors"
+    }
+  },
+  "37": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "32",
+        0
+      ],
+      "positive": [
+        "39",
+        0
+      ],
+      "negative": [
+        "36",
+        0
+      ],
+      "latent_image": [
+        "28",
+        0
+      ],
+      "seed": 42,
+      "steps": 30,
+      "cfg": 4.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0
+    }
+  },
+  "38": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "37",
+        0
+      ],
+      "vae": [
+        "34",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "38",
+        0
+      ],
+      "filename_prefix": "moss_edit_3ref"
+    }
+  },
+  "39": {
+    "class_type": "TextEncodeMOSSImageEdit",
+    "inputs": {
+      "clip": [
+        "33",
+        0
+      ],
+      "prompt": "Place the three people from the reference images into the living room of image 1. The young East Asian woman from image 2, with a straight black bob haircut and a red sweater, sits on the left side of the sofa, smiling. The middle-aged man from image 3, with a grey beard, glasses and a navy shirt, sits next to her, looking surprised. The curly-haired boy from image 4, wearing a yellow t-shirt, stands by the coffee table, laughing. Keep each person's face, hair, ethnicity and clothing colors exactly as in their reference image. Keep the room, lighting and composition of image 1 unchanged.",
+      "edit_format": "Moss-Image-Edit",
+      "image_strength": 1.0,
+      "vae": [
+        "34",
+        0
+      ],
+      "images.image_0": [
+        "29",
+        0
+      ],
+      "images.image_1": [
+        "53",
+        0
+      ],
+      "images.image_2": [
+        "54",
+        0
+      ],
+      "images.image_3": [
+        "55",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "positive"
+    }
+  },
+  "36": {
+    "class_type": "TextEncodeMOSSImageEdit",
+    "inputs": {
+      "clip": [
+        "33",
+        0
+      ],
+      "prompt": "nsfw, worst quality, bad anatomy, watermark, jpeg artifact",
+      "edit_format": "Moss-Image-Edit",
+      "image_strength": 1.0,
+      "vae": [
+        "34",
+        0
+      ],
+      "images.image_0": [
+        "29",
+        0
+      ],
+      "images.image_1": [
+        "53",
+        0
+      ],
+      "images.image_2": [
+        "54",
+        0
+      ],
+      "images.image_3": [
+        "55",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "negative"
+    }
+  },
+  "50": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "ref1.png"
+    },
+    "_meta": {
+      "title": "portrait ref 1 (image_1)"
+    }
+  },
+  "53": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "50",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 0.3,
+      "resolution_steps": 16
+    }
+  },
+  "51": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "ref2.png"
+    },
+    "_meta": {
+      "title": "portrait ref 2 (image_2)"
+    }
+  },
+  "54": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "51",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 0.3,
+      "resolution_steps": 16
+    }
+  },
+  "52": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "ref3.png"
+    },
+    "_meta": {
+      "title": "portrait ref 3 (image_3)"
+    }
+  },
+  "55": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "52",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 0.3,
+      "resolution_steps": 16
+    }
+  }
+}

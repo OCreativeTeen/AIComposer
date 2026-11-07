@@ -2023,6 +2023,137 @@ def youtube_from_saved_token(channel_id: str):
     return googleapiclient.discovery.build("youtube", "v3", credentials=cred)
 
 
+
+
+def youtube_video_id_from_url(url: str) -> str:
+    """从 watch / youtu.be / shorts URL 取出 11 位 video id。"""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    m = re.search(r"(?:[?&]v=|youtu\.be/|/embed/|/shorts/)([a-zA-Z0-9_-]{11})", url)
+    return m.group(1) if m else ""
+
+
+def get_video_status(youtube, video_id: str) -> dict:
+    """读 videos.status：privacyStatus / publishAt 等。找不到则抛错。"""
+    vid = (video_id or "").strip()
+    if not vid:
+        raise ValueError("缺少 YouTube video id")
+    resp = youtube.videos().list(part="status", id=vid).execute() or {}
+    items = resp.get("items") or []
+    if not items:
+        raise RuntimeError(f"YouTube 找不到视频 {vid}（可能已删）")
+    st = dict((items[0] or {}).get("status") or {})
+    return {
+        "privacyStatus": (st.get("privacyStatus") or "").strip() or "private",
+        "publishAt": (st.get("publishAt") or "").strip() or None,
+        "selfDeclaredMadeForKids": bool(st.get("selfDeclaredMadeForKids", False)),
+        "containsSyntheticMedia": st.get("containsSyntheticMedia"),
+    }
+
+
+def set_video_privacy(youtube, video_id: str, privacy: str, *, publish_at=None) -> dict:
+    """改隐私。``publish_at`` 为 datetime 或 RFC3339 字符串时：private + publishAt（定时公开）。
+    ``privacy='unlisted'|'public'|'private'`` 且 publish_at is None：清掉定时。"""
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    vid = (video_id or "").strip()
+    if not vid:
+        raise ValueError("缺少 YouTube video id")
+    privacy = (privacy or "").strip().lower()
+    if privacy not in ("public", "unlisted", "private"):
+        raise ValueError(f"无效 privacy: {privacy}")
+
+    status = {
+        "privacyStatus": privacy,
+        "selfDeclaredMadeForKids": False,
+        "containsSyntheticMedia": True,
+    }
+    if publish_at is not None:
+        if isinstance(publish_at, _dt):
+            local_tz = _dt.now().astimezone().tzinfo
+            dt_utc = publish_at if publish_at.tzinfo else publish_at.replace(tzinfo=local_tz)
+            dt_utc = dt_utc.astimezone(_tz.utc)
+            publish_at_str = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            publish_at_str = str(publish_at).strip()
+        status["privacyStatus"] = "private"
+        status["publishAt"] = publish_at_str
+        print(f"📅 YouTube 定时公开（UTC）: {publish_at_str}  id={vid}")
+    else:
+        print(f"🔒 YouTube privacy → {privacy}  id={vid}")
+
+    return youtube.videos().update(
+        part="status",
+        body={"id": vid, "status": status},
+    ).execute()
+
+
+def restore_video_status(youtube, video_id: str, snap: dict) -> dict:
+    """按 get_video_status 快照恢复 privacy / publishAt。"""
+    snap = dict(snap or {})
+    privacy = (snap.get("privacyStatus") or "private").strip().lower()
+    publish_at = snap.get("publishAt") or None
+    # 定时公开：必须 private + publishAt；若快照是 unlisted/public 则不带 publishAt
+    if publish_at and privacy == "private":
+        return set_video_privacy(youtube, video_id, "private", publish_at=publish_at)
+    return set_video_privacy(youtube, video_id, privacy, publish_at=None)
+
+
+def delete_youtube_video(youtube, video_id: str) -> None:
+    """删除频道上的视频（videos.delete）。"""
+    vid = (video_id or "").strip()
+    if not vid:
+        raise ValueError("缺少 YouTube video id")
+    youtube.videos().delete(id=vid).execute()
+    print(f"🗑️ 已删除 YouTube 视频 {vid}")
+
+
+def temporary_unlisted_for_download(youtube, video_id: str, *, status=None, settle_s: float = 3.0):
+    """若当前是 private（含定时公开），临时改为 unlisted 以便 yt-dlp 下载；结束后恢复原状态。
+
+    用法::
+        with temporary_unlisted_for_download(yt, vid, status=say) as snap:
+            download_youtube(...)
+    """
+    import contextlib
+    import time as _time
+
+    @contextlib.contextmanager
+    def _cm():
+        snap = get_video_status(youtube, video_id)
+        priv = (snap.get("privacyStatus") or "").lower()
+        changed = False
+
+        def _say(msg: str) -> None:
+            print(msg)
+            if callable(status):
+                try:
+                    status(msg)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        try:
+            # public / unlisted 可直接下；private（含 publishAt 定时）需要临时放开
+            if priv == "private":
+                _say("视频当前为私有/定时公开，临时改为「不公开列出」以便下载…")
+                set_video_privacy(youtube, video_id, "unlisted")
+                changed = True
+                if settle_s and settle_s > 0:
+                    _time.sleep(float(settle_s))
+            yield snap
+        finally:
+            if changed:
+                try:
+                    _say("下载结束，恢复原来的 YouTube 发布状态…")
+                    restore_video_status(youtube, video_id, snap)
+                except Exception as exc:  # noqa: BLE001
+                    _say(f"⚠️ 恢复原发布状态失败（请到 Studio 手动改回）: {exc}")
+
+    return _cm()
+
+
 def ensure_all_topic_playlists(channel_id: str, youtube=None, privacy: str = "public") -> dict:
     """返回 {"created": [...], "existing": [...], "skipped": [...], "errors": [...]}，每项 (topic, playlist_id 或原因)。"""
     out = {"created": [], "existing": [], "skipped": [], "errors": []}

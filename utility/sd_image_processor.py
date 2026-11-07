@@ -796,8 +796,14 @@ def build_minimax_h3_prompt(workflow: Dict[str, Any], *, image_name: str, prompt
     i2v = _one_node(wf, "MiniMaxH3ImageToVideo")
     text = (prompt or "").strip()
     # t162u: H3 只有正面条件（BasicGuider，没有负面 / CFG），「Avoid: 字幕, 日夜变化」写进去反而会被画出来，所以不加
-    if negative:
-        print("[ComfyUI H3] 没有负面提示词输入，negative 不使用")
+    if negative is not None:
+        try:
+            from config_prompt import with_h3_no_subtitle_negative
+
+            negative = with_h3_no_subtitle_negative(negative)  # t238u
+        except Exception:  # noqa: BLE001
+            pass
+        print("[ComfyUI H3] 没有负面提示词输入，negative 不使用（已并入字幕禁词备查）")
     # t165u: H3 首尾帧对齐行里的结束秒数按实际帧数改准（17n+5 帧 / 24fps）
     import re as _re
 
@@ -929,6 +935,11 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
                          audio_path=None, last_image_path=None, workflow_path=None, ref_image_paths=None) -> str:
     """ComfyUI（MiniMax H3）图生视频：上传起始图 → POST /prompt → 轮询 /history → /view 下载 mp4。返回本地路径。
     server 默认 config.COMFYUI_VIDEO_URL；宽高要是 32 的倍数；seed 不给就随机。"""
+    try:  # t244: 最重要的禁字幕行必须是第一行（发送前最后一道保障）
+        from config_prompt import ensure_video_no_subtitle_first_line
+        prompt = ensure_video_no_subtitle_first_line(prompt)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[ComfyUI H3] 禁字幕第一行注入跳过：{_e}")
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     import random
     import time
@@ -1014,6 +1025,12 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         say(f"上传场景音频 {os.path.basename(audio_path)}（{float(seconds):.1f} 秒，对口型）")
         audio_name = upload(audio_local, f"h3_{stamp}_audio.wav")
 
+    try:
+        from config_prompt import ensure_h3_no_subtitle_rules, with_h3_no_subtitle_negative
+        prompt = ensure_h3_no_subtitle_rules(prompt)  # t238u
+        negative = with_h3_no_subtitle_negative(negative)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[ComfyUI H3] 禁字幕句核对跳过：{_e}")
     wf = build_minimax_h3_prompt(workflow, image_name=image_name, prompt=prompt, seconds=seconds, width=width,
                                  height=height, seed=seed, fps=fps, filename_prefix=f"video/H3_{stamp}",
                                  negative=negative, last_image_name=last_image_name, audio_name=audio_name,
@@ -1105,6 +1122,9 @@ MINIMAX_H3_R2V_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.a
 # t228u: FastH3 OmniRef（FastVideo 8 步蒸馏的 Ref2VA，euler / simple，SigmaShift 12/3），参考图接法和 R2V 一样
 MINIMAX_H3_FAST8_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                          "workflow", "MiniMax_H3_FastH3_8step_5070.json")
+# Pika H3 Flex Ref2VA LoRA:6 步 lcm + ManualSigmas(基于 R2V 工作流)
+MINIMAX_H3_PIKA6_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                         "workflow", "MiniMax_H3_R2V_Pika6_5070.json")
 MINIMAX_MODEL_SOURCE_HINT = {  # 缺模型时提示：从 5070Ti（.36）这个位置拷
     "fasth3_omniref_qad_nvfp4_comfy.safetensors":
         r"D:\ComfyUI-Easy-Install\ComfyUI-Easy-Install\ComfyUI\models\diffusion_models\fasth3_omniref_qad_nvfp4_comfy.safetensors",
@@ -1115,7 +1135,8 @@ MINIMAX_MODEL_SOURCE_HINT = {  # 缺模型时提示：从 5070Ti（.36）这个�
 
 def minimax_workflow_for(choice: str) -> str:
     """t228u: h3_workflow 选项 → 工作流文件（i2v 返回空 = 用服务器选项里的原工作流）。"""
-    return {"r2v": MINIMAX_H3_R2V_WORKFLOW, "r2v_fast8": MINIMAX_H3_FAST8_WORKFLOW}.get(str(choice or ""), "")
+    return {"r2v": MINIMAX_H3_R2V_WORKFLOW, "r2v_fast8": MINIMAX_H3_FAST8_WORKFLOW,
+            "r2v_pika6": MINIMAX_H3_PIKA6_WORKFLOW}.get(str(choice or ""), "")
 
 
 def _build_minimax_h3_r2v(wf, *, image_name, prompt, seconds, width, height, seed, fps, filename_prefix,
@@ -1201,3 +1222,508 @@ def check_comfy_unet_available(base: str, workflow, get=None) -> None:
             + (f"。来源：{src}" if src else "")
             + "；或者在生场视频窗口选「原工作流（无参考图）」/ 另一台机器。")
 
+# ---------------------------------------------------------------------------
+# t229u / t231u: MOSS 图片编辑（ComfyUI · workflow/moss_edit_3ref_api.json）
+# ---------------------------------------------------------------------------
+# API 工作流：LoadImage base（→ ImageScale 1.0MP）+ 可选 ref1..3（→ 0.3MP）
+# → TextEncodeMOSSImageEdit（正面 / 负面；images 槽位可增减，最少 1 张）→ KSampler → SaveImage
+# t231u: 没有参考图时只接底图一张——以前用底图垫满 4 路，封面提取会把同一张多格图喂 4 次，
+# 模型容易画出嵌套/堆叠分镜。节点 images 是 growable（min1 max10），可以只留 image_0。
+MOSS_EDIT_API_WORKFLOW = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "workflow", "moss_edit_3ref_api.json",
+)
+MOSS_EDIT_MAX_REFS = 3  # 最多再加 3 张参考（人物肖像等）；不够就不要垫底图
+MOSS_EXTRACT_NEGATIVE = (
+    "nsfw, worst quality, bad anatomy, watermark, jpeg artifact, "
+    "multi-panel, collage, comic strip, storyboard, nested panels, stacked panels, "
+    "grid layout, picture-in-picture, infographic layout, smaller frames inside the image"
+)
+
+
+def _moss_image_load_ids(workflow: Dict[str, Any]) -> list:
+    """按正面 TextEncodeMOSSImageEdit 的 images.image_0.. 追到 LoadImage 节点 id。"""
+    ks = _one_node(workflow, "KSampler")
+    pos_id = str(workflow[ks]["inputs"]["positive"][0])
+    enc = workflow[pos_id]["inputs"]
+    out = []
+    for i in range(1 + MOSS_EDIT_MAX_REFS):
+        key = f"images.image_{i}"
+        if key not in enc:
+            if i == 0:
+                raise ValueError(f"MOSS 工作流正面编码器没有 {key}")
+            break
+        scale_id = str(enc[key][0])
+        load_id = str(workflow[scale_id]["inputs"]["image"][0])
+        if workflow.get(load_id, {}).get("class_type") != "LoadImage":
+            raise ValueError(f"MOSS 工作流 images.image_{i} 不是 LoadImage（{load_id}）")
+        out.append(load_id)
+    return out
+
+
+def _moss_scale_ids_for_loads(workflow: Dict[str, Any], load_ids: list) -> list:
+    """每个 LoadImage 对应的 ImageScaleToTotalPixels 节点 id（与 load_ids 对齐）。"""
+    ks = _one_node(workflow, "KSampler")
+    pos_id = str(workflow[ks]["inputs"]["positive"][0])
+    enc = workflow[pos_id]["inputs"]
+    out = []
+    for i, _lid in enumerate(load_ids):
+        key = f"images.image_{i}"
+        out.append(str(enc[key][0]))
+    return out
+
+
+def adapt_prompt_for_moss_edit(prompt: str) -> tuple:
+    """把 Grok 向的图片提示改成 MOSS-Image-Edit 口吻。返回 (prompt, negative_or_None)。
+
+    封面/分镜「extract step N」：明确只要第 N 格铺满全画幅，禁止嵌套堆叠多格。
+    其他提示原样返回（negative=None → 工作流默认负面）。
+    """
+    import re
+
+    text = (prompt or "").strip()
+    m = re.search(r"extract\s+step\s+(\d+)", text, flags=re.I)
+    if not m:
+        return text, None
+    k = max(1, int(m.group(1)))
+    aspect_lines, keep_lines = [], []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if low.startswith("output format") or s.startswith("输出比例"):
+            aspect_lines.append(s)
+        elif s.startswith("Note:") or s.startswith("** Text:") or s.startswith("** Style:") \
+                or s.startswith("** Visual_Style:") or s.startswith("Text:") or s.startswith("Style:") \
+                or s.startswith("Visual_Style:"):
+            keep_lines.append(s)
+    where = "topmost / first" if k == 1 else f"number {k} counting from the top"
+    moss_body = [
+        f"Replace the entire image with ONLY panel/step {k} from the input "
+        f"(the {where} step panel in the multi-panel cover/infographic).",
+        f"Crop out that one panel alone and expand it to fill the full output frame as a single "
+        f"standalone scene. The result must be one full-bleed picture of panel {k} only.",
+        "Remove every other panel, step numbers, arrows, grid and the multi-panel collage layout.",
+        "Do not nest panels inside panels. Do not stack or tile multiple panels. "
+        "Do not return a smaller collage or picture-in-picture.",
+        f"Keep panel {k}'s people, setting, action, composition details and art style; "
+        f"only reframe that panel to fill the canvas.",
+    ]
+    parts = aspect_lines + [""] + moss_body
+    if keep_lines:
+        parts += [""] + keep_lines
+    return "\n".join(parts).strip(), MOSS_EXTRACT_NEGATIVE
+
+
+def _moss_latent_size_from_prompt(prompt: str):
+    """从 OUTPUT FORMAT / 输出比例 行读 9:16 或 16:9 → 约 1MP、16 倍数的宽高；读不到返回 None。"""
+    t = prompt or ""
+    if "9:16" in t:
+        return 768, 1360
+    if "16:9" in t:
+        return 1360, 768
+    return None
+
+
+def build_moss_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_names: list,
+                           prompt: str, seed: int,
+                           filename_prefix: str = "moss_edit_3ref",
+                           negative=None, width=None, height=None) -> Dict[str, Any]:
+    """把 API 格式 MOSS 编辑工作流复制一份并填入参数（纯函数，可离线测）。
+
+    base_name / ref_names：/upload/image 返回的文件名。只用「底图 + 真实参考图」，
+    不再用底图垫满空槽；多余的 images.image_N 与对应 LoadImage/Scale 节点会删掉。
+    prompt → 正面 TextEncodeMOSSImageEdit；negative 不给则保留工作流原负面词。
+    width/height 若给，则 EmptyFlux2LatentImage 用固定尺寸（不再跟底图像素走）。
+    """
+    import copy
+
+    wf = copy.deepcopy(workflow)
+    load_ids = _moss_image_load_ids(wf)
+    scale_ids = _moss_scale_ids_for_loads(wf, load_ids)
+    refs = [n for n in list(ref_names or []) if n][:MOSS_EDIT_MAX_REFS]
+    names = [base_name] + refs  # t231u: 不垫底图
+    n_use = len(names)
+    for i, name in enumerate(names):
+        wf[load_ids[i]]["inputs"]["image"] = name
+
+    # 丢掉未用的 image 槽，并删掉对应 LoadImage / Scale，避免 Comfy 仍去跑它们
+    for enc_id in _find_nodes(wf, "TextEncodeMOSSImageEdit"):
+        inp = wf[enc_id]["inputs"]
+        for i in range(n_use, len(load_ids)):
+            inp.pop(f"images.image_{i}", None)
+    for i in range(n_use, len(load_ids)):
+        wf.pop(load_ids[i], None)
+        wf.pop(scale_ids[i], None)
+
+    ks = _one_node(wf, "KSampler")
+    pos_id = str(wf[ks]["inputs"]["positive"][0])
+    neg_id = str(wf[ks]["inputs"]["negative"][0])
+    wf[pos_id]["inputs"]["prompt"] = (prompt or "").strip()
+    if negative is not None:
+        wf[neg_id]["inputs"]["prompt"] = (negative or "").strip()
+    wf[ks]["inputs"]["seed"] = int(seed)
+    if width and height:
+        w, h = int(width), int(height)
+        if w % 16 or h % 16:
+            raise ValueError(f"MOSS 宽高必须是 16 的倍数（给的是 {w}x{h}）")
+        latent_id = _one_node(wf, "EmptyFlux2LatentImage")
+        wf[latent_id]["inputs"]["width"] = w
+        wf[latent_id]["inputs"]["height"] = h
+    save_ids = _find_nodes(wf, "SaveImage")
+    if save_ids:
+        wf[save_ids[0]]["inputs"]["filename_prefix"] = filename_prefix
+    return wf
+
+
+def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
+                             workflow_path=None, timeout_s: float = 1800.0,
+                             status=None, negative=None):
+    """ComfyUI 跑 MOSS 图片编辑。images[0]=底图，images[1:]=参考图（最多 3，可无）。
+
+    返回 PIL.Image。server 默认 config.COMFYUI_MOSS_URL（192.168.1.30:8188，asus2060）。
+    t231u: 送出前把「extract step」类提示改成 MOSS 口吻；无参考时只传 1 张底图。
+    """
+    prompt = _to_simplified(prompt)  # t210u: 送出前转简体
+    adapted, adapt_neg = adapt_prompt_for_moss_edit(prompt)
+    prompt = adapted
+    if negative is None and adapt_neg:
+        negative = adapt_neg
+    import io
+    import random
+    import time
+    import uuid
+
+    def say(msg):
+        print(f"[ComfyUI MOSS] {msg}")
+        if callable(status):
+            try:
+                status(msg)
+            except Exception:
+                pass
+
+    paths = [p for p in list(images or []) if p and os.path.isfile(p)]
+    if not paths:
+        raise FileNotFoundError("MOSS 编辑需要至少一张底图")
+    base = (server or getattr(config, "COMFYUI_MOSS_URL", "") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("没有设置 ComfyUI 地址（config.COMFYUI_MOSS_URL）")
+    wf_file = workflow_path or MOSS_EDIT_API_WORKFLOW
+    if not os.path.isfile(wf_file):
+        raise FileNotFoundError(f"MOSS 工作流不存在：{wf_file}")
+    say(f"ComfyUI {base} · 工作流 {os.path.basename(wf_file)}")
+    with open(wf_file, encoding="utf-8-sig") as f:
+        workflow = json.load(f)
+    seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    size = _moss_latent_size_from_prompt(prompt)
+
+    def upload(path, name):
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"{base}/upload/image",
+                files={"image": (name, f)},
+                data={"type": "input", "overwrite": "true"},
+                timeout=300,
+            )
+        r.raise_for_status()
+        up = r.json()
+        return (up.get("subfolder") + "/" if up.get("subfolder") else "") + up["name"]
+
+    say(f"上传底图 {os.path.basename(paths[0])}")
+    base_name = upload(paths[0], f"moss_{stamp}_base_{os.path.basename(paths[0])}")
+    ref_names = []
+    for i, rp in enumerate(paths[1:1 + MOSS_EDIT_MAX_REFS], 1):
+        say(f"上传参考图 {i} {os.path.basename(rp)}")
+        ref_names.append(upload(rp, f"moss_{stamp}_ref{i}_{os.path.basename(rp)}"))
+    if len(paths) - 1 > MOSS_EDIT_MAX_REFS:
+        say(f"参考图超过 {MOSS_EDIT_MAX_REFS} 张，只用前 {MOSS_EDIT_MAX_REFS} 张")
+    say(f"图像槽位：底图 + {len(ref_names)} 张参考（不垫空槽）")
+    if size:
+        say(f"输出画布固定 {size[0]}x{size[1]}（按提示词比例）")
+
+    wf = build_moss_edit_prompt(
+        workflow, base_name=base_name, ref_names=ref_names, prompt=prompt, seed=seed,
+        filename_prefix=f"moss_edit_3ref_{stamp}", negative=negative,
+        width=(size[0] if size else None), height=(size[1] if size else None),
+    )
+    # 日志：实际进正面编码器的图槽
+    ks = _one_node(wf, "KSampler")
+    pos_id = str(wf[ks]["inputs"]["positive"][0])
+    slot_keys = sorted(k for k in wf[pos_id]["inputs"] if k.startswith("images.image_"))
+    say(f"正面提示词 {len(prompt)} 字；image slots={slot_keys}")
+    print("[ComfyUI MOSS] positive prompt:\n" + prompt[:1200])
+
+    client_id = str(uuid.uuid4())
+    r = requests.post(f"{base}/prompt", json={"prompt": wf, "client_id": client_id}, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"ComfyUI /prompt HTTP {r.status_code}: {r.text[:800]}")
+    prompt_id = r.json()["prompt_id"]
+    say(f"已提交 prompt_id={prompt_id}（seed={seed}，底图 + {len(ref_names)} 参考）")
+
+    started = time.monotonic()
+    last_say = 0.0
+    entry = None
+    while time.monotonic() - started < timeout_s:
+        try:
+            h = requests.get(f"{base}/history/{prompt_id}", timeout=30).json()
+        except requests.RequestException as e:
+            h = {}
+            print(f"[ComfyUI MOSS] /history 读取失败：{e}")
+        entry = h.get(prompt_id)
+        if entry and (entry.get("status") or {}).get("completed") is not None:
+            st = entry.get("status") or {}
+            if st.get("status_str") == "error":
+                err = next((m[1] for m in st.get("messages", []) if m and m[0] == "execution_error"), {})
+                raise RuntimeError(
+                    f"ComfyUI 运行出错（{err.get('node_type')}）：{str(err.get('exception_message'))[:500]}"
+                )
+            if entry.get("outputs"):
+                break
+        elapsed = time.monotonic() - started
+        if elapsed - last_say >= 15:
+            say(f"生成中 … {int(elapsed)} 秒")
+            last_say = elapsed
+        time.sleep(2.0)
+    else:
+        raise RuntimeError(f"等了 {int(timeout_s)} 秒，ComfyUI 还没生成完（prompt_id={prompt_id}）")
+
+    imgs = []
+    for out in (entry.get("outputs") or {}).values():
+        imgs += [x for x in (out.get("images") or []) if x.get("filename")]
+    if not imgs:
+        raise RuntimeError(f"ComfyUI 完成了但没有图片输出：{json.dumps(entry.get('outputs'), ensure_ascii=False)[:300]}")
+    v = imgs[0]
+    say(f"下载 {v['filename']}")
+    with requests.get(
+        f"{base}/view",
+        params={"filename": v["filename"], "subfolder": v.get("subfolder", ""), "type": v.get("type", "output")},
+        timeout=600,
+    ) as resp:
+        resp.raise_for_status()
+        data = resp.content
+    return Image.open(io.BytesIO(data)).convert("RGB")
+
+
+# ---------------------------------------------------------------------------
+# t234u: Qwen(QN) 图片编辑（ComfyUI · workflow/qwen_edit_3ref_api.json）
+# ---------------------------------------------------------------------------
+# 与 MOSS 同机（默认 COMFYUI_QN_URL = COMFYUI_MOSS_URL = 192.168.1.30:8188）。
+# API 工作流：LoadImage base(8) → FluxKontextImageScale(117)
+#   → TextEncodeQwenImageEditPlus 正面(39)/负面(36)：image1=缩放底图，image2/3=可选参考
+#   → VAEEncode(88) → KSampler(37) → VAEDecode → SaveImage(9)
+# image2/image3 为 optional：无参考时删掉槽位与 LoadImage，绝不拿底图垫参考（同 t231 教训）。
+QN_EDIT_API_WORKFLOW = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "workflow", "qwen_edit_3ref_api.json",
+)
+QN_EDIT_MAX_REFS = 2  # 工作流只有 image2 / image3 两个参考槽
+
+
+def _qwen_follow_to_loadimage(workflow: Dict[str, Any], start_id) -> str:
+    """从编码器的 imageN 链路追到 LoadImage 节点 id。"""
+    nid = str(start_id)
+    seen = set()
+    while nid and nid not in seen:
+        seen.add(nid)
+        node = workflow.get(nid) or {}
+        if node.get("class_type") == "LoadImage":
+            return nid
+        img = (node.get("inputs") or {}).get("image")
+        if isinstance(img, (list, tuple)) and img:
+            nid = str(img[0])
+            continue
+        break
+    raise ValueError(f"QN 工作流无法从节点 {start_id} 追到 LoadImage")
+
+
+def _qwen_slot_load_ids(workflow: Dict[str, Any]) -> dict:
+    """返回 {"image1": load_id, "image2": load_id|None, "image3": load_id|None}（按正面编码器）。"""
+    ks = _one_node(workflow, "KSampler")
+    pos_id = str(workflow[ks]["inputs"]["positive"][0])
+    enc = workflow[pos_id]["inputs"]
+    if "image1" not in enc:
+        raise ValueError("QN 工作流正面编码器没有 image1（底图）")
+    out = {"image1": _qwen_follow_to_loadimage(workflow, enc["image1"][0])}
+    for key in ("image2", "image3"):
+        if key in enc and isinstance(enc[key], (list, tuple)) and enc[key]:
+            out[key] = _qwen_follow_to_loadimage(workflow, enc[key][0])
+        else:
+            out[key] = None
+    return out
+
+
+def adapt_prompt_for_qwen_edit(prompt: str) -> tuple:
+    """封面 extract-step：复用 MOSS 口吻（同属本地图编辑，避免多格嵌套）。"""
+    return adapt_prompt_for_moss_edit(prompt)
+
+
+def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_names: list,
+                           prompt: str, seed: int,
+                           filename_prefix: str = "qwen_edit",
+                           negative=None) -> Dict[str, Any]:
+    """填 qwen_edit_3ref_api：底图 + 最多 2 张真实参考；空参考槽删除（不垫底图）。"""
+    import copy
+
+    wf = copy.deepcopy(workflow)
+    slots = _qwen_slot_load_ids(wf)
+    refs = [n for n in list(ref_names or []) if n][:QN_EDIT_MAX_REFS]
+    wf[slots["image1"]]["inputs"]["image"] = base_name
+    ref_keys = ["image2", "image3"]
+    used_keys = []
+    for i, name in enumerate(refs):
+        key = ref_keys[i]
+        lid = slots.get(key)
+        if not lid:
+            raise ValueError(f"QN 工作流缺少 {key} 对应的 LoadImage")
+        wf[lid]["inputs"]["image"] = name
+        used_keys.append(key)
+
+    # 未用参考：从正/负编码器去掉 imageN，并删除对应 LoadImage
+    drop_keys = [k for k in ref_keys if k not in used_keys]
+    for enc_id in _find_nodes(wf, "TextEncodeQwenImageEditPlus"):
+        inp = wf[enc_id]["inputs"]
+        for k in drop_keys:
+            inp.pop(k, None)
+    for k in drop_keys:
+        lid = slots.get(k)
+        if lid:
+            wf.pop(lid, None)
+
+    ks = _one_node(wf, "KSampler")
+    pos_id = str(wf[ks]["inputs"]["positive"][0])
+    neg_id = str(wf[ks]["inputs"]["negative"][0])
+    wf[pos_id]["inputs"]["prompt"] = (prompt or "").strip()
+    if negative is not None:
+        wf[neg_id]["inputs"]["prompt"] = (negative or "").strip()
+    wf[ks]["inputs"]["seed"] = int(seed)
+    save_ids = _find_nodes(wf, "SaveImage")
+    if save_ids:
+        wf[save_ids[0]]["inputs"]["filename_prefix"] = filename_prefix
+    return wf
+
+
+def generate_image_qwen_edit(prompt: str, images, *, server=None, seed=None,
+                             workflow_path=None, timeout_s: float = 1800.0,
+                             status=None, negative=None):
+    """ComfyUI 跑 Qwen(QN) 图片编辑。images[0]=底图，images[1:]=参考（最多 2，可无）。
+
+    返回 PIL.Image。server 默认 config.COMFYUI_QN_URL（与 MOSS 同机）。
+    extract-step 提示走 adapt_prompt_for_qwen_edit（同 MOSS 防嵌套）。
+    """
+    prompt = _to_simplified(prompt)
+    adapted, adapt_neg = adapt_prompt_for_qwen_edit(prompt)
+    prompt = adapted
+    if negative is None and adapt_neg:
+        negative = adapt_neg
+    import io
+    import random
+    import time
+    import uuid
+
+    def say(msg):
+        print(f"[ComfyUI QN] {msg}")
+        if callable(status):
+            try:
+                status(msg)
+            except Exception:
+                pass
+
+    paths = [p for p in list(images or []) if p and os.path.isfile(p)]
+    if not paths:
+        raise FileNotFoundError("QN 编辑需要至少一张底图")
+    base = (server or getattr(config, "COMFYUI_QN_URL", "")
+            or getattr(config, "COMFYUI_MOSS_URL", "") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("没有设置 ComfyUI 地址（config.COMFYUI_QN_URL）")
+    wf_file = workflow_path or QN_EDIT_API_WORKFLOW
+    if not os.path.isfile(wf_file):
+        raise FileNotFoundError(f"QN 工作流不存在：{wf_file}")
+    say(f"ComfyUI {base} · 工作流 {os.path.basename(wf_file)}")
+    with open(wf_file, encoding="utf-8-sig") as f:
+        workflow = json.load(f)
+    seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def upload(path, name):
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"{base}/upload/image",
+                files={"image": (name, f)},
+                data={"type": "input", "overwrite": "true"},
+                timeout=300,
+            )
+        r.raise_for_status()
+        up = r.json()
+        return (up.get("subfolder") + "/" if up.get("subfolder") else "") + up["name"]
+
+    say(f"上传底图 {os.path.basename(paths[0])}")
+    base_name = upload(paths[0], f"qn_{stamp}_base_{os.path.basename(paths[0])}")
+    ref_names = []
+    for i, rp in enumerate(paths[1:1 + QN_EDIT_MAX_REFS], 1):
+        say(f"上传参考图 {i} {os.path.basename(rp)}")
+        ref_names.append(upload(rp, f"qn_{stamp}_ref{i}_{os.path.basename(rp)}"))
+    if len(paths) - 1 > QN_EDIT_MAX_REFS:
+        say(f"参考图超过 {QN_EDIT_MAX_REFS} 张，只用前 {QN_EDIT_MAX_REFS} 张")
+    say(f"图像槽位：底图 + {len(ref_names)} 张参考（不垫空槽）")
+
+    wf = build_qwen_edit_prompt(
+        workflow, base_name=base_name, ref_names=ref_names, prompt=prompt, seed=seed,
+        filename_prefix=f"qwen_edit_{stamp}", negative=negative,
+    )
+    ks = _one_node(wf, "KSampler")
+    pos_id = str(wf[ks]["inputs"]["positive"][0])
+    slot_keys = sorted(k for k in wf[pos_id]["inputs"] if k.startswith("image"))
+    say(f"正面提示词 {len(prompt)} 字；image slots={slot_keys}")
+    print("[ComfyUI QN] positive prompt:\n" + prompt[:1200])
+
+    client_id = str(uuid.uuid4())
+    r = requests.post(f"{base}/prompt", json={"prompt": wf, "client_id": client_id}, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"ComfyUI /prompt HTTP {r.status_code}: {r.text[:800]}")
+    prompt_id = r.json()["prompt_id"]
+    say(f"已提交 prompt_id={prompt_id}（seed={seed}，底图 + {len(ref_names)} 参考）")
+
+    started = time.monotonic()
+    last_say = 0.0
+    entry = None
+    while time.monotonic() - started < timeout_s:
+        try:
+            h = requests.get(f"{base}/history/{prompt_id}", timeout=30).json()
+        except requests.RequestException as e:
+            h = {}
+            print(f"[ComfyUI QN] /history 读取失败：{e}")
+        entry = h.get(prompt_id)
+        if entry and (entry.get("status") or {}).get("completed") is not None:
+            st = entry.get("status") or {}
+            if st.get("status_str") == "error":
+                err = next((m[1] for m in st.get("messages", []) if m and m[0] == "execution_error"), {})
+                raise RuntimeError(
+                    f"ComfyUI 运行出错（{err.get('node_type')}）：{str(err.get('exception_message'))[:500]}"
+                )
+            if entry.get("outputs"):
+                break
+        elapsed = time.monotonic() - started
+        if elapsed - last_say >= 15:
+            say(f"生成中 … {int(elapsed)} 秒")
+            last_say = elapsed
+        time.sleep(2.0)
+    else:
+        raise RuntimeError(f"等了 {int(timeout_s)} 秒，ComfyUI 还没生成完（prompt_id={prompt_id}）")
+
+    imgs = []
+    for out in (entry.get("outputs") or {}).values():
+        imgs += [x for x in (out.get("images") or []) if x.get("filename")]
+    if not imgs:
+        raise RuntimeError(f"ComfyUI 完成了但没有图片输出：{json.dumps(entry.get('outputs'), ensure_ascii=False)[:300]}")
+    v = imgs[0]
+    say(f"下载 {v['filename']}")
+    with requests.get(
+        f"{base}/view",
+        params={"filename": v["filename"], "subfolder": v.get("subfolder", ""), "type": v.get("type", "output")},
+        timeout=600,
+    ) as resp:
+        resp.raise_for_status()
+        data = resp.content
+    return Image.open(io.BytesIO(data)).convert("RGB")

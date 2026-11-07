@@ -220,7 +220,8 @@ class SceneDisplayMixin:
             def _remix(t: str):
                 if not is_visual:
                     return _remix_text(t)
-                # t161u: 和创建项目时看图调整同一条路：视觉 + 每个人这一场的样子 + 补讲话里缺的说话人
+                # t161u / t223u Remix path: same remix_scene_full as new-project cover analysis —
+                # actors first (count/seats, actor-is-truth), then visual (keep story plot).
                 try:
                     from utility.file_util import get_file_path
                     from utility.visual_remix import remix_scene_full

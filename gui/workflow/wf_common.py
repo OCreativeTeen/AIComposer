@@ -74,7 +74,8 @@ def _external_media_pick_folders() -> list[str]:
     """场景选 clip 时优先浏览的外部目录：Downloads，其次 L:（旧环境映射盘）。"""
     folders: list[str] = []
     seen: set[str] = set()
-    for p in (_user_downloads_folder(), "L:"):
+    import config as _cfg
+    for p in (getattr(_cfg, "WORKING_DIR", ""), _user_downloads_folder(), "L:"):
         if not p:
             continue
         try:

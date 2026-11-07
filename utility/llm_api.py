@@ -1573,10 +1573,17 @@ class LLMApi:
             ).pack(anchor=tk.W, pady=(2, 0))
         # t132u: 图片 / 视频：下面这一行选 Grok / Gemini（重试时用它）；文字 / NotebookLM：这一行灰掉。
         _bk_key = "image_backend" if win_mode == "image" else "video_backend"
+        def _init_backend(raw: str) -> str:
+            b = str(raw or "").strip().lower()
+            if win_mode == "image":
+                # t229u / t234u: 图片可选 grok / gemini / moss / qn
+                return b if b in ("gemini", "moss", "qn") else "grok"
+            if b == "gemini":
+                return "gemini"
+            return __import__("config").minimax_variant_key(b) or "grok"
         video_backend_var = tk.StringVar(
             master=dialog,
-            value=(lambda b: b if b == "gemini" else (__import__("config").minimax_variant_key(b) or "grok"))(
-                str(extra_params.get(_bk_key) or "").strip().lower()),
+            value=_init_backend(extra_params.get(_bk_key)),
         )
         backend_radios = []
         if not manual_only:
@@ -1584,6 +1591,8 @@ class LLMApi:
             vb_row.pack(anchor=tk.W, pady=(2, 0))
             ttk.Label(vb_row, text=("图片生成：" if win_mode == "image" else "视频生成：")).pack(side=tk.LEFT)
             _bk_opts = (("grok", "Grok"), ("gemini", "Gemini"))
+            if win_mode == "image":
+                _bk_opts += (("moss", "MOSS"), ("qn", "QN"))  # t229u/t234u: 本机 ComfyUI
             if cli_kind == "video":
                 import config as _cfgv  # t188u: 两台 ComfyUI：MiniMax 5070Ti / MiniMax 5060（t194u）
 
@@ -1757,19 +1766,32 @@ class LLMApi:
                     elif image_path:
                         # 全部输入图按顺序贴（第一张基础图，后面是人物参考图）。
                         use_gemini = video_backend == "gemini"  # t132u: 下面一行选的后端（初值来自 image_backend）
-                        who = "Gemini" if use_gemini else "Grok Imagine"
+                        use_moss = video_backend == "moss"  # t229u: 本机 ComfyUI MOSS
+                        use_qn = video_backend == "qn"  # t234u: 本机 ComfyUI Qwen
+                        who = (
+                            "MOSS" if use_moss else
+                            "QN" if use_qn else
+                            ("Gemini" if use_gemini else "Grok Imagine")
+                        )
                         _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…")
                         print(f"[CLI自动] 发给 {who} 的图（{len(image_paths)} 张）: " + " | ".join(
                             f"{k}={os.path.basename(str(p))}" for k, p in enumerate(image_paths, 1)))
-                        from . import chrome_account
+                        if use_moss:
+                            from .sd_image_processor import generate_image_moss_edit
+                            img = generate_image_moss_edit(prompt, list(image_paths), status=_cli_set_status)
+                        elif use_qn:
+                            from .sd_image_processor import generate_image_qwen_edit
+                            img = generate_image_qwen_edit(prompt, list(image_paths), status=_cli_set_status)
+                        else:
+                            from . import chrome_account
 
-                        acct = str(extra_params.get("chrome_account") or "")  # t129u: Chrome 账户（profile）
-                        with chrome_account.use(acct):
-                            if use_gemini:
-                                from . import gemini_cdp
-                                img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
-                            else:
-                                img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                            acct = str(extra_params.get("chrome_account") or "")  # t129u: Chrome 账户（profile）
+                            with chrome_account.use(acct):
+                                if use_gemini:
+                                    from . import gemini_cdp
+                                    img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                                else:
+                                    img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
 
                         def _apply_image():
                             _cli_done_ui()

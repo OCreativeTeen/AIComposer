@@ -78,6 +78,169 @@ def _keep_on_screen(dlg: tk.Toplevel) -> None:
             dlg.geometry(f"+{x}+{ny}")
 
 
+
+def ask_video_submit_confirm(
+    parent,
+    *,
+    title: str = "提交前确认",
+    initial: dict | None = None,
+    note: str = "",
+):
+    """t235u: 提交 / 全集提交前再确认一次全场背景选项（可改）。
+
+    initial 键：visual_style / scene_style / story_style / narrator / region / era / background。
+    确定 → 返回改后的 dict；取消 / Esc → None。
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    import config
+    import config_prompt
+
+    init = dict(initial or {})
+    box = tk.Toplevel(parent)
+    box.title(title)
+    box.transient(parent)
+    box.resizable(False, False)
+    try:
+        box.grab_set()
+    except tk.TclError:
+        pass
+
+    frm = ttk.Frame(box, padding=14)
+    frm.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(
+        frm,
+        text="请再核对一次下面的选项（生成时间较长，确认后再提交）：",
+        wraplength=520,
+        justify=tk.LEFT,
+    ).pack(anchor=tk.W, pady=(0, 10))
+
+    grid = ttk.Frame(frm)
+    grid.pack(fill=tk.X)
+    grid.columnconfigure(1, weight=1)
+
+    def _row(r: int, label: str, widget):
+        ttk.Label(grid, text=label).grid(row=r, column=0, sticky=tk.W, pady=3, padx=(0, 8))
+        widget.grid(row=r, column=1, sticky=tk.EW, pady=3)
+
+    vs_opts = list(config.VISUAL_STYLE_OPTIONS or [])
+    vs0 = config.match_visual_style(init.get("visual_style") or "") or (vs_opts[0] if vs_opts else "")
+    vs_var = tk.StringVar(master=box, value=vs0)
+    _row(0, "画面风格", ttk.Combobox(grid, textvariable=vs_var, values=vs_opts, state="readonly", width=42))
+
+    # SCENE_STYLE_LABELS[i] ↔ SCENE_STYLE_CHOICES[i][0]
+    ss_labels = list(config_prompt.SCENE_STYLE_LABELS or [])
+    ss_key_to_lab = {}
+    ss_lab_to_key = {}
+    for i, (key, _en, _desc) in enumerate(config_prompt.SCENE_STYLE_CHOICES):
+        lab = ss_labels[i] if i < len(ss_labels) else (key.split(" (")[0] if key else "(空)")
+        ss_key_to_lab[key] = lab
+        ss_lab_to_key[lab] = key
+    ss_key = config_prompt.normalize_scene_style(init.get("scene_style"))
+    ss_var = tk.StringVar(master=box, value=ss_key_to_lab.get(ss_key, ss_labels[0] if ss_labels else "(空)"))
+    _row(1, "场景风格", ttk.Combobox(grid, textvariable=ss_var, values=ss_labels, state="readonly", width=42))
+
+    story_pairs = list(config_prompt.STORY_STYLE_CHOICES or [])
+    story_lab_to_key = {lab: key for key, lab in story_pairs}
+    story_key_to_lab = {key: lab for key, lab in story_pairs}
+    st0 = config_prompt.normalize_story_style(init.get("story_style")) or (story_pairs[0][0] if story_pairs else "")
+    story_label_var = tk.StringVar(master=box, value=story_key_to_lab.get(st0, st0))
+    _row(
+        2,
+        "叙事风格",
+        ttk.Combobox(
+            grid,
+            textvariable=story_label_var,
+            values=[lab for _k, lab in story_pairs],
+            state="readonly",
+            width=42,
+        ),
+    )
+
+    narr_opts = [""] + [x for x in config.narrator_person_options() if (x or "").strip()]
+    nar0 = (init.get("narrator") or "").strip()
+    if nar0 and nar0 not in narr_opts:
+        narr_opts = narr_opts + [nar0]
+    nar_var = tk.StringVar(master=box, value=nar0)
+    _row(3, "默认讲员", ttk.Combobox(grid, textvariable=nar_var, values=narr_opts, width=42))
+
+    regions = [""] + list(config_prompt.SETTING_PLACES.keys())
+    reg0 = (init.get("region") or "").strip()
+    if reg0 and reg0 not in regions:
+        regions = regions + [reg0]
+    reg_var = tk.StringVar(master=box, value=reg0 if reg0 in regions else "")
+    _row(4, "地域", ttk.Combobox(grid, textvariable=reg_var, values=regions, state="readonly", width=42))
+
+    era_var = tk.StringVar(master=box, value=(init.get("era") or "").strip())
+    era_cb = ttk.Combobox(grid, textvariable=era_var, values=(), state="readonly", width=42)
+    _row(5, "时代", era_cb)
+
+    def _sync_eras(*_a):
+        region = (reg_var.get() or "").strip()
+        eras = list(config_prompt.setting_era_labels(region) or [])
+        era_cb.configure(values=eras)
+        if (era_var.get() or "").strip() not in eras:
+            era_var.set(eras[0] if eras else "")
+
+    reg_var.trace_add("write", _sync_eras)
+    _sync_eras()
+
+    bg_var = tk.BooleanVar(master=box, value=bool(init.get("background", True)))
+    ttk.Checkbutton(frm, text="背景（地域 · 时代 · 讲员）写入提示词", variable=bg_var).pack(
+        anchor=tk.W, pady=(10, 0)
+    )
+
+    if (note or "").strip():
+        ttk.Label(frm, text=note.strip(), foreground="#333", wraplength=520, justify=tk.LEFT).pack(
+            anchor=tk.W, pady=(10, 0)
+        )
+
+    res = {"v": None}
+    btns = ttk.Frame(frm)
+    btns.pack(fill=tk.X, pady=(14, 0))
+
+    def _cancel(_e=None):
+        res["v"] = None
+        try:
+            box.destroy()
+        except tk.TclError:
+            pass
+
+    def _ok(_e=None):
+        lab = (story_label_var.get() or "").strip()
+        st_key = story_lab_to_key.get(lab) or config_prompt.normalize_story_style(lab)
+        ss_lab = (ss_var.get() or "").strip()
+        res["v"] = {
+            "visual_style": config.match_visual_style(vs_var.get() or "") or (vs_var.get() or "").strip(),
+            "scene_style": ss_lab_to_key.get(ss_lab, ""),
+            "story_style": st_key,
+            "narrator": (nar_var.get() or "").strip(),
+            "region": (reg_var.get() or "").strip(),
+            "era": (era_var.get() or "").strip(),
+            "background": bool(bg_var.get()),
+        }
+        try:
+            box.destroy()
+        except tk.TclError:
+            pass
+
+    ttk.Button(btns, text="确定提交", command=_ok).pack(side=tk.RIGHT, padx=(8, 0))
+    ttk.Button(btns, text="取消", command=_cancel).pack(side=tk.RIGHT)
+    box.bind("<Escape>", _cancel)
+    box.bind("<Return>", _ok)
+    box.update_idletasks()
+    try:
+        px = parent.winfo_rootx() + max(0, (parent.winfo_width() - box.winfo_width()) // 2)
+        py = parent.winfo_rooty() + max(0, (parent.winfo_height() - box.winfo_height()) // 3)
+        box.geometry(f"+{px}+{py}")
+    except tk.TclError:
+        pass
+    box.focus_set()
+    box.wait_window()
+    return res["v"]
+
+
 def open_video_prompt_dialog(
     parent,
     anchor,
@@ -98,6 +261,7 @@ def open_video_prompt_dialog(
     get_actor_portraits=None,
     episode=None,
     on_scene_record=None,
+    apply_look=None,
 ) -> None:
     """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选叙事风格、画面、背景、演进、运镜、动画，
     再打开手动窗口，里面放提示词和画面）。
@@ -380,9 +544,12 @@ def open_video_prompt_dialog(
                     _dur, _why = _opts[-1], _why.split("→")[0] + f"→ {_opts[-1][:-1]}秒（有场景音频，不说快）"
             _cap = str(scenes[0].get("caption") or scenes[0].get("title") or "").strip()
             print(f"⏱ 自动长度：{_cap[:20] or '这一场'} {_why}")
-        style = (get_style() or "").strip()
+        style = (_look.get("visual_style") or get_style() or "").strip()  # t235u
         if not style:
             style = (project_manager.LAST_VISUAL_STYLE or "").strip() or config.VISUAL_STYLE_OPTIONS[0]
+        _host = (_look.get("narrator") or host_narrator or "").strip()
+        _reg = (_look.get("region") or "").strip()
+        _era = (_look.get("era") or "").strip()
         frames = "two" if is_transition else frame_var.get()
         field_kw = dict(
             use_visual=bool(visual_var.get()),
@@ -409,7 +576,7 @@ def open_video_prompt_dialog(
                     scene_content=scenes,
                     transition=transition,
                     language=language or "",
-                    host_narrator=host_narrator or "",
+                    host_narrator=_host,
                     narrative=narrative_var.get(),
                     story_style=style_var.get(),
                     text=text_var.get(),
@@ -423,7 +590,7 @@ def open_video_prompt_dialog(
                     visual_style=style,
                     scene_content=scenes,
                     language=language or "",
-                    host_narrator=host_narrator or "",
+                    host_narrator=_host,
                     camera=camera_var.get(),
                     motion=motion_var.get(),
                     narrative=narrative_var.get(),
@@ -436,13 +603,13 @@ def open_video_prompt_dialog(
             return
         if fyi_only:
             # FYI 已作为「主要动作」写在最前；背景条件放在后面。
-            bg = config_prompt.background_condition_block(bg_region, bg_era, host_narrator, bg_stage) if bg_include_var.get() else ""
+            bg = config_prompt.background_condition_block(_reg, _era, _host, bg_stage) if bg_include_var.get() else ""
             if bg:
                 bg = bg.replace("(applies to everything below)", "(applies to the whole clip)")
                 prompt = prompt + "\n\n---\n\n" + bg
         else:
             prompt = config_prompt.prepend_background_condition(
-                prompt, bg_region, bg_era, host_narrator, include=bool(bg_include_var.get()), stage=bg_stage,
+                prompt, _reg, _era, _host, include=bool(bg_include_var.get()), stage=bg_stage,
             )
             prompt = prepend_fyi(  # t163u: FYI 里讲字幕 / 文字的句子不带
                 prompt, config_prompt.strip_caption_lines(get_fyi_text()), include=bool(fyi_include_var.get())
@@ -475,7 +642,7 @@ def open_video_prompt_dialog(
         # t123u: Grok 单画面：场景图后面按说话人顺序附上有形象图的人，提示词里说明每张图是谁。
         portrait_refs = []
         # t216u: MiniMax 选了「参考图工作流」时也附肖像（最多 8 张；场景图 + 8 = R2V 的 9 张上限）
-        _mm_r2v = _cfg_mm.is_minimax(backend) and h3_wf_var.get() in ("r2v", "r2v_fast8")  # t228u: FastH3 同样附肖像
+        _mm_r2v = _cfg_mm.is_minimax(backend) and h3_wf_var.get() in ("r2v", "r2v_fast8", "r2v_pika6")  # t228u: FastH3 同样附肖像
         if (backend == "grok" or _mm_r2v) and frames != "two" and images and callable(get_actor_portraits):
             try:
                 portrait_refs = list(get_actor_portraits(scenes[0]) or [])[: (8 if _mm_r2v else 4)]  # Grok 最多 5 张输入图
@@ -557,7 +724,9 @@ def open_video_prompt_dialog(
                     _h3_people = []
                     for _k, _row in enumerate(_rows, 1):
                         _nm, _ident, _tone = config_prompt._speaker_identity(_row)
-                        _h3_people.append((_k, _nm, ", ".join(x for x in (_ident, _tone) if x), _all.get(_k, "")))
+                        # t222u: 5th item = actor parenthesis (clothing/seat); Strata must follow it
+                        _h3_people.append((_k, _nm, ", ".join(x for x in (_ident, _tone) if x),
+                                           _all.get(_k, ""), config_prompt.actor_scene_note(_row)))
                     _h3_visual = " ".join(str(s.get("visual") or "") for s in scenes if isinstance(s, dict)).strip() \
                         if visual_var.get() else ""
                 except Exception as exc:  # noqa: BLE001
@@ -693,6 +862,48 @@ def open_video_prompt_dialog(
         initial=bool(saved_choice.get("background", True)) if isinstance(saved_choice, dict) else True,
         pady=(0, 8),
     )
+    # t235u: 提交前可改的背景 / 风格快照（on_go 读这里，避免只改主窗口却用到开窗时的旧值）
+    _look = {
+        "visual_style": (get_style() or "").strip(),
+        "scene_style": config_prompt.project_scene_style(),
+        "story_style": style_var.get(),
+        "narrator": (host_narrator or "").strip(),
+        "region": (bg_region or "").strip(),
+        "era": (bg_era or "").strip(),
+        "background": bool(bg_include_var.get()),
+    }
+
+    def _confirm_before_submit(*, episode_note: str = "") -> bool:
+        """t235u: 弹出可编辑确认；写入 _look / 勾选框 / 叙事风格，并回写主窗口全场内容。"""
+        _look["visual_style"] = (get_style() or "").strip() or _look.get("visual_style") or ""
+        _look["scene_style"] = config_prompt.project_scene_style()
+        _look["story_style"] = style_var.get()
+        _look["background"] = bool(bg_include_var.get())
+        edited = ask_video_submit_confirm(
+            dlg,
+            title=("全集提交前确认" if episode_note else "提交前确认"),
+            initial=_look,
+            note=episode_note,
+        )
+        if not edited:
+            return False
+        _look.update(edited)
+        bg_include_var.set(bool(edited.get("background", True)))
+        st = config_prompt.normalize_story_style(edited.get("story_style"))
+        if st:
+            style_var.set(st)
+            if on_story_style is not None:
+                try:
+                    on_story_style(st)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 叙事风格没有同步：{exc}")
+        if callable(apply_look):
+            try:
+                apply_look(dict(_look))
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 全场内容没有写回主窗口：{exc}")
+        return True
+
     # 下方一行：背景（左）+ 交给 LLM 的图 / 长度 / 提交（右，顶端对齐），同全集生成。
     lower = ttk.Frame(advanced)
     lower.pack(fill=tk.X, pady=(0, 8), before=actions)
@@ -753,12 +964,13 @@ def open_video_prompt_dialog(
     for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + _cfg_prefs.minimax_backend_options():
         ttk.Radiobutton(backend_box, text=label, value=value, variable=backend_var).pack(anchor=tk.W)
     # t216u: MiniMax 工作流：原工作流（无参考图，FL2VA）/ 参考图工作流（人物肖像，Ref2VA），记在项目 video_prompt
-    h3_wf_var = tk.StringVar(master=dlg, value=_sv.get("h3_workflow") if _sv.get("h3_workflow") in ("i2v", "r2v", "r2v_fast8") else "r2v_fast8")  # t229u: 没记过就默认 FastH3
+    h3_wf_var = tk.StringVar(master=dlg, value=_sv.get("h3_workflow") if _sv.get("h3_workflow") in ("i2v", "r2v", "r2v_fast8", "r2v_pika6") else "r2v_fast8")  # t229u: 没记过就默认 FastH3
     h3_wf_box = ttk.LabelFrame(actions, text="MiniMax 工作流", padding=(8, 4))
     h3_wf_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     h3_wf_radios = []
     for value, label in (("i2v", "原工作流（无参考图）"), ("r2v", "参考图工作流（人物肖像）"),
-                         ("r2v_fast8", "参考图·8步快速（FastH3）")):  # t228u
+                         ("r2v_fast8", "参考图·8步快速（FastH3）"),
+                         ("r2v_pika6", "参考生视频·Pika 6步(试验)")):  # t228u
         _rb = ttk.Radiobutton(h3_wf_box, text=label, value=value, variable=h3_wf_var)
         _rb.pack(anchor=tk.W)
         h3_wf_radios.append(_rb)
@@ -815,9 +1027,12 @@ def open_video_prompt_dialog(
     from gui.slide_prompt_dialog import big_submit_button
 
     def on_submit() -> None:
-        """t161u: 后端在对话框里选好；Grok / Gemini 只再问 Chrome 账户，MiniMax 直接提交。"""
+        """t161u: 后端在对话框里选好；Grok / Gemini 只再问 Chrome 账户，MiniMax 直接提交。
+        t235u: 提交前先确认画面风格 / 场景风格 / 讲员 / 地域 · 时代。"""
         from gui.picture_prompt_dialog import ask_llm_and_account
 
+        if not _confirm_before_submit():
+            return
         backend = backend_var.get()
         if _cfg_prefs.is_minimax(backend):
             try:
@@ -865,6 +1080,14 @@ def open_video_prompt_dialog(
             return
         backend = backend_var.get()
         account = ""
+        _dual = backend == _cfg_prefs.MINIMAX_DUAL_KEY and callable(episode.get("generate"))
+        _ep_note = (
+            f"将用以上选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。"
+            + (" MiniMax 双机：两台同时跑，先做完的接下一场。" if _dual
+               else " 一场做完、下载好再提交下一场。")
+        )
+        if not _confirm_before_submit(episode_note=_ep_note):
+            return
         if not _cfg_prefs.is_minimax(backend):
             picked = ask_llm_and_account(
                 dlg, pref_key="video_submit_choice",
@@ -873,15 +1096,6 @@ def open_video_prompt_dialog(
             if not picked:
                 return
             account = picked[1]
-        _dual = backend == _cfg_prefs.MINIMAX_DUAL_KEY and callable(episode.get("generate"))
-        if not messagebox.askokcancel(
-            "全集提交",
-            f"用现在的选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。\n"
-            + ("MiniMax 双机：两台同时跑，先做完的接下一场，每场做完自动导入。继续吗？" if _dual
-               else "一场做完、下载好再提交下一场。继续吗？"),
-            parent=dlg,
-        ):
-            return
         remember()
         state = {"stop": False, "ok": 0, "files": [], "done": False}
         prog = tk.Toplevel(parent)

@@ -93,6 +93,15 @@ def pick_dual_server(status=None) -> str:
 
 def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, status=None, server_key=None) -> str:
     """t190u: 原来 llm_api 里的 MiniMax 分支（单场提交和双机全集共用）。返回 mp4 路径。"""
+    try:  # t238u / t244: 提交前保证禁字幕句：全局第一行 + H3 三遍
+        from config_prompt import ensure_h3_no_subtitle_rules, ensure_h3_monologue_no_lipsync_rules, ensure_video_no_subtitle_first_line
+        prompt = ensure_video_no_subtitle_first_line(prompt)  # t244: 最重要的禁字幕行必须是第一行
+        prompt = ensure_h3_no_subtitle_rules(prompt)
+        # t250u: 同时检测简体 自言自语 和繁体 自言自語
+        prompt = ensure_h3_monologue_no_lipsync_rules(
+            prompt, has_monologue=("自言自语" in (prompt or "") or "自言自語" in (prompt or "") or "Self-talk" in (prompt or "")))
+    except Exception as _e:  # noqa: BLE001
+        print(f"[MiniMax] 禁字幕句核对跳过：{_e}")
     from utility import sd_image_processor as _sdp
 
     extra = dict(extra or {})
@@ -126,7 +135,7 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
         + f"{_vsecs:g}秒" + ("（跟场景音频）" if _audio else "") + ("，含结束图" if _last else "")
         + (f"，语速档 {float(extra['speech_speed']):g}（说快，导入时放慢）" if float(extra.get("speech_speed") or 1) < 0.999 else "")
         + " …")
-    _dest = dest_dir or os.path.join(os.path.expanduser("~"), "Downloads")
+    _dest = dest_dir or config.WORKING_DIR  # temp gen output goes to D:\AI_MEDIA\working, not Downloads
     _name = time.strftime("minimax_h3_%Y%m%d_%H%M%S") + "_" + key.replace("minimax_", "") + ".mp4"
     if _audio and _adur > _sdp.MINIMAX_MAX_SECONDS:
         # t201u: 音频 > 12.25 秒：同一台机器上分段依次生成、裁准、接起来、换原声，返回一个 mp4 给原来的导入

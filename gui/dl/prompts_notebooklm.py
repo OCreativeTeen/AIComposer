@@ -11,6 +11,25 @@ from gui.dl.youtube_dl import _youtube_row_display_title
 from gui.dl.gen_video_files import _find_gen_video_webp_for_row, _item_transcript_text
 
 
+def analyzed_content_text(value, language: str = "") -> str:
+    """analyzed_content 可能是字符串，也可能是 {"english": "...", "chinese": "..."}。取出要给提示词用的正文。"""
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        return str(value or "").strip()
+    lang = (language or "").strip().lower()
+    if lang in ("en", "english"):
+        order = ("english", "en", "chinese", "zh", "tw")
+    else:
+        order = ("chinese", "zh", "tw", "english", "en")
+    for key in order:
+        text = value.get(key)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    parts = [v.strip() for v in value.values() if isinstance(v, str) and v.strip()]
+    return "\n\n".join(parts)
+
+
 def _format_nb_prompt_template(template: str, **kwargs) -> str:
     """对模板中 ``{name}`` 占位符填入 kwargs（``content`` / ``story`` / ``instruction`` 等）。"""
     names = set()
@@ -152,7 +171,10 @@ def _notebooklm_prompt_context_from_video_detail(
     """场景智能生成等共用的 NotebookLM 占位符数据源。"""
     vd = video_detail if isinstance(video_detail, dict) else {}
     cat, sub, topic = _notebooklm_row_topic_fields(vd)
-    content = vd.get("analyzed_content")
+    content = analyzed_content_text(
+        vd.get("analyzed_content"),
+        vd.get("language") or getattr(mgr, "language", "") or "",
+    )
     return {
         "topic": topic,
         "tags": _notebooklm_row_tags_text(vd),

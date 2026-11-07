@@ -3260,11 +3260,13 @@ def build_video_fyi_only_prompt(
         parts.append(dict(VIDEO_FLOW_CAMERA_CHOICES).get(camera, camera))
     if secs:
         parts.append(f"{secs}s")
-    return (
+    # t244/t246: 全局禁字幕行必须是物理第一行
+    result = (
         f"Visual_Style:\n{style}\n\n"
         f"Video_choices:\n{' · '.join(parts)}\n\n"
         "Instruction_for_video_generation:\n" + "\n".join(lines)
     )
+    return ensure_video_no_subtitle_first_line(result)
 
 
 # 性别 / 年龄段 / 民族 → 商业声音名。同一档有多个时，按书写顺序往下用。
@@ -3526,6 +3528,32 @@ def project_story_style() -> str:
 
 _SPEAKER_MARK = re.compile(r"[<＜]\s*(\d+)\s*[>＞]")
 _PAUSE_MARK = re.compile(r"<\s*\d+\.\d+\s*>")
+# t241u: speaking 里 ``<N>（自言自语）`` = 该人物独白（开场交代 / 收尾总结），不是讲员
+# t250u: 支持简体 ``自言自语`` 和繁体 ``自言自語``（語 0x8a9e vs 语 0x8bed）
+_MONOLOGUE_TAG_RE = re.compile(r"^[（(]\s*自言自[语語]\s*[）)]\s*")
+H3_MONOLOGUE_NO_LIPSYNC_RULE = (
+    "Self-talk (自言自语): any line that is that character speaking to himself/herself "
+    "(inner monologue / voiceover feel) is NOT interactive dialogue; only the other dialogue lines are interactive; "
+    "self-talk lines have NO lip sync — that speaker keeps the mouth closed / not moving while that audio plays."
+)
+
+
+def speaking_has_monologue(text: str) -> bool:
+    """True when speaking contains ``<N>（自言自语）`` (fullwidth or halfwidth parens).
+    t250u: 支持简体 ``自言自语`` 和繁体 ``自言自語``。"""
+    if not text:
+        return False
+    return bool(re.search(r"[<＜]\s*\d+\s*[>＞]\s*[（(]\s*自言自[语語]\s*[）)]", str(text)))
+
+
+def strip_monologue_tag(body: str) -> tuple:
+    """Return (is_monologue, spoken_text_without_tag). Tag must be right after <N>."""
+    raw = str(body or "")
+    m = _MONOLOGUE_TAG_RE.match(raw.lstrip())
+    if not m:
+        return False, raw.strip()
+    rest = raw.lstrip()[m.end():]
+    return True, rest.strip()
 
 
 def _strip_speech_marks(text: str) -> str:
@@ -3690,7 +3718,9 @@ def _unquote(text: str) -> str:
 
 
 def dialogue_script(scene: dict) -> list:
-    """speaking 的 <N> → 逐句台词：'1. 阿明 (young man): "…"'。同一人连着说的合并成一句。"""
+    """speaking 的 <N> → 逐句台词。同一人连着说的合并成一句。
+    t241u: ``<N>（自言自语）`` 的标签从台词里去掉；独白标记写在行尾 ``[自言自语]``，
+    供 ``_dialogue_turns`` 识别，不送给配音引擎朗读。"""
     if not isinstance(scene, dict):
         return []
     rows = _scene_speakers(scene)
@@ -3709,21 +3739,27 @@ def dialogue_script(scene: dict) -> list:
     tail = text[pos:].strip()
     if tail:
         turns.append([who, tail])
-    merged: list = []
+    tagged = []
     for n, chunk in turns:
-        if merged and merged[-1][0] == n:
+        mono, clean = strip_monologue_tag(chunk)
+        tagged.append([n, clean, mono])
+    merged: list = []
+    for n, chunk, mono in tagged:
+        if not chunk:
+            continue
+        if merged and merged[-1][0] == n and merged[-1][2] == mono:
             merged[-1][1] += " " + chunk
         else:
-            merged.append([n, chunk])
+            merged.append([n, chunk, mono])
     out = []
-    for i, (n, chunk) in enumerate(merged, start=1):
+    for i, (n, chunk, mono) in enumerate(merged, start=1):
+        flag = " [自言自语]" if mono else ""
         if 1 <= n <= len(rows):
             name, _ident, _tone = _speaker_identity(rows[n - 1])
             sex = _speaker_sex_word(rows[n - 1])
-            # t163u: 不用引号 / 方括号（引号里的字容易被画成字幕）：'蘇敏 (Speaker 1, FEMALE voice) says aloud: …'
-            out.append(f'{name} (Speaker {n}' + (f', {sex} voice' if sex else '') + f') says aloud: {_unquote(chunk)}')
+            out.append(f'{name} (Speaker {n}' + (f', {sex} voice' if sex else '') + f') says aloud: {_unquote(chunk)}{flag}')
         else:
-            out.append(f'Speaker {n} says aloud: {_unquote(chunk)}')
+            out.append(f'Speaker {n} says aloud: {_unquote(chunk)}{flag}')
     return out
 
 
@@ -4058,7 +4094,7 @@ def minimax_lighting_phrase(visual: str, start_image: str = "") -> str:
 
 
 def _dialogue_turns(scene: dict) -> list:
-    """[(说话人序号, 名字, 身份, 台词)]，台词去掉引号。"""
+    """[(说话人序号, 名字, 身份, 台词, 是否自言自语)]，台词去掉引号与 ``[自言自语]`` 标记。"""
     rows = _scene_speakers(scene)
     out = []
     for line in dialogue_script(scene):
@@ -4067,8 +4103,12 @@ def _dialogue_turns(scene: dict) -> list:
             continue
         n = int(m.group(1))
         name, ident = (_speaker_identity(rows[n - 1])[:2] if 1 <= n <= len(rows) else (f"person {n}", ""))
-        text = "".join(ch for ch in m.group(2) if ch not in _QUOTE_CHARS).strip()
-        out.append((n, name, ident, text))
+        raw = m.group(2)
+        mono = bool(re.search(r"\[自言自语\]\s*$", raw))
+        if mono:
+            raw = re.sub(r"\s*\[自言自语\]\s*$", "", raw)
+        text = "".join(ch for ch in raw if ch not in _QUOTE_CHARS).strip()
+        out.append((n, name, ident, text, mono))
     return out
 
 
@@ -4105,19 +4145,38 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
         lines.append("People in the shot: " + "; ".join(who) + ". Only these people, nobody else.")
     turns = _dialogue_turns(sc)
     talk = bool(turns) or any(_scene_has_dialogue(s) for s in scs)
+    has_mono = any(len(tr) > 4 and tr[4] for tr in turns) or any(
+        speaking_has_monologue(str(s.get("speaking") or "")) for s in scs)
     if talk:
         if with_audio:
             names = " and ".join(dict.fromkeys(t[1] for t in turns)) or "the people"
             lines.append(f"{names} talk to each other" + (f" in {lang}" if lang else "")
                          + ", their lips moving in sync with the voice track, one speaker at a time while the other "
                          "listens and reacts with natural expressions and small gestures.")
+            if has_mono:
+                lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
         else:
             said = []
-            for i, (_n, name, ident, text) in enumerate(turns):
+            for i, tr in enumerate(turns):
+                _n, name, ident, text = tr[0], tr[1], tr[2], tr[3]
+                mono = bool(tr[4]) if len(tr) > 4 else False
                 lead = "" if i == 0 else "Then "
-                said.append(f"{lead}{name}" + (f" (the {ident})" if ident else "") + f" says aloud: {text}")
-            lines.append("They talk to each other, heard as spoken voices" + (f" in {lang}" if lang else "")
-                         + ", one speaker at a time, lips in sync, the other listens and reacts. " + " ".join(said))
+                if mono:
+                    g = str(ident or "").lower()
+                    pron = "herself" if ("woman" in g or "female" in g or "girl" in g) else "himself"
+                    said.append(
+                        f"{lead}{name}" + (f" (the {ident})" if ident else "")
+                        + f" speaks to {pron} as self-talk / inner monologue (mouth closed, NO lip sync): {text}"
+                    )
+                else:
+                    said.append(f"{lead}{name}" + (f" (the {ident})" if ident else "") + f" says aloud: {text}")
+            lines.append(
+                "They talk, heard as spoken voices" + (f" in {lang}" if lang else "")
+                + ", one speaker at a time. Interactive lines have lips in sync; "
+                "self-talk (自言自语) lines have NO lip sync (mouth closed). " + " ".join(said)
+            )
+            if has_mono:
+                lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
     if talk and not lighting_change_requested(visual):
         lines.append("This is one continuous real-time moment of a few seconds.")
         lines.append(minimax_lighting_phrase(visual, start_image))
@@ -4134,7 +4193,8 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
         extra.append(s)
     if extra:
         lines.append("Note: " + " ".join(extra))
-    return "\n".join(lines)
+    # t244/t246: 全局禁字幕行必须是物理第一行
+    return ensure_video_no_subtitle_first_line("\n".join(lines))
 
 
 def _plain_payload(payload: list) -> str:
@@ -4223,11 +4283,13 @@ def h3_speaker_map(scene: dict) -> tuple:
             print("⚠️ 讲话里的编号 " + "、".join(f"<{n}>" for n in labels) + f" 超出 actor 里的 {len(rows)} 个人，按顺序对到："
                   + "、".join(f"<{n}>→{_speaker_identity(rows[remap[n] - 1])[0]}" for n in labels))
     turns = []
-    for n, name, ident, text in raw:
+    for item in raw:
+        n, name, ident, text = item[0], item[1], item[2], item[3]
+        mono = bool(item[4]) if len(item) > 4 else False
         m = remap.get(n, n)
         if 1 <= m <= len(rows):
             name, ident = _speaker_identity(rows[m - 1])[:2]
-        turns.append((m, name, ident, text))
+        turns.append((m, name, ident, text, mono))
     return rows, turns, remap
 
 
@@ -4301,11 +4363,161 @@ def actor_scene_note(row: dict) -> str:
 
 
 def merge_speaker_note(look: str, visual_note: str) -> str:
-    """t151u: 括号描述 = Strata 看图写的样子 + 场景描述里讲这个人的小句（衣服、表情、姿势、位置），两者都留。"""
+    """t151u: 括号描述 = Strata 看图写的样子 + 场景描述里讲这个人的小句（衣服、表情、姿势）。
+    t223u: when a look/actor note exists, visual positioning is ignored entirely (all left/right/seat
+    clauses stripped from the visual note) — never used, rewritten, or merged for positioning."""
     a, b = clean_speaker_note(look or "", 220), clean_speaker_note(visual_note or "", 140)
+    if a and b:
+        b = drop_all_side_clauses(b)  # t223u: actor/look is sole position source
     if a and b and b not in a:
         return f"{a}, in this scene: {b}"
     return a or b
+
+
+_SIDE_RE = re.compile(
+    "(?P<L>"
+    "\u5de6\u5074|\u5de6\u4fa7|\u5de6\u908a|\u5de6\u8fb9|\u5de6\u9762|\u9760\u5de6|\u5750\u5728\u5de6|"
+    r"\bleft\b)"
+    "|(?P<R>"
+    "\u53f3\u5074|\u53f3\u4fa7|\u53f3\u908a|\u53f3\u8fb9|\u53f3\u9762|\u9760\u53f3|\u5750\u5728\u53f3|"
+    r"\bright\b)",
+    re.I)
+
+
+def speaker_side_token(text: str):
+    """t222u: 从描述里读出左/\u53f3（L/R）；两边都有或没有则 None。"""
+    L = R = False
+    for m in _SIDE_RE.finditer(str(text or "")):
+        if m.group("L"):
+            L = True
+        if m.group("R"):
+            R = True
+    if L and not R:
+        return "L"
+    if R and not L:
+        return "R"
+    return None
+
+
+def drop_conflicting_side_clauses(text: str, keep_side) -> str:
+    """t222u: 掉掉与 keep_side 相反的左/右小句（通常来自冲突的视觉）。"""
+    if not keep_side or not text:
+        return text or ""
+    bad = "R" if keep_side == "L" else "L"
+    parts = [p.strip() for p in re.split(r"[,;，；]\s*", text) if p.strip()]
+    keep = []
+    for p in parts:
+        side = speaker_side_token(p)
+        if side == bad:
+            continue
+        keep.append(p)
+    return ", ".join(keep)
+
+
+def drop_all_side_clauses(text: str) -> str:
+    """t223u: drop every left/right/seat clause — used when actor is sole position source."""
+    if not text:
+        return ""
+    parts = [p.strip() for p in re.split(r"[,;，；]\s*", text) if p.strip()]
+    return ", ".join(p for p in parts if speaker_side_token(p) is None)
+
+
+def strip_named_position_from_visual(visual: str, names) -> str:
+    """t223u: for the H3 prompt copy only — remove clauses that assign a named speaker a left/right/seat.
+    Does not rewrite or swap seats; ignores visual positioning entirely when actor notes exist."""
+    if not visual:
+        return ""
+    names = [str(n).strip() for n in (names or []) if str(n).strip()]
+    if not names:
+        return visual
+    _sep = re.compile("([，、,;；。！？!?\n]+)")
+    bits = _sep.split(visual)
+    out = []
+    for bit in bits:
+        if _sep.fullmatch(bit or ""):
+            out.append(bit)
+            continue
+        has_name = any(nm and nm in bit for nm in names)
+        if has_name and speaker_side_token(bit) is not None:
+            continue  # drop the whole clause that seats a named speaker
+        out.append(bit)
+    # tidy doubled punctuation from removals
+    text = "".join(out)
+    text = re.sub(r"([，、,;；])\1+", r"\1", text)
+    text = re.sub(r"^[，、,;；\s]+", "", text)
+    text = re.sub(r"[，、,;；\s]+$", "", text)
+    return text.strip()
+
+
+def prefer_actor_speaker_look(actor_note: str, strata_note: str) -> str:
+    """t222u/t223u: actor parenthesis clothing/seat is truth; Strata may enrich expression/pose only.
+    When actor has a seat/side, ALL left/right clauses from Strata are dropped (not merged)."""
+    a = clean_speaker_note(actor_note or "", 220)
+    b = clean_speaker_note(strata_note or "", 220)
+    if not a:
+        return b
+    if not b:
+        return a
+    if speaker_side_token(a) is not None:
+        b = drop_all_side_clauses(b)  # t223u: ignore Strata positioning entirely
+    else:
+        b = drop_conflicting_side_clauses(b, speaker_side_token(a))
+    if not b or b in a:
+        return a
+    return f"{a}; seen in Picture 1: {b}"
+
+
+def actor_visual_side_conflicts(rows: list, visual: str) -> list:
+    """t222u: [(name, actor_side, visual_side)]，actor 括号与视觉对同一人左右不一致。"""
+    names = [_speaker_identity(r)[0] for r in (rows or [])]
+    out = []
+    for r, nm in zip(rows or [], names):
+        if not nm:
+            continue
+        a_side = speaker_side_token(actor_scene_note(r))
+        v_side = speaker_side_token(h3_visual_person_note(visual or "", nm, names))
+        if a_side and v_side and a_side != v_side:
+            out.append((nm, a_side, v_side))
+    return out
+
+
+def align_visual_names_to_actor(visual: str, rows: list) -> tuple:
+    """t222u: when visual L/R seats are fully swapped vs actor brackets, rewrite each
+    name's seat words (side + furniture) to match actor; keep original names and actions.
+    Returns (visual, conflicts, fixed: bool)."""
+    conflicts = actor_visual_side_conflicts(rows, visual)
+    if not visual or len(conflicts) != 2:
+        return visual or "", conflicts, False
+    (n1, a1, v1), (n2, a2, v2) = conflicts
+    if not (a1 != a2 and v1 != v2 and a1 == v2 and a2 == v1 and n1 and n2 and n1 != n2):
+        return visual, conflicts, False
+
+    def _flip_seat_words(text: str) -> str:
+        # side words + common seat furniture that travels with a full two-person swap
+        pairs = [
+            ("\u5de6\u5074", "\u53f3\u5074"), ("\u5de6\u4fa7", "\u53f3\u4fa7"),
+            ("\u5de6\u908a", "\u53f3\u908a"), ("\u5de6\u8fb9", "\u53f3\u8fb9"),
+            ("\u6728\u6905", "\u5c0f\u51f3"), ("\u9577\u6905", "\u5c0f\u51f3"),
+            ("\u957f\u6905", "\u5c0f\u51f3"),
+        ]
+        out = text
+        for i, (L, R) in enumerate(pairs):
+            out = out.replace(L, f"\x00L{i}\x00").replace(R, f"\x00R{i}\x00")
+        for i, (L, R) in enumerate(pairs):
+            out = out.replace(f"\x00L{i}\x00", R).replace(f"\x00R{i}\x00", L)
+        return out
+
+    _sep = re.compile("([\uFF0C\u3001,;\uFF1B\u3002\uFF01\uFF1F!?\n]+)")
+    bits = _sep.split(visual)
+    for nm, a_side, v_side in conflicts:
+        for i, bit in enumerate(bits):
+            if i % 2 == 1:
+                continue
+            if nm in bit and speaker_side_token(bit) == v_side:
+                bits[i] = _flip_seat_words(bit)
+    fixed = "".join(bits)
+    return fixed, conflicts, fixed != visual
+
 
 
 _MOUTH_COVER = re.compile(
@@ -4371,25 +4583,36 @@ def h3_speech_pace_line(speed: float, seconds: float) -> str:
 
 
 def _h3_dialogue_sentences(rows, turns, *, lang: str, audio_mode: str, notes: dict, timeline: list) -> list:
-    """t150u: 每句台词写清楚谁在说、谁闭嘴；换人时写「口型换到 X」。(S#) = actor 第 # 个人。"""
+    """t150u / t241u: 每句台词写清楚谁在说、谁闭嘴；自言自语句无口型。(S#) = actor 第 # 个人。"""
     verb = "sings" if audio_mode == "sing" else "says"
     seen, out = set(), []
-    for i, (n, _name, _ident, text) in enumerate(turns):
+    for i, tr in enumerate(turns):
+        n, _name, _ident, text = tr[0], tr[1], tr[2], tr[3]
+        mono = bool(tr[4]) if len(tr) > 4 else False
         sid = f"(S{n})"
         ok = 1 <= n <= len(rows)
         nm = _speaker_identity(rows[n - 1])[0] if ok else f"Speaker {n}"
         others = [f"{_speaker_identity(r)[0]} (S{k})" for k, r in enumerate(rows, 1) if k != n]
+        gender = (_speaker_identity(rows[n - 1])[1] or "").lower() if ok else ""
+        self_pronoun = "herself" if ("woman" in gender or "female" in gender or "girl" in gender) else "himself"
         if n not in seen and ok:
             who = _h3_speaker_phrase(rows[n - 1])
             note = clean_speaker_note((notes or {}).get(n, ""))
-            if note:  # 括号描述放在名字后面、声音前面
+            if note:
                 nm_at = who.find(nm)
                 cut = nm_at + len(nm) if nm_at >= 0 else len(who)
                 who = who[:cut] + f" ({note})" + who[cut:]
-            who_s = f"{who} {sid} {verb}"
+            if mono and audio_mode != "sing":
+                who_s = (f"{who} {sid} speaks to {self_pronoun} as self-talk / inner monologue "
+                         f"(not interacting with anyone; mouth closed, NO lip sync)")
+            else:
+                who_s = f"{who} {sid} {verb}"
         else:
             if audio_mode == "sing":
                 who_s = f"{nm} {sid} sings on"
+            elif mono:
+                who_s = (f"{nm} {sid} continues self-talk to {self_pronoun} "
+                         f"(inner monologue; mouth closed, NO lip sync)")
             else:
                 who_s = f"{nm} {sid} " + ("answers" if i and turns[i - 1][0] != n else "continues")
         seen.add(n)
@@ -4400,16 +4623,23 @@ def _h3_dialogue_sentences(rows, turns, *, lang: str, audio_mode: str, notes: di
         quiet = ""
         if others and audio_mode != "sing":
             quiet = "while " + " and ".join(others) + (" listens" if len(others) == 1 else " listen") + " with closed lips"
-        if i and turns[i - 1][0] != n and audio_mode != "sing":
-            lead = f"then the lip movement switches to {nm}" + (f" {when}" if when else "") + ", " + (
-                f"and {quiet}, " if quiet else "")
+        prev_mono = bool(turns[i - 1][4]) if i and len(turns[i - 1]) > 4 else False
+        if mono and audio_mode != "sing":
+            lead = "".join(x + ", " for x in (when, quiet) if x)
+            lead = (lead + "no lip sync on this self-talk line, ") if lead else "no lip sync on this self-talk line, "
+        elif i and turns[i - 1][0] != n and audio_mode != "sing":
+            if prev_mono:
+                lead = f"then lip sync begins on {nm}" + (f" {when}" if when else "") + ", " + (
+                    f"and {quiet}, " if quiet else "")
+            else:
+                lead = f"then the lip movement switches to {nm}" + (f" {when}" if when else "") + ", " + (
+                    f"and {quiet}, " if quiet else "")
         else:
             lead = "".join(x + ", " for x in (when, quiet) if x)
         body = who_s
-        # t219u: 发送前会转简体(t210u)，标签写 Chinese，避免 [Traditional Chinese]+简体字不一致
         tag = "Chinese" if "Chinese" in str(lang) else lang
         sent = f"{lead}{body}: <d>[{tag}] {text}</d>"
-        out.append(sent[0].upper() + sent[1:])  # 每句一个大写开头（不加句号：整段对话一起原样保留）
+        out.append(sent[0].upper() + sent[1:])
     return out
 
 
@@ -4425,9 +4655,237 @@ def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None =
         if (pictures or {}).get(k):
             bit += f", whose portrait is <Picture {pictures[k]}>"
         parts.append(bit)
-    tail = ("; every spoken line belongs only to the person with its (S) id, and only that person's mouth moves"
-            if len(rows) > 1 else "; every spoken line belongs to this person")
+    tail = ("; every spoken line belongs only to the person with its (S) id, and only that person's mouth moves; "
+            "the seat, side (left/right) and clothing in each bracket are authoritative and must match that (S) id in <Picture 1>"
+            if len(rows) > 1 else "; every spoken line belongs to this person; "
+            "the seat, side and clothing in the bracket are authoritative")
     return "Speaker map: " + "; ".join(parts) + tail + "."
+
+
+
+# t238u: MiniMax H3 — 禁止字幕/台词上屏（正词写三遍；负面词有则并入）
+# t244/t246: 所有视频生成必须永久禁止任何字幕/captions（不只MiniMax，是第一行不可变规则）
+VIDEO_NO_SUBTITLE_CRITICAL_LINE = (
+    "MOST IMPORTANT / CRITICAL REQUIREMENT: 永远不许加任何字幕！永远不许加任何字幕！永远不许加任何字幕！ "
+    "NEVER add ANY subtitles, captions, dialogue text, translations, or automatic subtitles of ANY language to the video! "
+    "This applies to ALL languages including Chinese, English, and any other language. "
+    "任何语言的字幕、说明文字、翻译文字、自动字幕都绝对禁止！"
+)
+
+
+def _strip_critical_line_prefix(text: str) -> tuple:
+    """t246: 临时剥离禁字幕行前缀，返回 (前缀, 剩余内容)。
+    
+    用于 split_reference_block、ensure_h3_no_subtitle_rules 等需要检测
+    REFERENCE PICTURES: 开头的函数。处理完后需要重新组装前缀。
+    """
+    critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
+    t = (text or "").strip()
+    if not t:
+        return "", ""
+    
+    # 检查是否以禁字幕行开头
+    first_line = t.split('\n', 1)[0].strip()
+    if first_line == critical.strip():
+        # 移除第一行和紧随的空行
+        rest = t[len(first_line):].lstrip('\n')
+        return critical + "\n\n", rest.strip()
+    
+    return "", t
+
+
+def ensure_video_no_subtitle_first_line(prompt: str) -> str:
+    """t244/t246: 保证禁字幕行是视频提示词的**物理第一行**，无任何例外。
+
+    无论后端（Grok/Gemini/MiniMax）、工作流、FYI勾选状态、旧保存的提示词、
+    REFERENCE PICTURES元数据、任何前缀，禁字幕行必须始终是第一行。
+
+    幂等：如果已经是第一行则不重复添加；如果存在但不在第一行则移到第一行。
+    能在 Strata 清理、反复打磨后仍然存活。
+    不能被 FYI 禁用、自定义 FYI 或旧保存的提示词绕过。
+    REFERENCE PICTURES 等元数据保留在禁字幕行之后。
+    """
+    critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
+    text = (prompt or "").strip()
+    
+    # 空输入
+    if not text:
+        return critical
+    
+    # 检查是否已经是第一行（幂等）
+    first_line = text.split('\n', 1)[0].strip()
+    if first_line == critical.strip():
+        return text
+    
+    # 如果禁字幕行存在但不在第一行，移除它（稍后重新添加到第一行）
+    if critical in text:
+        # 移除现有的禁字幕行（可能在中间或末尾）
+        lines = text.split('\n')
+        new_lines = []
+        skip_next_blank = False
+        for i, line in enumerate(lines):
+            if critical in line:
+                # 跳过这行和紧随其后的空行
+                skip_next_blank = True
+                continue
+            if skip_next_blank and not line.strip():
+                skip_next_blank = False
+                continue
+            skip_next_blank = False
+            new_lines.append(line)
+        text = '\n'.join(new_lines).strip()
+    
+    # 始终将禁字幕行放在物理第一行，无例外
+    return critical + "\n\n" + text if text else critical
+
+
+H3_NO_SUBTITLE_RULE = "NEVER add any subtitles, captions or on-screen text of the dialogue!"
+H3_NO_SUBTITLE_NEGATIVE = (
+    "subtitles, captions, on-screen text, dialogue text on screen, burned-in subtitles, "
+    "subtitle bar, caption overlay, karaoke lyrics, lower-third text"
+)
+
+
+def count_h3_no_subtitle_rules(prompt: str) -> int:
+    return (prompt or "").count(H3_NO_SUBTITLE_RULE)
+
+
+def with_h3_no_subtitle_negative(negative: str | None) -> str | None:
+    """有负面提示时并入字幕相关禁词；没有负面则原样返回 None。"""
+    if negative is None:
+        return None
+    base = str(negative).strip()
+    if not base:
+        return H3_NO_SUBTITLE_NEGATIVE
+    low = base.lower()
+    if "subtitle" in low and "caption" in low:
+        return base
+    return base.rstrip(", ") + ", " + H3_NO_SUBTITLE_NEGATIVE
+
+
+def ensure_h3_no_subtitle_rules(prompt: str) -> str:
+    """保证禁字幕句出现恰好 3 次：多模态描述开头、对话附近、多模态描述末尾。
+
+    用于 build_h3_prompt 与 Strata 打磨后；若已有 >=3 次则不改；不足则清掉旧的再按位置重插。
+    t246: 正确处理禁字幕行前缀，不在 REFERENCE PICTURES 前插入三遍规则。
+    """
+    rule = H3_NO_SUBTITLE_RULE
+    text = prompt or ""
+    if text.count(rule) >= 3:
+        return text
+
+    # 去掉已有残缺副本，避免凑不齐或堆在一处
+    cleaned = text.replace(rule, "")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+    # t246: 先剥离禁字幕行前缀（若有），处理完后重新组装
+    critical_prefix, cleaned = _strip_critical_line_prefix(cleaned)
+
+    # 拆 REFERENCE PICTURES 头（若有）
+    head, body = "", cleaned
+    if cleaned.startswith("REFERENCE PICTURES:") and "\n\n" in cleaned:
+        head, body = cleaned.split("\n\n", 1)
+        head = head + "\n\n"
+
+    # 定位 integrated_multimodal_description / overall_soundscape
+    marker = "integrated_multimodal_description:"
+    sound = "\n\noverall_soundscape:"
+    if marker in body:
+        pre, rest = body.split(marker, 1)
+        # rest 以可选空白 + 正文；末尾到 overall_soundscape
+        if sound in rest:
+            mid, post = rest.split(sound, 1)
+            post = sound + post
+        else:
+            mid, post = rest, ""
+        mid = mid.lstrip(" ")
+        # top: 紧跟 [Shot 1] 句号后，或描述最前
+        top_at = 0
+        m = re.search(r"\[Shot 1\][^.\n]*\.", mid)
+        if m:
+            top_at = m.end()
+        # middle: 对话 <d> 前，或 Speaker map / Lip sync 前
+        mid_at = None
+        for key in ("<d>", "Speaker map:", "Lip sync:", "On camera:"):
+            i = mid.find(key)
+            if i >= 0 and (mid_at is None or i < mid_at):
+                mid_at = i
+        if mid_at is None:
+            mid_at = max(top_at, len(mid) // 2)
+        # end: 描述末尾（进 sound 之前）
+        end_at = len(mid.rstrip())
+
+        def _ins(s: str, at: int, chunk: str) -> str:
+            at = max(0, min(at, len(s)))
+            left, right = s[:at].rstrip(), s[at:].lstrip()
+            return (left + " " + chunk + " " + right).strip()
+
+        # 从后往前插，避免偏移
+        pieces = [(end_at, rule), (mid_at, rule), (top_at, rule)]
+        # 去重位置过近
+        used = []
+        for at, chunk in pieces:
+            if any(abs(at - u) < 5 for u in used):
+                at = max(0, at - 8)
+            used.append(at)
+        # sort descending
+        for at, chunk in sorted(zip(used, [rule, rule, rule]), key=lambda x: -x[0]):
+            mid = _ins(mid, at, chunk)
+        # 若仍不足 3（极端短文），末尾补
+        while mid.count(rule) < 3:
+            mid = mid.rstrip() + " " + rule
+        body = pre + marker + " " + mid.lstrip() + post
+    else:
+        # 非标准 H3：头 / 中 / 尾硬插
+        lines = body.splitlines() or [body]
+        if len(lines) == 1:
+            body = f"{rule} {body.strip()} {rule} {rule}"
+        else:
+            mid_i = max(1, len(lines) // 2)
+            lines = [rule, lines[0]] + lines[1:mid_i] + [rule] + lines[mid_i:] + [rule]
+            body = "\n".join(lines)
+        while body.count(rule) < 3:
+            body = body.rstrip() + " " + rule
+
+    out = head + body
+    # 保底
+    while out.count(rule) < 3:
+        out = out.rstrip() + " " + rule
+    # t246: 重新组装禁字幕行前缀
+    return critical_prefix + out
+
+
+
+
+def ensure_h3_monologue_no_lipsync_rules(prompt: str, *, has_monologue: bool) -> str:
+    """t241u: 场景含自言自语时，保证无口型规则句仍在提示词里（Strata 打磨后复检）。"""
+    rule = H3_MONOLOGUE_NO_LIPSYNC_RULE
+    text = prompt or ""
+    if not has_monologue:
+        return text
+    if rule in text:
+        return text
+    marker = "integrated_multimodal_description:"
+    sound = "\n\noverall_soundscape:"
+    if marker in text:
+        pre, rest = text.split(marker, 1)
+        if sound in rest:
+            mid, post = rest.split(sound, 1)
+            post = sound + post
+        else:
+            mid, post = rest, ""
+        insert_at = None
+        for key in ("Lip sync:", "On camera:", "<d>"):
+            i = mid.find(key)
+            if i >= 0 and (insert_at is None or i < insert_at):
+                insert_at = i
+        if insert_at is None:
+            mid = mid.rstrip() + " " + rule + " "
+        else:
+            mid = mid[:insert_at].rstrip() + " " + rule + " " + mid[insert_at:].lstrip()
+        return pre + marker + mid + post
+    return text.rstrip() + " " + rule
 
 
 def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str = "", region: str = "", era: str = "",
@@ -4495,6 +4953,16 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                 visual = (visual + " " + v).strip()
                 vis_all += " " + v
     if visual:
+        # t223u: actor is sole position source — do not rewrite visual seats; strip named-speaker
+        # left/right/seat clauses from the prompt copy only (stored scene visual is untouched).
+        _has_actor_side = any(speaker_side_token(actor_scene_note(r)) for r in rows)
+        if _has_actor_side:
+            _vc = actor_visual_side_conflicts(rows, visual)
+            if _vc:
+                _msg = "; ".join(f"{nm}: actor={a} visual={v}" for nm, a, v in _vc)
+                print(f"[H3 speaker side] t223 ignore visual positioning (actor truth): {_msg}")
+            visual = strip_named_position_from_visual(visual, [_speaker_identity(r)[0] for r in rows])
+            vis_all = strip_named_position_from_visual(vis_all, [_speaker_identity(r)[0] for r in rows])
         shot.append((f"What happens while they talk: " if _spk_names else "What happens: ") + f"{visual.rstrip('。.')}.")
         shot += pose_move_lines(visual, [_speaker_identity(r)[0] for r in rows], strict=True,
                                 skip=_spk_names)  # t182u / t156u: 只写真的变化，说话的人不走动
@@ -4517,9 +4985,16 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     shot.append(_H3_CAMERA.get(camera or "none", _H3_CAMERA["none"]))
     # 台词：(S1)(S2) = actor 第 1/2 个人；每句写清谁说、谁闭嘴，换人时口型换人（t150u），声音描述只在第一次出现时写
     _names = [_speaker_identity(r)[0] for r in rows]
+    # t223u: actor brackets = sole position source; visual positioning never merged into Speaker map
+    _side_conflicts = actor_visual_side_conflicts(rows, vis_all)
+    if _side_conflicts:
+        _msg = "; ".join(f"{nm}: actor={a} visual={v}" for nm, a, v in _side_conflicts)
+        print(f"[H3 speaker side] visual position ignored (actor truth): {_msg}")
     notes = {}
     for k, nm in enumerate(_names, 1):
-        look = (speaker_notes or {}).get(k) or actor_scene_note(rows[k - 1] if k <= len(rows) else {})  # t158u
+        actor_n = actor_scene_note(rows[k - 1] if k <= len(rows) else {})
+        strata_n = (speaker_notes or {}).get(k) or ""
+        look = prefer_actor_speaker_look(actor_n, strata_n)  # t223u / t222u / t158u
         note = merge_speaker_note(look, h3_visual_person_note(vis_all, nm, _names))
         if nm in _spk_names:
             note = strip_mouth_cover(note)  # t156u: 说话人的描述里不留挡嘴 / 低头
@@ -4538,9 +5013,12 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         shot.append(H3_LIP_SYNC_LINE)
         if h3_on_camera_line(_spk_names):
             shot.append(h3_on_camera_line(_spk_names))  # t156u
+        if any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(str(sc.get("speaking") or "")):
+            shot.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)  # t241u
     if said and audio_mode == "none" and _pace < 0.999:
         shot.append(h3_speech_pace_line(_pace, seconds))
     if said:
+        shot.append(H3_NO_SUBTITLE_RULE)  # t238u: 对话旁再强调一次（ensure 会凑满三遍）
         shot.append(" ".join(said))
         if audio_mode == "sing":
             shot.append("Lips, breath and body move with the song.")
@@ -4573,8 +5051,13 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         sound = ("Quiet indoor ambience with soft room tone, small movement sounds and the rustle of clothing."
                  if talk or rows else "Natural ambient sound of the place.")
         music = "N/A"
-    return (first + "\n\nintegrated_multimodal_description: " + " ".join(shot)
-            + "\n\noverall_soundscape: " + sound + "\n\nnon_diegetic_music: " + music)
+    # t238u: 禁字幕句写三遍（头 / 对话旁 / 尾）；打磨后 ensure 会再核对
+    # t244/t246: 全局禁字幕行必须是物理第一行（在构建时就注入，不只是发送时）
+    raw = (first + "\n\nintegrated_multimodal_description: " + " ".join(shot)
+           + "\n\noverall_soundscape: " + sound + "\n\nnon_diegetic_music: " + music)
+    _has_mono = any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(str(sc.get("speaking") or ""))
+    result = ensure_h3_monologue_no_lipsync_rules(ensure_h3_no_subtitle_rules(raw), has_monologue=_has_mono)
+    return ensure_video_no_subtitle_first_line(result)  # t244: 第一行必须是全局禁字幕规则
 
 
 def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruction: list,

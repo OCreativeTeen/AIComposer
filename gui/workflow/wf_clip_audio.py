@@ -484,6 +484,13 @@ class ClipAudioMixin:
             if not voice:
                 return []
             last_voice = voice
+            try:
+                from config_prompt import strip_monologue_tag
+                _mono, text = strip_monologue_tag(text)
+            except Exception:
+                pass
+            if not (text or "").strip():
+                continue
             turns.append((voice, text))
         return turns
 
@@ -515,6 +522,13 @@ class ClipAudioMixin:
             except (TypeError, ValueError):
                 continue
             if end <= start or speaker < 1 or speaker > 3 or speaker > len(bodies):
+                continue
+            try:
+                from config_prompt import strip_monologue_tag
+                _mono, body = strip_monologue_tag(body)
+            except Exception:
+                pass
+            if not body:
                 continue
             rows.append((start, end, speaker, body))
         if not rows:

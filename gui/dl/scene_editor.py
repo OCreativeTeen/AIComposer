@@ -30,6 +30,7 @@ from gui.clipboard_util import _copy_file_to_clipboard_hdrop, _copy_text_to_clip
 from gui.dl.youtube_dl import _youtube_row_display_title, _youtube_row_source_title
 from gui.dl.list_store import GEN_VIDEO_SLIDE_KEY, _find_gen_video_slide_for_row
 from gui.dl.gen_video_files import STORY_MEDIA_KEY, STORY_TRANSCRIPT_KEY, _find_gen_video_webp_for_row, _find_item_media_file, _find_item_transcript_file, _gen_video_slide_pdf_dest_filename, _item_transcript_text
+from gui.dl.prompts_notebooklm import analyzed_content_text
 from gui.downloader import _apply_scene_lm_combo, _bind_text_editor_replace_from_clipboard_on_double_click, _episode_choice_label, _episode_ids_in_scenes, _filter_scenes_by_episode, _fit_story_summary_window, _image_material_override, _media_material_override, _open_cover_image_for_row, _pdf_pages_as_scene_source, _pdf_scene_generation_instruction, _project_look_from_row, _prompt_choice_entries, _prompt_text_for_material, apply_scene_content_from_editor_text, ask_download_slide_pdf, save_cover_image_as_gen_video_webp, save_pil_image_to_cover_array
 
 
@@ -45,8 +46,9 @@ def _story_analysis_text(video_detail: dict, scene_ui: dict) -> str:
         except Exception:  # noqa: BLE001
             text = None
     if text is None:
+        lang = video_detail.get("language") if isinstance(video_detail, dict) else ""
         raw = video_detail.get("analyzed_content") if isinstance(video_detail, dict) else ""
-        text = raw if isinstance(raw, str) else str(raw or "")
+        text = analyzed_content_text(raw, lang or "")
     return (text or "").strip()
 
 
@@ -745,8 +747,10 @@ class SceneEditorImpl:
             def _copy_analyzed_text():
                 text = _analyzed_widget_text()
                 if not text and material_var.get() != "analyzed":
-                    raw = video_detail.get("analyzed_content") or ""
-                    text = raw.strip() if isinstance(raw, str) else str(raw).strip()
+                    text = analyzed_content_text(
+                        video_detail.get("analyzed_content"),
+                        video_detail.get("language") or "",
+                    )
                 if not text.strip():
                     show_auto_close_popup(dlg, "分析报告", "这一条没有分析报告。")
                     return
@@ -904,8 +908,10 @@ class SceneEditorImpl:
                     if _analyzed_edit["text"] is not None:
                         text = _analyzed_edit["text"]
                     else:
-                        raw = video_detail.get("analyzed_content") or ""
-                        text = raw.strip() if isinstance(raw, str) else str(raw).strip()
+                        text = analyzed_content_text(
+                            video_detail.get("analyzed_content"),
+                            video_detail.get("language") or "",
+                        )
                     body, removed = _strip_markdown_embedded_images(text)
                     if removed and _analyzed_edit["text"] is None:
                         video_detail["analyzed_content"] = body
@@ -2039,7 +2045,9 @@ class SceneEditorImpl:
                              or _P._youtube_row_display_title(video_detail) or "")
                 except Exception:  # noqa: BLE001
                     topic = str(video_detail.get("title") or "")
-                return topic, str(video_detail.get("analyzed_content") or ""), ""
+                return topic, analyzed_content_text(
+                    video_detail.get("analyzed_content"), video_detail.get("language") or ""
+                ), ""
 
             def _stage_persist():
                 try:
