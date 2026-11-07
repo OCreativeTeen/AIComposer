@@ -2316,6 +2316,13 @@ class ProjectSelectionDialog:
         if not sc:
             messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目", parent=form_parent)
             return
+        # New-project only: split self-talk at one end into its own scene.
+        # Unsplitable layouts are left as supplied. Does not mutate the STORY
+        # editor's preview list (deep copy inside the helper).
+        from utility.speaking_marks import expand_scenes_for_new_project
+
+        sc = expand_scenes_for_new_project(sc)
+        sr['scene_content'] = sc
         if not sr.get('analyzed_content'):
             sr['analyzed_content'] = ""
         title = getattr(self, "initial_title", "") or title_from_scene_content(sc)
@@ -2922,38 +2929,26 @@ def speaker_mark_map(rows: list, deleted_index: int) -> dict:
 
 
 def remap_speaker_marks(text: str, mapping: dict) -> str:
-    """按 ``mapping`` 改 <N>，再把连着的同一个人的标记合成一个（``<1>a<1>b`` → ``<1>ab``）。
+    """按 ``mapping`` 改 <N> / <Ns>，再把连着的同一个人、同一独白状态的标记合成一个。
 
-    停顿 ``<0.5>`` 和别的不是整数的标记原样保留，也不打断「同一个人」。
-    第一个标记前面的字算第 1 个人；第 1 个人换了编号时，在开头补上新的标记。
-    不在 ``mapping`` 里的 N（超出名单的）原样保留。
+    停顿 ``<0.5>`` 留在台词里。``<Ns>`` 仍是同一个人 N（字母 s 不是角色）。
+    不在 ``mapping`` 里的 N 原样保留。写出时用规范的 ``<N>`` / ``<Ns>``。
     """
     if not text or not mapping:
         return text or ""
-    parts = _SPEAKER_MARK_SPLIT_RE.split(text)
-    out = []
-    current = None
-    lead = parts[0]
-    if lead.strip():
-        current = mapping.get(1, 1)
-        if current != 1:
-            out.append(f"<{current}>")
-    out.append(lead)
-    i = 1
-    while i + 3 <= len(parts):
-        opener, num, closer, body = parts[i], parts[i + 1], parts[i + 2], parts[i + 3]
-        old = int(num)
-        new = mapping.get(old, old)
-        if new == current:
-            prev = out[-1] if out else ""
-            if prev[-1:] in (" ", "\t") and body[:1] in (" ", "\t"):
-                body = body.lstrip(" \t")
+    from utility.speaking_marks import SpeechTurn, format_speaking_turns, parse_speaking_turns
+
+    turns = parse_speaking_turns(text)
+    if not turns:
+        return text
+    merged = []
+    for turn in turns:
+        turn.speaker = mapping.get(turn.speaker, turn.speaker)
+        if merged and merged[-1].speaker == turn.speaker and merged[-1].monologue == turn.monologue:
+            merged[-1].text = (merged[-1].text + " " + turn.text).strip()
         else:
-            out.append(f"{opener}{new}{closer}")
-            current = new
-        out.append(body)
-        i += 4
-    return "".join(out)
+            merged.append(SpeechTurn(turn.speaker, turn.text, turn.monologue))
+    return format_speaking_turns(merged)
 
 
 def apply_actor_delete(scene: dict, actor_text: str, deleted_index: int) -> bool:

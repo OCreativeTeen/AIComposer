@@ -674,10 +674,8 @@ def slide_flow_scene_payload(
             speaking = (base.get("speaking") or base.get("story_content") or "").strip()
             voiceover = (base.get("voiceover") or "").strip()
             if not use_actor or telling:
-                speaking = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", speaking)
-                speaking = re.sub(r"[ \t]{2,}", " ", speaking).strip()
-                voiceover = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", voiceover)
-                voiceover = re.sub(r"[ \t]{2,}", " ", voiceover).strip()
+                speaking = strip_speaker_marks(speaking, pauses=True)
+                voiceover = strip_speaker_marks(voiceover, pauses=True)
             if telling:
                 combined = " ".join(p for p in (speaking, voiceover) if p).strip()
                 if combined:
@@ -3526,40 +3524,26 @@ def project_story_style() -> str:
     return STORY_STYLE_CHOICES[0][0]
 
 
-_SPEAKER_MARK = re.compile(r"[<＜]\s*(\d+)\s*[>＞]")
-_PAUSE_MARK = re.compile(r"<\s*\d+\.\d+\s*>")
-# t241u: speaking 里 ``<N>（自言自语）`` = 该人物独白（开场交代 / 收尾总结），不是讲员
-# t250u: 支持简体 ``自言自语`` 和繁体 ``自言自語``（語 0x8a9e vs 语 0x8bed）
-_MONOLOGUE_TAG_RE = re.compile(r"^[（(]\s*自言自[语語]\s*[）)]\s*")
+from utility.speaking_marks import (  # noqa: E402
+    PAUSE_MARK_RE as _PAUSE_MARK,
+    SCENE_MONOLOGUE_RULE,
+    SPEAKER_ID_RE as _SPEAKER_MARK,
+    parse_speaking_turns,
+    speaking_has_monologue,
+    strip_monologue_tag,
+    strip_speaker_marks,
+)
+
 H3_MONOLOGUE_NO_LIPSYNC_RULE = (
-    "Self-talk (自言自语): any line that is that character speaking to himself/herself "
-    "(inner monologue / voiceover feel) is NOT interactive dialogue; only the other dialogue lines are interactive; "
+    "Self-talk (自言自语): any line marked <Ns> or legacy <N>（自言自语） that is that character "
+    "speaking to himself/herself (inner monologue / voiceover feel) is NOT interactive dialogue; "
+    "only the other dialogue lines are interactive; "
     "self-talk lines have NO lip sync — that speaker keeps the mouth closed / not moving while that audio plays."
 )
 
 
-def speaking_has_monologue(text: str) -> bool:
-    """True when speaking contains ``<N>（自言自语）`` (fullwidth or halfwidth parens).
-    t250u: 支持简体 ``自言自语`` 和繁体 ``自言自語``。"""
-    if not text:
-        return False
-    return bool(re.search(r"[<＜]\s*\d+\s*[>＞]\s*[（(]\s*自言自[语語]\s*[）)]", str(text)))
-
-
-def strip_monologue_tag(body: str) -> tuple:
-    """Return (is_monologue, spoken_text_without_tag). Tag must be right after <N>."""
-    raw = str(body or "")
-    m = _MONOLOGUE_TAG_RE.match(raw.lstrip())
-    if not m:
-        return False, raw.strip()
-    rest = raw.lstrip()[m.end():]
-    return True, rest.strip()
-
-
 def _strip_speech_marks(text: str) -> str:
-    out = _PAUSE_MARK.sub(" ", text or "")
-    out = _SPEAKER_MARK.sub(" ", out)
-    return re.sub(r"[ \t]{2,}", " ", out).strip()
+    return strip_speaker_marks(text, pauses=True)
 
 
 def _video_cast(scenes: list, use_actor: bool) -> list:
@@ -3718,9 +3702,9 @@ def _unquote(text: str) -> str:
 
 
 def dialogue_script(scene: dict) -> list:
-    """speaking 的 <N> → 逐句台词。同一人连着说的合并成一句。
-    t241u: ``<N>（自言自语）`` 的标签从台词里去掉；独白标记写在行尾 ``[自言自语]``，
-    供 ``_dialogue_turns`` 识别，不送给配音引擎朗读。"""
+    """speaking 的 <N> / <Ns> → 逐句台词。同一人连着说的合并成一句。
+    ``<Ns>`` 与旧的 ``<N>（自言自语）`` 都表示该人物独白；标签从台词里去掉，
+    独白标记写在行尾 ``[自言自语]``，供 ``_dialogue_turns`` 识别，不送给配音引擎朗读。"""
     if not isinstance(scene, dict):
         return []
     rows = _scene_speakers(scene)
@@ -3728,21 +3712,13 @@ def dialogue_script(scene: dict) -> list:
     voiceover = str(scene.get("voiceover") or "").strip()
     if voiceover and "<2>" not in speaking:
         speaking = (speaking + " <2> " + voiceover).strip()
-    text = _PAUSE_MARK.sub(" ", speaking)
-    turns: list = []
-    pos, who = 0, 1
-    for m in _SPEAKER_MARK.finditer(text):
-        chunk = text[pos:m.start()].strip()
-        if chunk:
-            turns.append([who, chunk])
-        who, pos = int(m.group(1)), m.end()
-    tail = text[pos:].strip()
-    if tail:
-        turns.append([who, tail])
+    parsed = parse_speaking_turns(speaking)
     tagged = []
-    for n, chunk in turns:
-        mono, clean = strip_monologue_tag(chunk)
-        tagged.append([n, clean, mono])
+    for turn in parsed:
+        clean = _PAUSE_MARK.sub(" ", turn.text)
+        clean = re.sub(r"[ \t]{2,}", " ", clean).strip()
+        if clean:
+            tagged.append([turn.speaker, clean, turn.monologue])
     merged: list = []
     for n, chunk, mono in tagged:
         if not chunk:
@@ -7377,7 +7353,7 @@ SCENE_SPEAKER_ID_RULE = """
 
 
 def scene_speaker_id_block() -> str:
-    return SCENE_SPEAKER_ID_RULE
+    return SCENE_SPEAKER_ID_RULE.rstrip() + "\n" + SCENE_MONOLOGUE_RULE.strip() + "\n"
 
 
 def h3_portrait_reference_block(refs: list) -> str:

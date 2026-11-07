@@ -57,7 +57,9 @@ def align_story_speakers(scenes: list) -> tuple:
                 notes.append(f"第{si}场：人物{k} 的描述和前面不一样（{seen_desc[k]} → {b}）")
             seen_desc.setdefault(k, b)
         speaking = str(sc.get("speaking") or "")
-        used = {int(m.group(2)) for m in _MARK_RE.finditer(speaking)}
+        from utility.speaking_marks import format_speaking_turns, parse_speaking_turns, speaker_ids_in_text
+
+        used = set(speaker_ids_in_text(speaking))
         missing = sorted(used - set(nums))
         if missing:
             notes.append(f"第{si}场：speaking 用了 actor 里没有的 <{'>/<'.join(map(str, missing))}>")
@@ -69,9 +71,11 @@ def align_story_speakers(scenes: list) -> tuple:
             continue
         # 缺了前面的编号：这一场改成 1..k
         sc["actor"] = " | ".join(f"人物{pos[k]}：{b}" for k, b in ordered)
-        sc["speaking"] = _MARK_RE.sub(
-            lambda m: f"{m.group(1)}{pos.get(int(m.group(2)), int(m.group(2)))}{m.group(3)}", speaking
-        )
+        remapped = []
+        for turn in parse_speaking_turns(speaking):
+            turn.speaker = pos.get(turn.speaker, turn.speaker)
+            remapped.append(turn)
+        sc["speaking"] = format_speaking_turns(remapped)
         change = "，".join(f"人物{k}→{pos[k]}" for k in pos if pos[k] != k)
         notes.append(f"第{si}场：这一场没有前面编号的人，按本场顺序改成 {change}（配音按本场第几人对应）")
     return scenes, notes

@@ -3531,19 +3531,19 @@ class SceneEditorImpl:
                         scenes = _story_scene_list(video_detail, scene_ui)
                         if not scenes:
                             return
-                        mark_re = project_manager._SPEAKER_MARK_SPLIT_RE
+                        from utility.speaking_marks import parse_speaking_turns, speaker_ids_in_text
+
                         any_mark = False
                         present, spoken = {}, set()
                         for sc in scenes:
                             rows = project_manager.actor_entries(str(sc.get("actor") or ""))
                             for r in rows:
                                 present.setdefault(_cast_key(r), r)
-                            parts = mark_re.split(str(sc.get("speaking") or ""))
-                            nums = {int(parts[i + 1]) for i in range(1, len(parts) - 2, 4)}
-                            if nums:
+                            speaking = str(sc.get("speaking") or "")
+                            turns = parse_speaking_turns(speaking)
+                            nums = {t.speaker for t in turns}
+                            if nums or speaker_ids_in_text(speaking):
                                 any_mark = True
-                            if parts and parts[0].strip():
-                                nums.add(1)  # 没标号、但有内容的开头 = 第 1 个人说的
                             for n in nums:
                                 if 1 <= n <= len(rows):
                                     spoken.add(_cast_key(rows[n - 1]))
@@ -3569,17 +3569,16 @@ class SceneEditorImpl:
                             panel.set_text(text)
 
                     def _drop_speaker(speaking: str, pos: int) -> str:
-                        """删掉 <pos> 说的话；后面的 <N> 往前挪一位（<N> = actor 里的第 N 个人）。"""
-                        parts = project_manager._SPEAKER_MARK_SPLIT_RE.split(speaking or "")
-                        out = [] if pos == 1 else [parts[0]]  # 没标号的开头属于第 1 个人
-                        i = 1
-                        while i + 3 <= len(parts):
-                            opener, num, closer, body = parts[i], parts[i + 1], parts[i + 2], parts[i + 3]
-                            n = int(num)
-                            if n != pos:
-                                out.append(f"{opener}{n - 1 if n > pos else n}{closer}{body}")
-                            i += 4
-                        return "".join(out).strip()
+                        """删掉 <pos> 说的话；后面的 <N> / <Ns> 往前挪一位。"""
+                        from utility.speaking_marks import SpeechTurn, format_speaking_turns, parse_speaking_turns
+
+                        kept = []
+                        for turn in parse_speaking_turns(speaking):
+                            if turn.speaker == pos:
+                                continue
+                            n = turn.speaker - 1 if turn.speaker > pos else turn.speaker
+                            kept.append(SpeechTurn(n, turn.text, turn.monologue))
+                        return format_speaking_turns(kept)
 
                     def _cast_rewrite_scenes(what: str, old_row: dict, new_row) -> None:
                         """演员栏改 / 删一个人：同步改每一场的 actor（括号里的表现不动）和 speaking，再保存。"""

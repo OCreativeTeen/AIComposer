@@ -250,32 +250,15 @@ def _split_voicebox_segments(text: str) -> List[tuple]:
 
 
 def split_speaking_turns(text: str) -> List[tuple]:
-    """把 speaking 按 ``<N>`` 拆成 ``[(人物序号, 这段话), ...]``。
+    """把 speaking 按 ``<N>`` / ``<Ns>`` 拆成 ``[(人物序号, 这段话), ...]``。
 
-    序号从 1 起，对应 actor 里按书写顺序的第 N 个人。
-    标记前面的文字算第 1 个人。没有新标记时，后面的句子留在同一个人这段里。
-    ``<0.5>`` 这种带小数点的静音标记不会被当成换人。
+    序号从 1 起，对应 actor 里按书写顺序的第 N 个人。``<Ns>`` 仍是第 N 个人
+    （自言自语；字母 s 不是角色）。标记和 ``（自言自语）`` 不会进入台词。
+    ``<0.5>`` 这种带小数点的静音标记不会被当成换人，会留在这段话里。
     """
-    text = (text or "").strip()
-    if not text:
-        return []
-    parts = _VB_SPEAKER_MARK_RE.split(text)
-    turns: List[tuple] = []
-    if parts[0].strip():
-        turns.append((1, parts[0].strip()))
-    i = 1
-    while i + 1 < len(parts):
-        try:
-            n = int(parts[i])
-        except (TypeError, ValueError):
-            n = 1
-        body = (parts[i + 1] or "").strip()
-        if body:
-            turns.append((n, body))
-        i += 2
-    if not turns:
-        turns.append((1, text))
-    return turns
+    from utility.speaking_marks import parse_speaking_turns
+
+    return [(t.speaker, t.text) for t in parse_speaking_turns(text) if t.text]
 
 
 class VoiceboxService:

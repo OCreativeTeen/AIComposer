@@ -618,7 +618,9 @@ class ActorsMixin:
         raw = (text or "").strip()
         if not raw:
             return ""
-        body = _VB_SPEAKER_MARK_RE.sub(" ", raw)
+        from utility.speaking_marks import strip_speaker_marks
+
+        body = strip_speaker_marks(raw, pauses=True)
         lines = []
         for line in body.splitlines():
             piece = " ".join(line.split())
