@@ -210,7 +210,7 @@ def scene_monologue_split_done(scene) -> bool:
 
 
 def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
-    """After a successful scene-image write: maybe insert a speaking-only sibling.
+    """After image write (and remix, when that runs) settle: maybe insert a sibling.
 
     ``scene`` stays the same object (batch jobs / callbacks keep their reference)
     and becomes the first half. A new dict is inserted immediately after it.
@@ -256,6 +256,8 @@ def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
     except Exception as exc:
         print(f"⚠️ 自言自语分场：没有独立拷贝场景图，保持一场：{exc}")
         return None
+    # Drop unsplit speech A/V only after a valid split (clone succeeded).
+    # Halves must not inherit or later receive the full-speech clip/audio.
     sibling[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
     scene["speaking"] = first_s
     scene.pop("speaking_timing", None)

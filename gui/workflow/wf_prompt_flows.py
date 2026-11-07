@@ -345,6 +345,8 @@ class PromptFlowsMixin:
             visual = scene.get("visual") or ""
             if not (visual.strip() and image and os.path.isfile(image)):
                 print(f"ℹ️ 调整视觉：{label} 没有视觉文字或没有图，跳过")
+                # Image already written; remix will not run — split on this final state.
+                self._finish_monologue_split_after_image(scene)
                 return
             lang = getattr(self.workflow, "language", None) or "tw"
             remix_q.put((scene, label, visual, image, scene.get("actor") or "", lang, scene.get("speaking") or ""))  # t161u: 整个 actor
@@ -353,38 +355,43 @@ class PromptFlowsMixin:
             """UI 线程：看图改写的结果直接写进这一场的视觉；原文留在 visual_before_remix。"""
             from utility.visual_remix import accept_auto_remix
 
-            if (scene.get("visual") or "") != old:
-                print(f"ℹ️ 调整视觉：{label} 的视觉在这期间被改过，不覆盖")
-                return
-            why = accept_auto_remix(old, new)
-            if why:
-                print(f"ℹ️ 调整视觉：{label} {why}，保留原文")
-                return
-            scene["visual_before_remix"] = old
-            scene["visual"] = new
-            if notes:  # t158u: 每个人这一场的样子写进 actor 括号
-                try:
-                    new_actor = notes.get("actor") or ""
-                    if (scene.get("actor") or "") != notes.get("actor_old"):
-                        print(f"ℹ️ 调整人物：{label} 的人物在这期间被改过，不覆盖")
-                    elif new_actor and new_actor != (scene.get("actor") or ""):
-                        scene["actor_before_remix"] = scene.get("actor") or ""
-                        scene["actor"] = new_actor
-                        print(f"🖼 调整人物：{label} → {new_actor}")
-                except Exception as exc:  # noqa: BLE001
-                    print(f"⚠️ 调整人物：{label} 写 actor 失败 {exc}")
-            remixed.append(scene)
-            print(f"🖼 调整视觉：{label} 已按图改写。原文：{old[:200]}")
             try:
-                cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
-                if cur is scene and getattr(self, "scene_visual", None) is not None:
-                    self.scene_visual.delete("1.0", tk.END)
-                    self.scene_visual.insert("1.0", new)
-                    if hasattr(self, "_set_actor_text"):  # t161u
-                        self._set_actor_text(scene.get("actor") or "")
-                self.workflow.save_scenes_to_json()
-            except Exception as exc:  # noqa: BLE001
-                print(f"⚠️ 调整视觉：{label} 写回界面 / 保存失败 {exc}")
+                if (scene.get("visual") or "") != old:
+                    print(f"ℹ️ 调整视觉：{label} 的视觉在这期间被改过，不覆盖")
+                    return
+                why = accept_auto_remix(old, new)
+                if why:
+                    print(f"ℹ️ 调整视觉：{label} {why}，保留原文")
+                    return
+                scene["visual_before_remix"] = old
+                scene["visual"] = new
+                if notes:  # t158u: 每个人这一场的样子写进 actor 括号
+                    try:
+                        new_actor = notes.get("actor") or ""
+                        if (scene.get("actor") or "") != notes.get("actor_old"):
+                            print(f"ℹ️ 调整人物：{label} 的人物在这期间被改过，不覆盖")
+                        elif new_actor and new_actor != (scene.get("actor") or ""):
+                            scene["actor_before_remix"] = scene.get("actor") or ""
+                            scene["actor"] = new_actor
+                            print(f"🖼 调整人物：{label} → {new_actor}")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"⚠️ 调整人物：{label} 写 actor 失败 {exc}")
+                remixed.append(scene)
+                print(f"🖼 调整视觉：{label} 已按图改写。原文：{old[:200]}")
+                try:
+                    cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+                    if cur is scene and getattr(self, "scene_visual", None) is not None:
+                        self.scene_visual.delete("1.0", tk.END)
+                        self.scene_visual.insert("1.0", new)
+                        if hasattr(self, "_set_actor_text"):  # t161u
+                            self._set_actor_text(scene.get("actor") or "")
+                    self.workflow.save_scenes_to_json()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 调整视觉：{label} 写回界面 / 保存失败 {exc}")
+            finally:
+                # Remix settled (applied or kept). Split now so both halves share
+                # the same final authored visual/actor from this single remix.
+                self._finish_monologue_split_after_image(scene)
 
         def remix_worker():
             """t198u / t223u new-project cover-analysis path: same remix_scene_full as visual Remix —
@@ -408,6 +415,7 @@ class PromptFlowsMixin:
                     except Exception as exc:  # noqa: BLE001
                         failed.append(f"{label}：调整视觉失败，保留原文（{exc}）")
                         print(f"⚠️ 调整视觉：{label} 看图失败，保留原文：{exc}")
+                        ui(lambda s=scene: self._finish_monologue_split_after_image(s))
                         continue
                     ui(lambda s=scene, l=label, o=old, n=out, a=notes: apply_visual(s, l, o, n, a))
             finally:
@@ -416,13 +424,26 @@ class PromptFlowsMixin:
         def apply(scene, img, label):
             """UI 线程：写回这一场的图，有 clip 音频就马上排队重做这一场的静态 clip 视频。"""
             try:
-                self._replace_current_clip_image_from_pil(img, scene=scene, defer_video=True)
+                self._replace_current_clip_image_from_pil(
+                    img, scene=scene, defer_video=True,
+                    defer_monologue_split=bool(remix_visual),
+                )
                 done[0] += 1
                 updated.append(scene)
             except Exception as exc:  # noqa: BLE001
                 failed.append(f"{label}：写回失败 {exc}")
                 return
-            if self._stale_still_clip_scenes([scene]):
+            from utility.speaking_marks import scene_monologue_split_done, split_speaking_pair
+
+            # Do not rebuild a still clip from the unsplit full speech: that
+            # media is dropped on a valid split, and a late worker must not
+            # write it back onto a half.
+            pending_split = (
+                remix_visual
+                and not scene_monologue_split_done(scene)
+                and split_speaking_pair(scene.get("speaking") or "") is not None
+            )
+            if not pending_split and self._stale_still_clip_scenes([scene]):
                 clip_q.put((scene, label))
             if remix_visual:
                 queue_remix(scene, label)
@@ -439,6 +460,13 @@ class PromptFlowsMixin:
                         break
                     scene, label = item
                     try:
+                        from utility.file_util import get_file_path
+                        from utility.speaking_marks import scene_monologue_split_done
+
+                        audio = get_file_path(scene, "clip_audio")
+                        if scene_monologue_split_done(scene) and not (audio and os.path.isfile(audio)):
+                            # Split already dropped full-speech audio; skip stale rebuild.
+                            continue
                         out = self._make_still_clip_video(scene)
                     except Exception as exc:  # noqa: BLE001
                         out = f"error {exc}"

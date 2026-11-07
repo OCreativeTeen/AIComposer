@@ -1129,7 +1129,52 @@ class ImagesMixin:
         except Exception as e:
             print(f"❌ 加载图片预览失败: {e}")
 
-    def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False) -> None:
+    def _finish_monologue_split_after_image(self, scene):
+        """Split a valid self-talk scene after its image (and any remix) has settled.
+
+        Manual 图片修改 calls this immediately after the stills are written.
+        Cover-extract batch defers it until remix success, rejection, failure,
+        or skip so both halves copy the same final caption/visual/actor.
+        """
+        if not self.workflow or not isinstance(scene, dict):
+            return None
+        sibling = None
+        try:
+            from utility.speaking_marks import apply_monologue_split_after_image
+
+            next_id = None
+            try:
+                base = int(self.workflow.max_id(scene) or 0)
+                next_id = (base // 100 + 1) * 100
+                if next_id < 10000:
+                    next_id = 10000
+            except Exception:
+                next_id = None
+            sibling = apply_monologue_split_after_image(
+                getattr(self.workflow, "scenes", None), scene, next_id=next_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 自言自语分场未执行: {exc}")
+            return None
+        if sibling is not None:
+            try:
+                idx = next(i for i, item in enumerate(self.workflow.scenes) if item is scene)
+                if getattr(self, "current_scene_index", 0) > idx:
+                    self.current_scene_index += 1
+            except (StopIteration, TypeError, AttributeError):
+                pass
+            try:
+                if hasattr(self, "update_scene_display"):
+                    self.update_scene_display()
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 分场后刷新界面失败: {exc}")
+            try:
+                self.workflow.save_scenes_to_json()
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 分场后保存失败: {exc}")
+        return sibling
+
+    def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False, defer_monologue_split: bool = False) -> None:
         """图片修改返回了一张图：独立写成这一场的 clip_image、clip_image_last 和 zero_image。
 
         冻结的 zero_image_last（封面原图）不动。是当前场景时刷新预览。"""
@@ -1183,38 +1228,12 @@ class ImagesMixin:
         for slot in ("clip_image", "clip_image_last"):
             if slot in written:
                 self._pool_clip_slot_image(scene, slot, written[slot])
-        # Trigger: successful 图片修改 / cover-extract write (shared save path).
-        # Not drag/drop or other low-level slot edits. Image failure returns above,
-        # so no split. The new sibling is not sent back through image generation.
-        try:
-            from utility.speaking_marks import apply_monologue_split_after_image
-
-            next_id = None
-            try:
-                base = int(self.workflow.max_id(scene) or 0)
-                next_id = (base // 100 + 1) * 100
-                if next_id < 10000:
-                    next_id = 10000
-            except Exception:
-                next_id = None
-            sibling = apply_monologue_split_after_image(
-                getattr(self.workflow, "scenes", None), scene, next_id=next_id
-            )
-        except Exception as exc:  # noqa: BLE001
-            print(f"⚠️ 自言自语分场未执行: {exc}")
-            sibling = None
-        if sibling is not None:
-            try:
-                idx = next(i for i, item in enumerate(self.workflow.scenes) if item is scene)
-                if getattr(self, "current_scene_index", 0) > idx:
-                    self.current_scene_index += 1
-            except (StopIteration, TypeError, AttributeError):
-                pass
-            try:
-                if hasattr(self, "update_scene_display"):
-                    self.update_scene_display()
-            except Exception as exc:  # noqa: BLE001
-                print(f"⚠️ 分场后刷新界面失败: {exc}")
+        # Manual / batch-without-remix: split now so image work ran once.
+        # Cover-extract (remix_visual) passes defer_monologue_split=True and
+        # splits after remix settles, so both children share the final authored
+        # visual/actor. Failure/cancel already returned above: no split.
+        if not defer_monologue_split:
+            self._finish_monologue_split_after_image(scene)
         self.workflow.save_scenes_to_json()
         names = "、".join(os.path.basename(written[s]) for s in ("clip_image", "clip_image_last", "zero_image") if s in written)
         if scene is not current:

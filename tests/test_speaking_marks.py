@@ -196,12 +196,28 @@ class SpeakingMarksTest(unittest.TestCase):
         pm = Path(ROOT, "project_manager.py").read_text(encoding="utf-8")
         wf = Path(ROOT, "magic_workflow.py").read_text(encoding="utf-8")
         images = Path(ROOT, "gui/workflow/wf_images.py").read_text(encoding="utf-8")
+        flows = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
         create = pm.split("def create_new_project", 1)[1].split("\n    def ", 1)[0]
         self.assertNotIn("expand_scenes_for_new_project", create)
         self.assertNotIn("apply_monologue_split_after_image(", create)
         self.assertNotIn("expand_scenes_for_new_project", wf)
-        replace = images.split("def _replace_current_clip_image_from_pil", 1)[1]
-        self.assertIn("apply_monologue_split_after_image", replace.split("\n    def ", 1)[0])
+        helper = images.split("def _finish_monologue_split_after_image", 1)[1].split("\n    def ", 1)[0]
+        self.assertIn("apply_monologue_split_after_image", helper)
+        replace = images.split("def _replace_current_clip_image_from_pil", 1)[1].split("\n    def ", 1)[0]
+        self.assertIn("defer_monologue_split", replace)
+        self.assertIn("_finish_monologue_split_after_image", replace)
+        self.assertIn("if not defer_monologue_split", replace)
+        batch = flows.split("def _run_picture_batch", 1)[1]
+        apply = batch.split("def apply(scene, img, label)", 1)[1].split("\n        def ", 1)[0]
+        self.assertIn("defer_monologue_split=bool(remix_visual)", apply)
+        self.assertIn("pending_split", apply)
+        qremix = batch.split("def queue_remix", 1)[1].split("\n        def ", 1)[0]
+        self.assertIn("_finish_monologue_split_after_image", qremix)
+        avis = batch.split("def apply_visual", 1)[1].split("\n        def ", 1)[0]
+        self.assertIn("finally:", avis)
+        self.assertIn("_finish_monologue_split_after_image", avis)
+        rwork = batch.split("def remix_worker", 1)[1].split("\n        def ", 1)[0]
+        self.assertIn("_finish_monologue_split_after_image", rwork)
 
 
 def _install_pm_stub(media_dir: str):
@@ -370,6 +386,63 @@ class MonologueSplitAfterImageTest(unittest.TestCase):
         self.assertEqual(len(scenes), 1)
         self.assertEqual(scene["speaking"], "<1s> 先想一下。<2> 你在吗？")
         self.assertNotIn("monologue_split", scene)
+
+    def test_remix_then_split_mirrors_authored_fields_and_leaves_batch_neighbor(self):
+        """Cover-extract order: image once, remix once, then split.
+
+        Both children get the remixed visual/actor (and other authored
+        metadata). The next original batch job stays the same object,
+        unsplit, so it is still processed exactly once.
+        """
+        from utility.speaking_marks import (
+            MONOLOGUE_SPLIT_DONE,
+            MONOLOGUE_SPLIT_KEY,
+            apply_monologue_split_after_image,
+            scene_monologue_split_done,
+            split_speaking_pair,
+        )
+        from utility.scene_image_slots import scene_has_frozen_zero_last
+
+        speaking = "<1s> 跟朋友吃了顿饭。<2> 你今天怎么这么累？"
+        scene = self._scene_with_images(speaking)
+        neighbor = self._scene_with_images("<1> 下一场对白。", sid=10200)
+        scenes = [scene, neighbor]
+        # Image write happened on the still-unsplit original (no split yet).
+        self.assertFalse(scene_monologue_split_done(scene))
+        self.assertIsNotNone(split_speaking_pair(scene["speaking"]))
+        authored = {
+            "caption": scene["caption"],
+            "visual": "remix后的深夜书房，台灯更暖",
+            "actor": "人物1:man/mature/chinese/阿哲（衬衫微皱）",
+            "visual_before_remix": scene["visual"],
+            "actor_before_remix": scene["actor"],
+        }
+        scene.update(authored)
+        out = apply_monologue_split_after_image(scenes, scene, next_id=10300)
+        self.assertIsNotNone(out)
+        self.assertEqual(len(scenes), 3)
+        self.assertIs(scenes[0], scene)
+        self.assertIs(scenes[2], neighbor)
+        self.assertTrue(scene["speaking"].startswith("<1s>"))
+        self.assertIn("<2>", out["speaking"])
+        for key, value in authored.items():
+            self.assertEqual(scene[key], value)
+            self.assertEqual(out[key], value)
+        self.assertEqual(scene[MONOLOGUE_SPLIT_KEY], MONOLOGUE_SPLIT_DONE)
+        self.assertEqual(out[MONOLOGUE_SPLIT_KEY], MONOLOGUE_SPLIT_DONE)
+        self.assertTrue(scene_has_frozen_zero_last(scene))
+        self.assertTrue(scene_has_frozen_zero_last(out))
+        self.assertNotEqual(
+            os.path.abspath(scene["zero_image_last"]),
+            os.path.abspath(out["zero_image_last"]),
+        )
+        self.assertEqual(neighbor["speaking"], "<1> 下一场对白。")
+        self.assertEqual(neighbor["visual"], "深夜书房")
+        self.assertNotIn(MONOLOGUE_SPLIT_KEY, neighbor)
+        again = apply_monologue_split_after_image(scenes, neighbor, next_id=10400)
+        self.assertIsNone(again)
+        self.assertEqual(len(scenes), 3)
+        self.assertIs(scenes[2], neighbor)
 
 
 
