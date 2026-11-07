@@ -1183,6 +1183,38 @@ class ImagesMixin:
         for slot in ("clip_image", "clip_image_last"):
             if slot in written:
                 self._pool_clip_slot_image(scene, slot, written[slot])
+        # Trigger: successful 图片修改 / cover-extract write (shared save path).
+        # Not drag/drop or other low-level slot edits. Image failure returns above,
+        # so no split. The new sibling is not sent back through image generation.
+        try:
+            from utility.speaking_marks import apply_monologue_split_after_image
+
+            next_id = None
+            try:
+                base = int(self.workflow.max_id(scene) or 0)
+                next_id = (base // 100 + 1) * 100
+                if next_id < 10000:
+                    next_id = 10000
+            except Exception:
+                next_id = None
+            sibling = apply_monologue_split_after_image(
+                getattr(self.workflow, "scenes", None), scene, next_id=next_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 自言自语分场未执行: {exc}")
+            sibling = None
+        if sibling is not None:
+            try:
+                idx = next(i for i, item in enumerate(self.workflow.scenes) if item is scene)
+                if getattr(self, "current_scene_index", 0) > idx:
+                    self.current_scene_index += 1
+            except (StopIteration, TypeError, AttributeError):
+                pass
+            try:
+                if hasattr(self, "update_scene_display"):
+                    self.update_scene_display()
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 分场后刷新界面失败: {exc}")
         self.workflow.save_scenes_to_json()
         names = "、".join(os.path.basename(written[s]) for s in ("clip_image", "clip_image_last", "zero_image") if s in written)
         if scene is not current:

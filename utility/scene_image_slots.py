@@ -202,3 +202,63 @@ def seed_scene_images_from_cover(scene: dict, cover: str) -> dict:
 def write_edited_scene_images(scene: dict, source: str) -> dict:
     """Edit / cover extraction: three new files; frozen zero_image_last skipped."""
     return write_independent_slots(scene, EDIT_OUTPUT_SLOTS, source, mark_frozen=False)
+
+
+def clone_image_slots(source: dict, dest: dict) -> dict:
+    """Copy each still-image slot from ``source`` into a new independent file on ``dest``.
+
+    Includes frozen ``zero_image_last`` (the sibling gets its own copy of the
+    original cover, then the cover_origin marker is restored). Dest must not
+    keep source paths. On failure dest keys are left as they were and new
+    files are removed.
+    """
+    if not isinstance(source, dict) or not isinstance(dest, dict):
+        raise ValueError("source/dest 必须是字典")
+    from project_manager import allocate_scene_media_path
+
+    restore = scene_has_frozen_zero_last(source)
+    planned: list[tuple[str, str, str]] = []
+    for slot in COVER_SEED_SLOTS:
+        src = source.get(slot) or ""
+        if not (isinstance(src, str) and src and os.path.isfile(src)):
+            continue
+        ext = os.path.splitext(src)[1].lower() or ".webp"
+        if ext not in (".webp", ".png", ".jpg", ".jpeg"):
+            ext = ".webp"
+        planned.append((slot, src, allocate_scene_media_path(dest, slot, ext)))
+    if not planned:
+        if restore:
+            mark_cover_origin(dest)
+        return {}
+
+    written: list[str] = []
+    old_values = {slot: dest.get(slot) for slot, _src, _dst in planned}
+    old_marker = dest.get(COVER_ORIGIN_KEY)
+    try:
+        dest.pop(COVER_ORIGIN_KEY, None)
+        for slot, src, dst in planned:
+            _copy_independent(src, dst)
+            written.append(dst)
+        by_inode = [(os.stat(dst).st_dev, os.stat(dst).st_ino) for _s, _src, dst in planned]
+        if len(set(by_inode)) != len(by_inode):
+            raise RuntimeError("克隆场景图产生了硬链接或同一 inode")
+        for slot, src, dst in planned:
+            if _same_file(src, dst):
+                raise RuntimeError(f"克隆后仍与源是同一文件：{dst}")
+            dest[slot] = dst
+        if restore:
+            mark_cover_origin(dest)
+        return {slot: dst for slot, _src, dst in planned}
+    except Exception:
+        for dst in written:
+            safe_remove(dst)
+        for slot, old in old_values.items():
+            if old is None:
+                dest.pop(slot, None)
+            else:
+                dest[slot] = old
+        if old_marker is None:
+            dest.pop(COVER_ORIGIN_KEY, None)
+        else:
+            dest[COVER_ORIGIN_KEY] = old_marker
+        raise

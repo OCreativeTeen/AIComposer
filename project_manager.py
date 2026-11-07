@@ -2316,13 +2316,9 @@ class ProjectSelectionDialog:
         if not sc:
             messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目", parent=form_parent)
             return
-        # New-project only: split self-talk at one end into its own scene.
-        # Unsplitable layouts are left as supplied. Does not mutate the STORY
-        # editor's preview list (deep copy inside the helper).
-        from utility.speaking_marks import expand_scenes_for_new_project
-
-        sc = expand_scenes_for_new_project(sc)
-        sr['scene_content'] = sc
+        # Keep scenes unsplit here so cover extract / 图片修改 runs once on
+        # the original scene. Valid self-talk splits after that image succeeds
+        # (see apply_monologue_split_after_image).
         if not sr.get('analyzed_content'):
             sr['analyzed_content'] = ""
         title = getattr(self, "initial_title", "") or title_from_scene_content(sc)

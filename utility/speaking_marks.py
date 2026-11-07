@@ -10,17 +10,17 @@ Lifecycle:
 
 Self-talk may only occupy a contiguous block at the start or the end of a
 scene's speaking (never the middle, never both ends) — generation prompts
-still require that. New-project creation splits a valid mixed scene into
-exactly two scenes (monologue-only + dialogue) in the original order.
-Pure monologue stays one scene. If self-talk is in the middle, at both
-ends, or otherwise cannot become exactly two contiguous scenes, treat
-that monologue as absent for the split decision only: keep the scene
-exactly as supplied (same speaking string and markers). Do not error,
-reorder, canonicalize, or delete text.
+still require that. A new project keeps the scene unsplit so image
+generation or cover extraction runs once. After that image write succeeds,
+a valid leading/trailing monologue scene is split into two consecutive
+scenes (same authored fields except speaking). Interior / both-ends
+layouts are left unchanged (no error). Already-split scenes and pure
+monologue or dialogue do not split again.
 """
 from __future__ import annotations
 
 import copy
+import os
 import re
 from dataclasses import dataclass
 
@@ -201,13 +201,77 @@ def split_speaking_pair(speaking: str):
     return first, second, kind
 
 
-def expand_scenes_for_new_project(scenes):
-    """Deep-copy scene_content and split valid monologue scenes.
+MONOLOGUE_SPLIT_KEY = "monologue_split"
+MONOLOGUE_SPLIT_DONE = "done"
 
-    Does not mutate ``scenes``. A scene that cannot be split into exactly
-    two contiguous parts is copied verbatim (speaking and markers unchanged);
-    other scenes in the list are still processed. Split copies change only
-    speaking; ``id`` / ``speaking_timing`` are dropped so workflow ids stay unique.
+
+def scene_monologue_split_done(scene) -> bool:
+    return isinstance(scene, dict) and scene.get(MONOLOGUE_SPLIT_KEY) == MONOLOGUE_SPLIT_DONE
+
+
+def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
+    """After a successful scene-image write: maybe insert a speaking-only sibling.
+
+    ``scene`` stays the same object (batch jobs / callbacks keep their reference)
+    and becomes the first half. A new dict is inserted immediately after it.
+    Image slots on the sibling are independent file copies, including a new
+    file for frozen ``zero_image_last``. Clip video/audio and speaking_timing
+    are not copied onto the sibling (they belong to the unsplit speech).
+    Returns the sibling, or None if no split happened. Failure to copy images
+    leaves ``scenes`` and ``scene`` unchanged.
+    """
+    if not isinstance(scenes, list) or not isinstance(scene, dict):
+        return None
+    try:
+        idx = next(i for i, item in enumerate(scenes) if item is scene)
+    except StopIteration:
+        return None
+    if scene_monologue_split_done(scene):
+        return None
+    pair = split_speaking_pair(scene.get("speaking") or "")
+    if not pair:
+        return None
+    from utility.scene_image_slots import COVER_SEED_SLOTS, clone_image_slots
+
+    if not any(
+        isinstance(scene.get(slot), str) and scene.get(slot) and os.path.isfile(scene[slot])
+        for slot in COVER_SEED_SLOTS
+    ):
+        return None
+    first_s, second_s, _kind = pair
+    sibling = copy.deepcopy(scene)
+    if next_id is None:
+        ids = [int(s.get("id") or 0) for s in scenes if isinstance(s, dict)]
+        base = max(ids) if ids else 0
+        next_id = (int(base) // 100 + 1) * 100
+        if next_id < 10000:
+            next_id = 10000
+    sibling["id"] = next_id
+    sibling["speaking"] = second_s
+    sibling.pop("speaking_timing", None)
+    sibling.pop("clip", None)
+    sibling.pop("clip_audio", None)
+    try:
+        clone_image_slots(scene, sibling)
+    except Exception as exc:
+        print(f"⚠️ 自言自语分场：没有独立拷贝场景图，保持一场：{exc}")
+        return None
+    sibling[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
+    scene["speaking"] = first_s
+    scene.pop("speaking_timing", None)
+    scene.pop("clip", None)
+    scene.pop("clip_audio", None)
+    scene[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
+    scenes.insert(idx + 1, sibling)
+    return sibling
+
+
+def expand_scenes_for_new_project(scenes):
+    """Speaking-only helper: deep-copy a list and split valid monologue scenes.
+
+    Not used at project creation (images must run once on the unsplit scene).
+    Kept for tests and any caller that only has scene dicts, no image files.
+    Invalid layouts are copied verbatim.
     """
     if not isinstance(scenes, list):
         return scenes

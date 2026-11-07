@@ -191,15 +191,186 @@ class SpeakingMarksTest(unittest.TestCase):
         self.assertEqual(strip_speaker_marks("<1s>（自言自语）心里话"), "心里话")
         self.assertEqual(speaker_ids_in_text("<1s> a <2> b"), [1, 2])
 
-    def test_new_project_hook_only(self):
+
+    def test_new_project_defers_split_until_image_save(self):
         pm = Path(ROOT, "project_manager.py").read_text(encoding="utf-8")
         wf = Path(ROOT, "magic_workflow.py").read_text(encoding="utf-8")
-        self.assertIn("expand_scenes_for_new_project", pm)
-        self.assertIn("def create_new_project", pm)
+        images = Path(ROOT, "gui/workflow/wf_images.py").read_text(encoding="utf-8")
         create = pm.split("def create_new_project", 1)[1].split("\n    def ", 1)[0]
-        self.assertIn("expand_scenes_for_new_project", create)
-        self.assertNotIn("MonologueSplitError", create)
+        self.assertNotIn("expand_scenes_for_new_project", create)
+        self.assertNotIn("apply_monologue_split_after_image(", create)
         self.assertNotIn("expand_scenes_for_new_project", wf)
+        replace = images.split("def _replace_current_clip_image_from_pil", 1)[1]
+        self.assertIn("apply_monologue_split_after_image", replace.split("\n    def ", 1)[0])
+
+
+def _install_pm_stub(media_dir: str):
+    import types
+    existing = sys.modules.get("project_manager")
+    if existing is not None and getattr(existing, "_slot_test_stub", False):
+        existing._slot_media_dir = media_dir
+        existing._slot_n = 0
+        return existing
+    pm = types.ModuleType("project_manager")
+    pm._slot_test_stub = True
+    pm._slot_media_dir = media_dir
+    pm._slot_n = 0
+
+    def allocate_scene_media_path(scene, media_type, media_postfix):
+        pm._slot_n += 1
+        name = f"{media_type}_{scene.get('id', 0)}_{pm._slot_n}{media_postfix}"
+        return os.path.join(pm._slot_media_dir, name)
+
+    pm.allocate_scene_media_path = allocate_scene_media_path
+    sys.modules["project_manager"] = pm
+    return pm
+
+
+class MonologueSplitAfterImageTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="mono_split_")
+        self.media = os.path.join(self.tmp, "media")
+        os.makedirs(self.media)
+        _install_pm_stub(self.media)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _scene_with_images(self, speaking, *, sid=10100, cover=True):
+        from utility.scene_image_slots import COVER_SEED_SLOTS, mark_cover_origin
+
+        scene = {
+            "id": sid,
+            "caption": "四小时换一小时",
+            "visual": "深夜书房",
+            "actor": "人物1:man/mature/chinese/阿哲",
+            "speaking": speaking,
+            "clip": os.path.join(self.tmp, "full_speech.mp4"),
+            "clip_audio": os.path.join(self.tmp, "full_speech.wav"),
+            "speaking_timing": {"text": speaking},
+        }
+        for slot in COVER_SEED_SLOTS:
+            path = os.path.join(self.media, f"src_{sid}_{slot}.webp")
+            with open(path, "wb") as f:
+                f.write(("IMG-%s-%s" % (slot, sid)).encode())
+            scene[slot] = path
+        if cover:
+            mark_cover_origin(scene)
+        return scene
+
+    def test_image_once_splits_two_independent_scenes(self):
+        from utility.speaking_marks import (
+            MONOLOGUE_SPLIT_DONE,
+            MONOLOGUE_SPLIT_KEY,
+            apply_monologue_split_after_image,
+        )
+        from utility.scene_image_slots import COVER_SEED_SLOTS, scene_has_frozen_zero_last
+
+        speaking = "<1s> 跟朋友吃了顿饭。<2> 你今天怎么这么累？"
+        scene = self._scene_with_images(speaking)
+        sibling_jobs = self._scene_with_images("<1> 下一场。", sid=10200)
+        scenes = [scene, sibling_jobs]
+        out = apply_monologue_split_after_image(scenes, scene, next_id=10300)
+        self.assertIsNotNone(out)
+        self.assertEqual(len(scenes), 3)
+        self.assertIs(scenes[0], scene)
+        self.assertIs(scenes[2], sibling_jobs)
+        self.assertTrue(scene["speaking"].startswith("<1s>"))
+        self.assertIn("<2>", out["speaking"])
+        self.assertEqual(scene["caption"], out["caption"])
+        self.assertEqual(scene["visual"], out["visual"])
+        self.assertEqual(scene["actor"], out["actor"])
+        self.assertEqual(scene[MONOLOGUE_SPLIT_KEY], MONOLOGUE_SPLIT_DONE)
+        self.assertEqual(out[MONOLOGUE_SPLIT_KEY], MONOLOGUE_SPLIT_DONE)
+        self.assertEqual(out["id"], 10300)
+        self.assertNotIn("clip", out)
+        self.assertNotIn("clip_audio", out)
+        self.assertNotIn("speaking_timing", out)
+        self.assertNotIn("speaking_timing", scene)
+        self.assertNotIn("clip", scene)
+        self.assertNotIn("clip_audio", scene)
+        self.assertTrue(scene_has_frozen_zero_last(scene))
+        self.assertTrue(scene_has_frozen_zero_last(out))
+        last_src = scene["zero_image_last"]
+        last_new = out["zero_image_last"]
+        self.assertNotEqual(os.path.abspath(last_src), os.path.abspath(last_new))
+        self.assertEqual(Path(last_src).read_bytes(), Path(last_new).read_bytes())
+        self.assertNotEqual(
+            (os.stat(last_src).st_dev, os.stat(last_src).st_ino),
+            (os.stat(last_new).st_dev, os.stat(last_new).st_ino),
+        )
+        for slot in COVER_SEED_SLOTS:
+            a, b = scene[slot], out[slot]
+            self.assertTrue(os.path.isfile(a) and os.path.isfile(b))
+            self.assertNotEqual(os.path.abspath(a), os.path.abspath(b))
+            self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes())
+        self.assertEqual(sibling_jobs["speaking"], "<1> 下一场。")
+        self.assertNotIn(MONOLOGUE_SPLIT_KEY, sibling_jobs)
+
+    def test_retries_do_not_duplicate_and_failure_leaves_untouched(self):
+        from utility.speaking_marks import apply_monologue_split_after_image
+        import utility.scene_image_slots as slots
+
+        speaking = "<2> 先坐下。<1s> 原来如此。"
+        scene = self._scene_with_images(speaking)
+        scenes = [scene]
+        first = apply_monologue_split_after_image(scenes, scene, next_id=20000)
+        self.assertIsNotNone(first)
+        self.assertEqual(len(scenes), 2)
+        again = apply_monologue_split_after_image(scenes, scene, next_id=20100)
+        self.assertIsNone(again)
+        self.assertEqual(len(scenes), 2)
+
+        doomed = self._scene_with_images("<1s> 想一下。<2> 你在吗？", sid=30000)
+        doomed_list = [doomed]
+        frozen_speaking = doomed["speaking"]
+        real = slots.clone_image_slots
+
+        def boom(*a, **k):
+            raise RuntimeError("copy fail")
+
+        slots.clone_image_slots = boom
+        try:
+            self.assertIsNone(apply_monologue_split_after_image(doomed_list, doomed, next_id=30100))
+        finally:
+            slots.clone_image_slots = real
+        self.assertEqual(doomed_list, [doomed])
+        self.assertEqual(doomed["speaking"], frozen_speaking)
+        self.assertNotIn("monologue_split", doomed)
+
+    def test_invalid_and_pure_remain_one(self):
+        from utility.speaking_marks import apply_monologue_split_after_image
+
+        interior = self._scene_with_images("<1> 你好。<2s> 夹在中间。<1> 还在。", sid=40100)
+        both = self._scene_with_images("<1s> 头。<2> 中。<1s> 尾。", sid=40200)
+        pure = self._scene_with_images("<1s> 我一个人想了很久。", sid=40300)
+        scenes = [interior, both, pure]
+        self.assertIsNone(apply_monologue_split_after_image(scenes, interior, next_id=50000))
+        self.assertIsNone(apply_monologue_split_after_image(scenes, both, next_id=50100))
+        self.assertIsNone(apply_monologue_split_after_image(scenes, pure, next_id=50200))
+        self.assertEqual(len(scenes), 3)
+        self.assertEqual(interior["speaking"], "<1> 你好。<2s> 夹在中间。<1> 还在。")
+        self.assertEqual(both["speaking"], "<1s> 头。<2> 中。<1s> 尾。")
+        self.assertEqual(pure["speaking"], "<1s> 我一个人想了很久。")
+
+    def test_no_image_yet_does_not_split(self):
+        from utility.speaking_marks import apply_monologue_split_after_image
+
+        scene = {
+            "id": 60100,
+            "caption": "还没出图",
+            "visual": "空",
+            "actor": "人物1:man",
+            "speaking": "<1s> 先想一下。<2> 你在吗？",
+        }
+        scenes = [scene]
+        self.assertIsNone(apply_monologue_split_after_image(scenes, scene, next_id=60200))
+        self.assertEqual(len(scenes), 1)
+        self.assertEqual(scene["speaking"], "<1s> 先想一下。<2> 你在吗？")
+        self.assertNotIn("monologue_split", scene)
+
 
 
 if __name__ == "__main__":
