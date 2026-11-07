@@ -529,8 +529,9 @@ def narrative_mode_text(narrative: str, actor_checked: bool) -> str:
     if narrative == "story":
         if actor_checked:
             return ("故事：人物在场景中表演对话（套用 actor 形象）。若人物中有讲员，讲员为辅，"
-                    "开头介绍或结尾总结、过渡、提问；否则没有讲员。")
-        return "故事：人物在场景中表演对话，人物自由虚构，无讲员。"
+                    "开头介绍或结尾总结、过渡、提问；否则没有讲员。"
+                    "单回合 <Ns> 自言自语是该人物内心独白（画外心声、嘴巴不动）。")
+        return "故事：人物在场景中表演对话，人物自由虚构，无讲员。单回合 <Ns> 是该人物内心独白（画外心声、嘴巴不动）。"
     head = {
         "tech": "技术方案汇报（讲述的一种）：架构 / 流程图和背景文字讲，人物很少且不说话。",
         "exec": "高管简报（讲述的一种）：每场一个结论＋一个数字或图标，人物很少且不说话。",
@@ -3477,10 +3478,14 @@ def story_style_mode_text(value, actor_checked: bool) -> str:
     """生场视频窗口里「叙事风格」下面的蓝字说明。"""
     key = normalize_story_style(value) or STORY_STYLE_CHOICES[0][0]
     if key == "story_act":
-        return ("Story Act：人物在场景中只表演、不说话；story_content 是这场发生的事，"
-                "靠动作、表情、手势演出来，没有对白、旁白、口型。")
+        return ("Story Act：人物在场景中只表演、不在画面上开口说话；story_content 是这场发生的事，"
+                "靠动作、表情、手势演出来。没有对白口型。如有内心独白／自言自语（<Ns>），"
+                "是同一人物自己的画外心声，嘴巴不动、不对口型，不是旁白员换人。")
     if key == "story_speak":
-        return "Story Speak · " + narrative_mode_text("story", actor_checked)
+        return ("Story Speak · " + narrative_mode_text("story", actor_checked)
+                + " <N> 与 <Ns> 是同一个人（s 只表示自言自语，不是新角色）。"
+                  "若这一场讲话只有一个说话回合且标记带 s（如 <1s>，可以有多句／换行），"
+                  "则是该人物自己的内心独白：能听见他的声音（画外心声），全程嘴巴闭合、不对口型，不是旁白员。")
     if key == "podcast":
         return "Podcast（讲述）：主持人讲述 · " + narrative_mode_text("narration", actor_checked)
     if key == "counselor":
@@ -3529,16 +3534,38 @@ from utility.speaking_marks import (  # noqa: E402
     SCENE_MONOLOGUE_RULE,
     SPEAKER_ID_RE as _SPEAKER_MARK,
     parse_speaking_turns,
+    scene_speaking_source,
+    scenes_speaking_is_single_inner_monologue,
+    speaking_has_interactive_dialogue,
     speaking_has_monologue,
+    speaking_is_all_inner_monologue,
+    speaking_is_single_inner_monologue,
     strip_monologue_tag,
     strip_speaker_marks,
+)
+
+# <N> and <Ns> are the same person N; s is a speech mode, never an extra character.
+SPEAKER_MARK_IDENTITY_RULE = (
+    "Speaker marks: <N> and <Ns> (and legacy <N>（自言自语） / <N>（自言自語）) refer to the IDENTICAL actor N "
+    "in the actor list (any multi-digit N: <1>=<1s>, <2>=<2s>, <3>=<3s>, <12>=<12s>); "
+    "the letter s is a speech mode (self-talk / inner thought), not a new character, extra person, reference image, "
+    "seat, costume, or voice; same identity, look, clothes, reference picture, and voice as <N>."
 )
 
 H3_MONOLOGUE_NO_LIPSYNC_RULE = (
     "Self-talk (自言自语): any line marked <Ns> or legacy <N>（自言自语） that is that character "
     "speaking to himself/herself (inner monologue / voiceover feel) is NOT interactive dialogue; "
     "only the other dialogue lines are interactive; "
-    "self-talk lines have NO lip sync — that speaker keeps the mouth closed / not moving while that audio plays."
+    "self-talk lines have NO lip sync — that speaker keeps the mouth closed / not moving while that audio plays; "
+    "<Ns> is the same person as <N>, never a different narrator or a different gender."
+)
+
+SINGLE_INNER_MONOLOGUE_RULE = (
+    "Entire-scene inner monologue: this scene has exactly one speaking turn and that turn is self-talk "
+    "(<Ns> or legacy 自言自语); count parser turns marked <N>/<Ns>, not punctuation sentences or wrapped lines; "
+    "the audio is that same actor N's own inner voice / thinking, heard as voice-over; it is not mute and not another "
+    "narrator; the character acts and thinks naturally with the mouth closed for the entire scene — no lip sync, "
+    "no mouth speaking motion; no on-screen text or subtitles of the thought."
 )
 
 
@@ -3656,9 +3683,10 @@ def portrait_reference_block(refs: list) -> str:
         lines.append(f"- Reference image {i} is the portrait of Speaker {n} {name}.")
     lines += [
         "Use the portraits only to identify which person in reference image 1 is each speaker.",
-        "Each spoken line must be delivered strictly by the speaker marked by its <1>/<2>/<N> tag: lip movement "
-        "and voice on that exact person, matching that speaker's gender, age and voice. Other people stay silent "
-        "while someone else speaks.",
+        "Each <N> / <Ns> tag is the same speaker N (the letter s is not another person or portrait). "
+        "Interactive lines must be delivered by that exact person: lip movement and voice matching that speaker's "
+        "gender, age and voice. Self-talk / inner-monologue lines (<Ns> or legacy 自言自语) use that same person's "
+        "voice with no lip movement. Other people stay silent while someone else speaks.",
         "The portraits are identity references only: the video must start from reference image 1's composition. "
         "Do not add new people, do not insert the portraits as extra characters, and do not change the scene, "
         "background, art style or lighting.",
@@ -3760,8 +3788,28 @@ def _speaker_voice_line(scenes: list) -> str:
             bits.append(speaker_tag(row, n, sc))
     if not bits:
         return ""
-    return ("Speakers (``<N>`` / Speaker N = the Nth person in ``actor``):\n  " + "\n  ".join(bits)
-            + "\nEach person keeps this one voice, on or off screen. " + GENDER_LOCK_LINE)
+    return ("Speakers (``<N>`` / ``<Ns>`` / Speaker N = the Nth person in ``actor``; ``<Ns>`` is the same person as ``<N>``):\n  " + "\n  ".join(bits)
+            + "\nEach person keeps this one voice, on or off screen. " + GENDER_LOCK_LINE
+            + " " + SPEAKER_MARK_IDENTITY_RULE)
+
+
+
+def _speech_scene_flags(scenes) -> dict:
+    """Turn-count flags from the shared speaking parser (not punctuation/wrapped lines)."""
+    texts = []
+    for s in scenes or []:
+        if not isinstance(s, dict):
+            continue
+        text = scene_speaking_source(s)
+        if text.strip():
+            texts.append(text)
+    return {
+        "texts": texts,
+        "single": bool(texts) and all(speaking_is_single_inner_monologue(x) for x in texts),
+        "all_mono": bool(texts) and all(speaking_is_all_inner_monologue(x) for x in texts),
+        "any_mono": any(speaking_has_monologue(x) for x in texts),
+        "any_dialogue": any(speaking_has_interactive_dialogue(x) for x in texts),
+    }
 
 
 def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
@@ -3778,11 +3826,35 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
         )
         if not use_speaking or not has_content:
             return ["Speech: nobody speaks in this clip. No narration, no dialogue, no lip-sync."], ""
-        return [
-            "Story style STORY ACT: ``story_content`` is what happens in this scene. The people act it out silently "
-            "through action, behavior, facial expression, and gesture, so the picture itself tells it.",
-            "Speech: nobody speaks. No dialogue, no lip-sync, no narrator, no voice-over; ``story_content`` is never said aloud.",
-        ], "story_content"
+        flags = _speech_scene_flags(real)
+        lines = [
+            "Story style STORY ACT: ``story_content`` is what happens in this scene. The people act it out "
+            "through action, behavior, facial expression, and gesture, so the picture itself tells it. "
+            "They do not speak on camera: no mouth speaking motion and no lip-sync.",
+        ]
+        if flags["any_mono"]:
+            lines.append(SPEAKER_MARK_IDENTITY_RULE)
+            if flags["single"]:
+                lines.append(SINGLE_INNER_MONOLOGUE_RULE)
+                lines.append(
+                    "Speech: the only speaking turn is this actor's own inner voice, heard as voice-over while they "
+                    "act and think; the mouth stays closed for the entire scene. ``story_content`` itself is not said "
+                    "aloud as on-screen dialogue."
+                )
+            else:
+                lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
+                lines.append(
+                    "Speech: any self-talk / inner-monologue audio (<Ns> or legacy 自言自语) is that same actor's own "
+                    "inner voice heard as voice-over while they act; no lip-sync on those lines. Interactive ``<N>`` "
+                    "dialogue is still not spoken on camera (Story Act). ``story_content`` is never said aloud as "
+                    "on-screen dialogue."
+                )
+        else:
+            lines.append(
+                "Speech: nobody speaks. No dialogue, no lip-sync, no narrator, no voice-over; "
+                "``story_content`` is never said aloud."
+            )
+        return lines, "story_content"
     if not use_speaking or not any(
         str(s.get("speaking") or s.get("voiceover") or "").strip() for s in scenes if isinstance(s, dict)
     ):
@@ -3798,28 +3870,65 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
     lines: list = []
     if not cast and not dialogue:
         voice = narrator_voice_phrase(host_narrator) or "one narrator voice"
+        flags0 = _speech_scene_flags(scenes)
         if story_style == "story_speak":
+            if flags0["single"]:
+                lines.append(SPEAKER_MARK_IDENTITY_RULE)
+                lines.append(SINGLE_INNER_MONOLOGUE_RULE)
+                lines.append(
+                    "Speech: pure drama, no separate narrator. The single self-talk turn is that same person's own "
+                    "inner voice-over while they act and think; mouth closed, no lip-sync, not mute."
+                )
+                return lines, "narration"
             lines.append(
                 "Speech: pure drama, no narrator. ``narration`` is what the people in the picture say to each other; "
-                "give it to the person it fits, one voice at a time, with lip-sync for that person only."
+                "give it to the person it fits, one voice at a time, with lip-sync for that person only "
+                "(self-talk / <Ns> lines use that same person's voice with no lip-sync)."
             )
+            if flags0["any_mono"]:
+                lines.append(SPEAKER_MARK_IDENTITY_RULE)
+                lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
             return lines, "narration"
         lines.append(
             f"Speech: ``narration`` is one off-screen voice-over ({voice}). Do not show a narrator or host. "
             "Nobody in the picture speaks or moves their lips; they act silently."
         )
         return lines, "narration"
-    if dialogue:
+    flags = _speech_scene_flags(scenes)
+    lines.append(SPEAKER_MARK_IDENTITY_RULE)
+    if flags["single"]:
+        lines.append(SINGLE_INNER_MONOLOGUE_RULE)
+        if dialogue:
+            lines.append(
+                "Dialogue: ``dialogue`` is the script. This clip has exactly one speaking turn and it is self-talk / "
+                "inner monologue by that labeled actor; hear it as that same person's own inner voice-over while they "
+                "act and think; mouth closed, no lip-sync; never swap to another narrator."
+            )
+        else:
+            lines.append(
+                "Speakers: ``<N>`` / ``<Ns>`` in ``speaking`` is the Nth person in ``actor`` (identical person; "
+                "s is speech mode, not a new character); ``<0.5>`` is a pause in seconds. This clip has exactly one "
+                "speaking turn and it is self-talk: that person's own inner voice-over, mouth closed, no lip-sync."
+            )
+    elif dialogue:
         lines.append(
             "Dialogue: ``dialogue`` is the script. Speak its lines in this exact order, each only by its labeled "
-            "speaker, lip-synced to that person; never swap speakers. One voice at a time; the others listen or react."
+            "speaker; never swap speakers. One voice at a time; the others listen or react. "
+            "Interactive ``<N>`` lines are lip-synced to that person; self-talk ``<Ns>`` / 自言自语 lines use that "
+            "same person's voice with no lip-sync (mouth closed)."
         )
+        if flags["any_mono"]:
+            lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
     else:
         lines.append(
-            "Speakers: ``<N>`` in ``speaking`` is the Nth person in ``actor`` (only 1 to 3 speak); the same person keeps "
-            "talking until the next ``<N>``; ``<0.5>`` is a pause in seconds. One voice at a time. "
-            "Lip-sync only the person whose line it is; everyone else listens or reacts."
+            "Speakers: ``<N>`` / ``<Ns>`` in ``speaking`` is the Nth person in ``actor`` (only 1 to 3 speak; "
+            "``<Ns>`` is the same person as ``<N>``); the same person keeps talking until the next mark; "
+            "``<0.5>`` is a pause in seconds. One voice at a time. "
+            "Lip-sync only the person whose interactive ``<N>`` line it is; everyone else listens or reacts; "
+            "self-talk ``<Ns>`` lines have no lip-sync."
         )
+        if flags["any_mono"]:
+            lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
     if story_style == "podcast":
         lines.append(
             "Story style PODCAST: the people in ``actor`` are the podcast speakers"
@@ -3849,13 +3958,26 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
                 "transition, or closing. Do not act the story out here."
             )
         else:
-            lines.append(
-                "Story style STORY SPEAK: a dramatized moment like a film or TV drama. ``speaking`` is the 人物's dialogue: "
-                "they say these lines aloud to each other, in the scene, as the people of the story. Their actions, faces, "
-                "and the picture help express what is being said."
-                + (" The 讲员 stays apart, speaks only the lines marked for them, and never takes over the scene." if hosts else
-                   " No narrator, no voice-over.")
-            )
+            if flags["single"]:
+                extra = (" The 讲员 stays apart and never takes over the scene." if hosts else
+                         " No separate narrator; the heard voice is this same actor's own inner voice-over.")
+                lines.append(
+                    "Story style STORY SPEAK: a dramatized moment like a film or TV drama. The single self-talk turn "
+                    "is the 人物's own inner thought: they act and think in the scene while that same voice is heard "
+                    "as voice-over, with the mouth closed and no lip-sync."
+                    + extra
+                )
+            else:
+                extra = (" The 讲员 stays apart, speaks only the lines marked for them, and never takes over the scene."
+                         if hosts else
+                         (" No separate narrator; self-talk is that same actor's own inner voice-over."
+                          if flags["any_mono"] else " No narrator, no voice-over."))
+                lines.append(
+                    "Story style STORY SPEAK: a dramatized moment like a film or TV drama. ``speaking`` is the 人物's dialogue: "
+                    "they say these lines aloud to each other, in the scene, as the people of the story. Their actions, faces, "
+                    "and the picture help express what is being said."
+                    + extra
+                )
     if narrative in TELLING_NARRATIVES and story_style != "podcast" and people:
         lines.append("Even in this telling style, the 人物's lines are their own spoken lines, not narration.")
     # 声音：只写用到的位置
@@ -3877,7 +3999,10 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
             voice_bits.append(f"<{n}> {_who(row)}" + (f" = voice {name}" if name else ""))
     if voice_bits:
         lines.append("Voices: " + "; ".join(voice_bits) + ". Use exactly these voices.")
-    lines.append(GENDER_LOCK_LINE + " Lip-sync uses the same voice.")
+    if flags["single"]:
+        lines.append(GENDER_LOCK_LINE + " The inner voice-over uses this same identity and voice.")
+    else:
+        lines.append(GENDER_LOCK_LINE + " Lip-sync uses the same voice.")
     return lines, "speaking"
 
 
@@ -4123,12 +4248,23 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
     talk = bool(turns) or any(_scene_has_dialogue(s) for s in scs)
     has_mono = any(len(tr) > 4 and tr[4] for tr in turns) or any(
         speaking_has_monologue(str(s.get("speaking") or "")) for s in scs)
+    flags = _speech_scene_flags(scs)
+    single_inner = flags["single"]
     if talk:
+        lines.append(SPEAKER_MARK_IDENTITY_RULE)
         if with_audio:
             names = " and ".join(dict.fromkeys(t[1] for t in turns)) or "the people"
-            lines.append(f"{names} talk to each other" + (f" in {lang}" if lang else "")
-                         + ", their lips moving in sync with the voice track, one speaker at a time while the other "
-                         "listens and reacts with natural expressions and small gestures.")
+            if single_inner:
+                lines.append(
+                    f"{names} think in their own voice" + (f" in {lang}" if lang else "")
+                    + ", heard as inner monologue / voice-over with the mouth closed and no lip sync, "
+                    "acting and thinking naturally; this is not mute and not another narrator."
+                )
+                lines.append(SINGLE_INNER_MONOLOGUE_RULE)
+            else:
+                lines.append(f"{names} talk to each other" + (f" in {lang}" if lang else "")
+                             + ", their lips moving in sync with the voice track on interactive lines, one speaker "
+                             "at a time while the other listens and reacts with natural expressions and small gestures.")
             if has_mono:
                 lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
         else:
@@ -4146,11 +4282,19 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
                     )
                 else:
                     said.append(f"{lead}{name}" + (f" (the {ident})" if ident else "") + f" says aloud: {text}")
-            lines.append(
-                "They talk, heard as spoken voices" + (f" in {lang}" if lang else "")
-                + ", one speaker at a time. Interactive lines have lips in sync; "
-                "self-talk (自言自语) lines have NO lip sync (mouth closed). " + " ".join(said)
-            )
+            if single_inner:
+                lines.append(
+                    "This is a single inner-monologue turn, heard as that same actor's own voice-over"
+                    + (f" in {lang}" if lang else "")
+                    + ", with the mouth closed and no lip sync. " + " ".join(said)
+                )
+                lines.append(SINGLE_INNER_MONOLOGUE_RULE)
+            else:
+                lines.append(
+                    "They talk, heard as spoken voices" + (f" in {lang}" if lang else "")
+                    + ", one speaker at a time. Interactive lines have lips in sync; "
+                    "self-talk (自言自语) lines have NO lip sync (mouth closed). " + " ".join(said)
+                )
             if has_mono:
                 lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
     if talk and not lighting_change_requested(visual):
@@ -4170,7 +4314,11 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
     if extra:
         lines.append("Note: " + " ".join(extra))
     # t244/t246: 全局禁字幕行必须是物理第一行
-    return ensure_video_no_subtitle_first_line("\n".join(lines))
+    raw = "\n".join(lines)
+    raw = ensure_speaker_semantics_rules(
+        raw, has_speaking=talk, has_monologue=has_mono, single_inner=bool(talk) and single_inner,
+    )
+    return ensure_video_no_subtitle_first_line(raw)
 
 
 def _plain_payload(payload: list) -> str:
@@ -4239,6 +4387,49 @@ H3_LIP_SYNC_LINE = (
     "every line is spoken exactly once, in the given order: no line or part of a line is repeated, restarted or "
     "said again, and nobody starts a line over."
 )  # t219u: H3 会把第一句说两次  # t158u: 声音一开始嘴就动  # t150u: 对口型要求（Strata 打磨也要原样保留）
+
+H3_INNER_VO_NO_LIPSYNC_LINE = (
+    "Lip sync: this scene is inner monologue / self-talk by the marked actor "
+    "(<N> and <Ns> are the identical person N, and s is speech mode not another character); "
+    "that same actor's inner voice is heard as voice-over while they act and think; "
+    "every mouth stays closed for the entire scene — no lip sync, no mouth speaking motion, "
+    "and the first frame is not an open speaking mouth at 0.0 s; "
+    "the voice is audible thinking / off-screen internal narration, not mute, and not a different narrator."
+)
+
+H3_MIXED_LIP_SYNC_LINE = (
+    "Lip sync: interactive dialogue lines (markers <N> without s) have every mouth movement match the spoken words "
+    "exactly, syllable by syllable; only the person who is speaking that interactive line moves their lips, "
+    "everyone else keeps their lips closed; when the speaker changes to another interactive line, the moving mouth "
+    "switches to the new speaker at once; self-talk / inner-monologue lines (<Ns> or legacy 自言自语) have NO lip sync "
+    "— that same actor keeps the mouth closed while their own inner voice is heard; "
+    "do not start lip sync at 0.0 s if the first turn is self-talk; "
+    "every line is spoken exactly once, in the given order: no line or part of a line is repeated, restarted or "
+    "said again, and nobody starts a line over."
+)
+
+
+def _h3_turn_flags(turns) -> dict:
+    mono = [bool(tr[4]) if len(tr) > 4 else False for tr in (turns or [])]
+    return {
+        "any_mono": any(mono),
+        "all_mono": bool(mono) and all(mono),
+        "single": len(mono) == 1 and bool(mono[0]),
+        "mixed": any(mono) and any(not x for x in mono),
+        "first_mono": bool(mono and mono[0]),
+    }
+
+
+def h3_lip_sync_line(turns=None, *, single_inner: bool | None = None) -> str:
+    """Pick the Lip sync sentence from parser turns so Strata cannot keep a conflicting default."""
+    if single_inner:
+        return H3_INNER_VO_NO_LIPSYNC_LINE
+    flags = _h3_turn_flags(turns)
+    if flags["single"] or (flags["all_mono"] and not flags["mixed"]):
+        return H3_INNER_VO_NO_LIPSYNC_LINE
+    if flags["mixed"] or flags["any_mono"]:
+        return H3_MIXED_LIP_SYNC_LINE
+    return H3_LIP_SYNC_LINE
 
 
 _REMAP_WARNED: set = set()
@@ -4529,14 +4720,36 @@ def h3_talk_visual(visual: str) -> str:
     return re.sub(r"[，,]\s*[，,]", "，", v)
 
 
-def h3_on_camera_line(names: list) -> str:
-    """t156u: 说话的人：在画面里开口、嘴在动（不是画外音）；说话时不走动、脸朝镜头或对方、嘴不被挡。
-    一整句（没有句点），Strata 原样保留。"""
+def h3_on_camera_line(names: list, *, inner_vo: bool = False, mixed_mono: bool = False,
+                      first_is_mono: bool = False) -> str:
+    """On-camera sentence (one period at the end) so Strata can lock it verbatim.
+
+    Interactive dialogue still speaks on camera with visible lips. A single inner-monologue
+    turn is the same actor thinking: mouth closed, voice heard as voice-over.
+    """
     names = [n for n in names if n]
     if not names:
         return ""
     who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
     many = len(names) > 1
+    if inner_vo:
+        return (f"On camera: {who} " + ("are" if many else "is") + " on camera inside the frame, acting and thinking "
+                "naturally with " + ("their mouths" if many else "the mouth") + " closed for the entire scene "
+                "(inner monologue / thinking heard as that same person's own voice-over, not a different narrator, "
+                "not mute, and not on-screen text); " + ("they do" if many else "the character does")
+                + " not move the lips or form syllables, including at 0.0 s; while thinking, "
+                + ("each person" if many else "the person") + " may act and stays where they are in <Picture 1>.")
+    if mixed_mono:
+        open0 = ("does not need an open speaking mouth at 0.0 s if the first turn is self-talk"
+                 if first_is_mono else
+                 (names[0] + " is already inside the frame at 0.0 s with the face and mouth visible "
+                  "when an interactive line starts"))
+        return (f"On camera: {who} stay in the frame; interactive spoken lines are delivered on camera with "
+                "visibly moving lips, while self-talk / inner-monologue lines by that same person are heard as "
+                "that person's own voice-over with the mouth closed (not a different narrator); "
+                "while delivering an interactive line, the speaker stays where they are in <Picture 1> and keeps "
+                "the mouth clearly visible and uncovered; " + open0 + "; the actions in the description happen "
+                "while they talk or think.")
     return (f"On camera: {who} " + ("speak" if many else "speaks") + " on camera inside the frame, visibly moving "
             + ("their" if many else "the") + " lips with every word (spoken dialogue, not a voice-over or inner monologue); "
             "while speaking, " + ("each speaker" if many else "the speaker") + " stays where they are in <Picture 1>, "
@@ -4619,7 +4832,7 @@ def _h3_dialogue_sentences(rows, turns, *, lang: str, audio_mode: str, notes: di
     return out
 
 
-def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None = None) -> str:
+def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None = None, *, inner_vo: bool = False, mixed_mono: bool = False) -> str:
     """t150u: 'Speaker map: (S1) is 姊姊, the young woman (…) shown in <Picture 2>; …'（没有句号，Strata 原样保留）。"""
     if not rows:
         return ""
@@ -4631,11 +4844,21 @@ def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None =
         if (pictures or {}).get(k):
             bit += f", whose portrait is <Picture {pictures[k]}>"
         parts.append(bit)
-    tail = ("; every spoken line belongs only to the person with its (S) id, and only that person's mouth moves; "
-            "the seat, side (left/right) and clothing in each bracket are authoritative and must match that (S) id in <Picture 1>"
-            if len(rows) > 1 else "; every spoken line belongs to this person; "
-            "the seat, side and clothing in the bracket are authoritative")
-    return "Speaker map: " + "; ".join(parts) + tail + "."
+    ident = ("; <N> and <Ns> map to the identical actor N / (S)N "
+             "(the letter s is speech mode, not another person, seat, costume, or portrait)")
+    if inner_vo:
+        mouth = ("; every thought line belongs only to the person with its (S) id and is that person's own inner voice; "
+                 "the mouth does not move")
+    elif mixed_mono:
+        mouth = ("; every spoken line belongs only to the person with its (S) id; "
+                 "only that person's mouth moves on interactive <N> lines; "
+                 "self-talk <Ns> lines keep that same person's mouth closed")
+    else:
+        mouth = ("; every spoken line belongs only to the person with its (S) id, and only that person's mouth moves"
+                 if len(rows) > 1 else "; every spoken line belongs to this person")
+    seat = ("; the seat, side (left/right) and clothing in each bracket are authoritative and must match that (S) id in <Picture 1>"
+            if len(rows) > 1 else "; the seat, side and clothing in the bracket are authoritative")
+    return "Speaker map: " + "; ".join(parts) + ident + mouth + seat + "."
 
 
 
@@ -4834,13 +5057,10 @@ def ensure_h3_no_subtitle_rules(prompt: str) -> str:
 
 
 
-def ensure_h3_monologue_no_lipsync_rules(prompt: str, *, has_monologue: bool) -> str:
-    """t241u: 场景含自言自语时，保证无口型规则句仍在提示词里（Strata 打磨后复检）。"""
-    rule = H3_MONOLOGUE_NO_LIPSYNC_RULE
-    text = prompt or ""
-    if not has_monologue:
-        return text
-    if rule in text:
+def _inject_locked_rule(text: str, rule: str) -> str:
+    """Insert a one-sentence locked rule if missing (raw prompts and post-polish)."""
+    text = text or ""
+    if not rule or rule in text:
         return text
     marker = "integrated_multimodal_description:"
     sound = "\n\noverall_soundscape:"
@@ -4852,16 +5072,59 @@ def ensure_h3_monologue_no_lipsync_rules(prompt: str, *, has_monologue: bool) ->
         else:
             mid, post = rest, ""
         insert_at = None
-        for key in ("Lip sync:", "On camera:", "<d>"):
-            i = mid.find(key)
-            if i >= 0 and (insert_at is None or i < insert_at):
-                insert_at = i
+        for key in ("Lip sync:", "On camera:", "Speaker marks:", "Self-talk (自言自语):",
+                    "Entire-scene inner monologue:", "<d>"):
+            i0 = mid.find(key)
+            if i0 >= 0 and (insert_at is None or i0 < insert_at):
+                insert_at = i0
         if insert_at is None:
             mid = mid.rstrip() + " " + rule + " "
         else:
             mid = mid[:insert_at].rstrip() + " " + rule + " " + mid[insert_at:].lstrip()
         return pre + marker + mid + post
-    return text.rstrip() + " " + rule
+    return text.rstrip() + "\n" + rule
+
+
+def ensure_speaker_semantics_rules(prompt: str, *, has_speaking: bool = False,
+                                   has_monologue: bool = False, single_inner: bool = False) -> str:
+    """Keep identity / self-talk / single-inner rules intact after Strata polish.
+
+    For an entire-scene inner monologue, also neutralize leftover boilerplate that
+    would force lip sync, an open mouth at 0.0 s, or "never as a voice-over".
+    Mixed scenes keep per-turn rules and are not rewritten into all-mouths-closed.
+    """
+    text = prompt or ""
+    if not (has_speaking or has_monologue or single_inner):
+        return text
+    text = _inject_locked_rule(text, SPEAKER_MARK_IDENTITY_RULE)
+    if has_monologue or single_inner:
+        text = _inject_locked_rule(text, H3_MONOLOGUE_NO_LIPSYNC_RULE)
+    if single_inner:
+        text = _inject_locked_rule(text, SINGLE_INNER_MONOLOGUE_RULE)
+        if H3_LIP_SYNC_LINE in text:
+            text = text.replace(H3_LIP_SYNC_LINE, H3_INNER_VO_NO_LIPSYNC_LINE)
+        swaps = (
+            ("spoken dialogue, not a voice-over or inner monologue",
+             "inner monologue heard as that same actor's voice-over, mouth closed, not another narrator"),
+            ("visibly moving their lips with every word",
+             "keeping the mouth closed with no lip sync while the inner voice is heard"),
+            ("their lips moving in sync with the voice track",
+             "their inner voice heard as voice-over with the mouth closed (no lip sync)"),
+            ("No narrator, no voice-over.",
+             "No separate narrator; self-talk is that same actor's own inner voice-over."),
+            ("the first speaker's mouth is already open and forming that syllable in the very first frame",
+             "the mouth stays closed in the very first frame, with no speaking lip motion"),
+        )
+        for src, dst in swaps:
+            text = text.replace(src, dst)
+    return text
+
+
+def ensure_h3_monologue_no_lipsync_rules(prompt: str, *, has_monologue: bool) -> str:
+    """t241u: 场景含自言自语时，保证无口型规则句仍在提示词里（Strata 打磨后复检）。"""
+    if not has_monologue:
+        return prompt or ""
+    return ensure_speaker_semantics_rules(prompt, has_speaking=True, has_monologue=True)
 
 
 def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str = "", region: str = "", era: str = "",
@@ -4910,6 +5173,14 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     if rows:
         shot += cast_lock_lines([_speaker_identity(r)[0] for r in rows], background_ok=True)  # t182u / t156u
     _turns0 = h3_speaker_map(sc)[1] if use_speaking else []
+    _h3_flags = _h3_turn_flags(_turns0)
+    if not _h3_flags["any_mono"] and speaking_has_monologue(scene_speaking_source(sc)):
+        # Map may have dropped the flag; still honor shared parser marks.
+        _h3_flags = {**_h3_flags, "any_mono": True, "single": speaking_is_single_inner_monologue(scene_speaking_source(sc))}
+    _single_inner = bool(_h3_flags["single"] or speaking_is_single_inner_monologue(scene_speaking_source(sc)))
+    _mixed_mono = bool(_h3_flags["mixed"] or (_h3_flags["any_mono"] and not _single_inner and _h3_flags.get("any_dialogue", not _h3_flags["all_mono"])))
+    if _single_inner:
+        _mixed_mono = False
     _spk_names = []  # t156u: 说话的人
     for _n, *_x in _turns0:
         if 1 <= _n <= len(rows):
@@ -4917,10 +5188,10 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
             if _nm and _nm not in _spk_names:
                 _spk_names.append(_nm)
     visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip() if use_visual else ""
-    if _turns0 and visual:
-        visual = h3_talk_visual(visual).strip()  # t156u
+    if _turns0 and visual and not _single_inner:
+        visual = h3_talk_visual(visual).strip()  # t156u: keep thinking poses for entire-scene inner VO
     vis_all = " ".join(str(s.get("visual") or "") for s in scs)
-    if _turns0:
+    if _turns0 and not _single_inner:
         vis_all = h3_talk_visual(vis_all)  # t156u
     if isinstance(transition, dict):
         for key in ("时空", "人物", "特效"):
@@ -4939,13 +5210,15 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                 print(f"[H3 speaker side] t223 ignore visual positioning (actor truth): {_msg}")
             visual = strip_named_position_from_visual(visual, [_speaker_identity(r)[0] for r in rows])
             vis_all = strip_named_position_from_visual(vis_all, [_speaker_identity(r)[0] for r in rows])
-        shot.append((f"What happens while they talk: " if _spk_names else "What happens: ") + f"{visual.rstrip('。.')}.")
+        _happens = ("What happens while they think and act: " if _single_inner and _spk_names
+                    else "What happens while they talk: " if _spk_names else "What happens: ")
+        shot.append(_happens + f"{visual.rstrip('。.')}.")
         shot += pose_move_lines(visual, [_speaker_identity(r)[0] for r in rows], strict=True,
                                 skip=_spk_names)  # t182u / t156u: 只写真的变化，说话的人不走动
         shot += in_scene_direction_lines(visual, [_speaker_identity(r)[0] for r in rows])  # t181u
     turns = h3_speaker_map(sc)[1] if use_speaking else []  # t150u: <N> 严格对到 actor 第 N 个人
     story = str(sc.get("story_content") or "").strip()
-    if not turns and use_speaking and story and project_manager.scene_is_story_act(sc):
+    if use_speaking and story and project_manager.scene_is_story_act(sc):
         shot.append(f"Action: {story}")
     talk = bool(turns)
     changes = lighting_change_requested(vis_all) or camera == "timelapse"
@@ -4972,8 +5245,8 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         strata_n = (speaker_notes or {}).get(k) or ""
         look = prefer_actor_speaker_look(actor_n, strata_n)  # t223u / t222u / t158u
         note = merge_speaker_note(look, h3_visual_person_note(vis_all, nm, _names))
-        if nm in _spk_names:
-            note = strip_mouth_cover(note)  # t156u: 说话人的描述里不留挡嘴 / 低头
+        if nm in _spk_names and not _single_inner:
+            note = strip_mouth_cover(note)  # t156u: 对白时不留挡嘴；内心独白保留思考姿势
         if note:
             notes[k] = note
     timeline = h3_speaker_timeline(sc) if (turns and audio_mode == "talk") else []
@@ -4984,13 +5257,19 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
             timeline = [(round(a * _pace, 2), round(b * _pace, 2), n) for a, b, n in _tl]
     said = _h3_dialogue_sentences(rows, turns, lang=lang, audio_mode=audio_mode, notes=notes, timeline=timeline)
     if rows and (said or audio_mode == "talk"):
-        shot.append(h3_speaker_map_line(rows, notes, portrait_pictures))
+        shot.append(h3_speaker_map_line(rows, notes, portrait_pictures,
+                                       inner_vo=_single_inner, mixed_mono=_mixed_mono))
     if said and audio_mode != "sing":
-        shot.append(H3_LIP_SYNC_LINE)
-        if h3_on_camera_line(_spk_names):
-            shot.append(h3_on_camera_line(_spk_names))  # t156u
-        if any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(str(sc.get("speaking") or "")):
+        shot.append(h3_lip_sync_line(turns, single_inner=_single_inner))
+        _cam = h3_on_camera_line(_spk_names, inner_vo=_single_inner, mixed_mono=_mixed_mono,
+                                 first_is_mono=_h3_flags["first_mono"])
+        if _cam:
+            shot.append(_cam)  # t156u / t283u
+        if _single_inner:
+            shot.append(SINGLE_INNER_MONOLOGUE_RULE)
+        if any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(scene_speaking_source(sc)):
             shot.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)  # t241u
+        shot.append(SPEAKER_MARK_IDENTITY_RULE)
     if said and audio_mode == "none" and _pace < 0.999:
         shot.append(h3_speech_pace_line(_pace, seconds))
     if said:
@@ -5000,10 +5279,15 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
             shot.append("Lips, breath and body move with the song.")
         elif len(rows) > 1:
             shot.append("One person speaks at a time while the other listens and reacts with natural expressions and small gestures.")
+        elif _single_inner:
+            shot.append("The character acts and thinks naturally with the mouth closed; the inner voice is heard as voice-over.")
         else:  # t156u: 一个人的场景没有「另一个人在听」
             shot.append("The speaker talks naturally, with expressions and small gestures that match the words.")
     if said and audio_mode == "talk":
-        shot.append("Their voices and lip movements follow the provided voice recording.")
+        if _single_inner:
+            shot.append("Their inner voice follows the provided voice recording; the mouth stays closed (no lip sync).")
+        else:
+            shot.append("Their voices and lip movements follow the provided voice recording.")
     if said:
         pass
     elif audio_mode == "sing" and rows:
@@ -5031,8 +5315,11 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     # t244/t246: 全局禁字幕行必须是物理第一行（在构建时就注入，不只是发送时）
     raw = (first + "\n\nintegrated_multimodal_description: " + " ".join(shot)
            + "\n\noverall_soundscape: " + sound + "\n\nnon_diegetic_music: " + music)
-    _has_mono = any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(str(sc.get("speaking") or ""))
-    result = ensure_h3_monologue_no_lipsync_rules(ensure_h3_no_subtitle_rules(raw), has_monologue=_has_mono)
+    _has_mono = any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(scene_speaking_source(sc))
+    result = ensure_h3_no_subtitle_rules(raw)
+    result = ensure_speaker_semantics_rules(
+        result, has_speaking=bool(said or _has_mono), has_monologue=_has_mono, single_inner=_single_inner,
+    )
     return ensure_video_no_subtitle_first_line(result)  # t244: 第一行必须是全局禁字幕规则
 
 
@@ -5077,6 +5364,10 @@ def _video_payload(scenes: list, *, variant: str, host_narrator: str, use_visual
                 act = act or _strip_speech_marks(" ".join(p for p in (speaking, voiceover) if p))
                 if act:
                     slim["story_content"] = act
+                # Keep marked self-talk so the same actor's inner voice can be heard as VO.
+                src_speak = scene_speaking_source(orig) or scene_speaking_source(sc) or speaking
+                if src_speak and speaking_has_monologue(src_speak):
+                    slim["speaking"] = src_speak
             elif content_key == "dialogue":
                 script = dialogue_script(orig)
                 if script:
@@ -5206,8 +5497,15 @@ def build_video_flow_prompt(
         frames, background, evolve, camera, "", narrative, text
     )
     spoken = content_key in ("speaking", "narration", "dialogue")  # Story Act / 无讲话：不写口语语言
-    return _video_prompt_assemble(head_label="", style=style, choices=choices, instruction=instruction,
-                                  language=language if spoken else "", payload=payload)
+    flags = _speech_scene_flags(scenes)
+    if use_speaking and flags["any_mono"]:
+        spoken = True  # inner voice-over still has spoken language
+    raw = _video_prompt_assemble(head_label="", style=style, choices=choices, instruction=instruction,
+                                 language=language if spoken else "", payload=payload)
+    return ensure_speaker_semantics_rules(
+        raw, has_speaking=bool(content_key or flags["any_mono"]),
+        has_monologue=flags["any_mono"], single_inner=flags["single"],
+    )
 
 
 def _transition_video_choice_lines(transition: dict) -> str:

@@ -201,6 +201,64 @@ def split_speaking_pair(speaking: str):
     return first, second, kind
 
 
+def speaking_turns_nonempty(speaking: str) -> list:
+    """Parser turns that actually have spoken text (not punctuation-based sentences)."""
+    return [t for t in parse_speaking_turns(speaking or "") if str(getattr(t, "text", "") or "").strip()]
+
+
+def speaking_is_single_inner_monologue(speaking: str) -> bool:
+    """Exactly one ``<Ns>`` / legacy self-talk turn — not several sentences inside it."""
+    turns = speaking_turns_nonempty(speaking)
+    return len(turns) == 1 and bool(getattr(turns[0], "monologue", False))
+
+
+def speaking_is_all_inner_monologue(speaking: str) -> bool:
+    turns = speaking_turns_nonempty(speaking)
+    return bool(turns) and all(bool(getattr(t, "monologue", False)) for t in turns)
+
+
+def speaking_has_interactive_dialogue(speaking: str) -> bool:
+    return any(not bool(getattr(t, "monologue", False)) for t in speaking_turns_nonempty(speaking))
+
+
+def scene_speaking_source(scene) -> str:
+    """Speaking text used for video speaker-mark semantics.
+
+    Prefer ``speaking``. If it is empty, fall back to ``story_content`` only when
+    that field itself contains ``<N>`` / ``<Ns>`` / legacy monologue marks
+    (the Story Act box stores its text in ``story_content``). Unmarked Story Act
+    prose is not treated as a speaking script.
+    """
+    if not isinstance(scene, dict):
+        return ""
+    text = str(scene.get("speaking") or "").strip()
+    if text:
+        return text
+    sc = str(scene.get("story_content") or "").strip()
+    if sc and (SPEAKER_TOKEN_RE.search(sc) or speaking_has_monologue(sc)):
+        return sc
+    return ""
+
+
+def scenes_speaking_is_single_inner_monologue(scenes) -> bool:
+    """True when every scene that has speaking is a single inner-monologue turn.
+
+    Mixed dialogue + self-talk, or more than one parser turn, returns False so
+    the per-turn no-lip-sync fallback stays in effect.
+    """
+    found = False
+    for scene in scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        text = scene_speaking_source(scene)
+        if not text.strip():
+            continue
+        if not speaking_is_single_inner_monologue(text):
+            return False
+        found = True
+    return found
+
+
 MONOLOGUE_SPLIT_KEY = "monologue_split"
 MONOLOGUE_SPLIT_DONE = "done"
 
