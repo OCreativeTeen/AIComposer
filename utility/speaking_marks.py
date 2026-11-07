@@ -209,6 +209,186 @@ def scene_monologue_split_done(scene) -> bool:
     return isinstance(scene, dict) and scene.get(MONOLOGUE_SPLIT_KEY) == MONOLOGUE_SPLIT_DONE
 
 
+COVER_STEP_KEY = "cover_step"
+
+
+def scene_cover_step(scene) -> int | None:
+    """Original cover-panel / extract-step number (1-based), or None if missing."""
+    if not isinstance(scene, dict):
+        return None
+    raw = scene.get(COVER_STEP_KEY)
+    try:
+        step = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return step if step >= 1 else None
+
+
+def _norm_speaking(text: str) -> str:
+    return format_speaking_turns(parse_speaking_turns(text or ""))
+
+
+def authored_fields_match(left, right) -> bool:
+    if not (isinstance(left, dict) and isinstance(right, dict)):
+        return False
+    for key in ("caption", "visual", "actor"):
+        if (left.get(key) or "").strip() != (right.get(key) or "").strip():
+            return False
+    return True
+
+
+def look_like_split_pair(first, second) -> bool:
+    """True when two consecutive scenes unambiguously reconstruct one split."""
+    if not (scene_monologue_split_done(first) and scene_monologue_split_done(second)):
+        return False
+    combo = ((_norm_speaking(first.get("speaking")) + " " + _norm_speaking(second.get("speaking"))).strip())
+    pair = split_speaking_pair(combo)
+    if not pair:
+        pair = split_speaking_pair(((first.get("speaking") or "") + " " + (second.get("speaking") or "")).strip())
+    if not pair:
+        return False
+    left, right, _kind = pair
+    return _norm_speaking(first.get("speaking")) == _norm_speaking(left) and _norm_speaking(
+        second.get("speaking")
+    ) == _norm_speaking(right)
+
+
+def _cover_groups(scenes):
+    items = [s for s in (scenes or []) if isinstance(s, dict)]
+    groups = []
+    i = 0
+    while i < len(items):
+        nxt = items[i + 1] if i + 1 < len(items) else None
+        if nxt is not None and look_like_split_pair(items[i], nxt):
+            groups.append([items[i], nxt])
+            i += 2
+        else:
+            groups.append([items[i]])
+            i += 1
+    return groups
+
+
+def ensure_cover_steps(scenes) -> bool:
+    """Persist original cover-step numbers. Returns True if any scene changed.
+
+    Safe recovery for older projects: consecutive ``monologue_split=done``
+    scenes whose speaking reconstructs a prefix/suffix pair share one step.
+    Already-stamped values are kept. Does not invent a mapping when a lone
+    marked scene cannot be paired.
+    """
+    if not isinstance(scenes, list):
+        return False
+    groups = _cover_groups(scenes)
+    changed = False
+    next_step = 1
+    used = [scene_cover_step(s) for g in groups for s in g]
+    stamped = [v for v in used if v]
+    if stamped and all(scene_cover_step(s) for g in groups for s in g):
+        return False
+    for group in groups:
+        existing = [scene_cover_step(s) for s in group]
+        have = [v for v in existing if v]
+        if have and len(set(have)) == 1:
+            step = have[0]
+        elif have:
+            # Conflicting stamps inside an unambiguous pair: do not invent.
+            continue
+        else:
+            while next_step in have or next_step in [scene_cover_step(s) for g in groups for s in g if scene_cover_step(s)]:
+                next_step += 1
+            step = next_step
+            next_step += 1
+        for scene in group:
+            if scene_cover_step(scene) != step:
+                scene[COVER_STEP_KEY] = step
+                changed = True
+    return changed
+
+
+def unique_cover_step_count(scenes) -> int:
+    ensure_cover_steps(scenes)
+    seen = []
+    for scene in scenes or []:
+        step = scene_cover_step(scene)
+        if step and step not in seen:
+            seen.append(step)
+    return len(seen)
+
+
+def cover_step_sequence(scenes) -> list:
+    ensure_cover_steps(scenes)
+    return [scene_cover_step(s) for s in (scenes or []) if isinstance(s, dict)]
+
+
+def should_share_cover_extract(primary, other) -> bool:
+    if primary is other or not (isinstance(primary, dict) and isinstance(other, dict)):
+        return False
+    step_a, step_b = scene_cover_step(primary), scene_cover_step(other)
+    if not step_a or step_a != step_b:
+        return False
+    if authored_fields_match(primary, other):
+        return True
+    return look_like_split_pair(primary, other) or look_like_split_pair(other, primary)
+
+
+def iter_cover_extract_targets(scenes):
+    """Yield ``(scene, step)`` once per original cover panel when siblings match.
+
+    Later halves that only differ in speaking (same cover step, same authored
+    caption/visual/actor or an unambiguous split pair) are skipped so batch
+    extract does not spend a second image request on the same panel.
+    """
+    ensure_cover_steps(scenes)
+    emitted = []
+    for scene in scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        step = scene_cover_step(scene)
+        if not step:
+            continue
+        prev = next((item for item in emitted if item[1] == step), None)
+        if prev is not None and should_share_cover_extract(prev[0], scene):
+            continue
+        emitted.append((scene, step))
+        yield scene, step
+
+
+def sync_cover_step_partners(scenes, scene) -> list:
+    """Copy settled authored stills/text to other scenes that share this cover step."""
+    if not isinstance(scenes, list) or not isinstance(scene, dict):
+        return []
+    from utility.scene_image_slots import clone_image_slots
+
+    updated = []
+    for other in scenes:
+        if not should_share_cover_extract(scene, other):
+            continue
+        for key in ("caption", "visual", "actor", "visual_before_remix", "actor_before_remix"):
+            if key in scene:
+                other[key] = scene[key]
+        try:
+            clone_image_slots(scene, other)
+        except Exception as exc:
+            print(f"⚠️ 同一步封面图没有同步到拆开的另一场：{exc}")
+            continue
+        updated.append(other)
+    return updated
+
+
+def index_after_monologue_insert(scenes, scene, current_index) -> int:
+    try:
+        current = int(current_index or 0)
+    except (TypeError, ValueError):
+        current = 0
+    try:
+        idx = next(i for i, item in enumerate(scenes or []) if item is scene)
+    except StopIteration:
+        return current
+    if current > idx:
+        return current + 1
+    return current
+
+
 def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
     """After image write (and remix, when that runs) settle: maybe insert a sibling.
 
@@ -233,6 +413,8 @@ def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
         return None
     from utility.scene_image_slots import COVER_SEED_SLOTS, clone_image_slots
 
+    ensure_cover_steps(scenes)
+
     if not any(
         isinstance(scene.get(slot), str) and scene.get(slot) and os.path.isfile(scene[slot])
         for slot in COVER_SEED_SLOTS
@@ -247,6 +429,8 @@ def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
         if next_id < 10000:
             next_id = 10000
     sibling["id"] = next_id
+    if scene_cover_step(scene):
+        sibling[COVER_STEP_KEY] = scene_cover_step(scene)
     sibling["speaking"] = second_s
     sibling.pop("speaking_timing", None)
     sibling.pop("clip", None)

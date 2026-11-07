@@ -120,7 +120,7 @@ class PromptFlowsMixin:
             self._nb_picture_btn,
             batch_scenes=batch_scenes,
             run_batch=self._run_picture_batch,
-            get_step_no=lambda: batch_scenes()[1],
+            get_step_no=self._current_cover_step,
             get_scene=current_scene,
             get_style=get_style,
             get_place=get_place,
@@ -195,6 +195,17 @@ class PromptFlowsMixin:
 
         threading.Thread(target=build_pair, daemon=True).start()
 
+    def _current_cover_step(self) -> int:
+        """Original cover-panel number for the current scene (not the expanded list index)."""
+        from utility.speaking_marks import ensure_cover_steps, scene_cover_step
+
+        cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
+        if not isinstance(cur, dict):
+            return 0
+        story = [s for s in self.workflow.scenes_in_story(cur) if isinstance(s, dict)]
+        ensure_cover_steps(story or [cur])
+        return int(scene_cover_step(cur) or 0)
+
     def _maybe_auto_extract_steps_from_cover(self, tries: int = 0) -> None:
         """t172u: 新项目从预览导入了封面、本集 2-6 场：按「图片修改」的提取第 N 步，逐场从封面画出这一场的图。
 
@@ -214,12 +225,15 @@ class PromptFlowsMixin:
         if not cover or not os.path.isfile(cover):
             return
         scenes = [s for s in (wf.scenes or []) if isinstance(s, dict)]
-        if not (2 <= len(scenes) <= 6):
-            return
-        story = [s for s in wf.scenes_in_story(scenes[0]) if isinstance(s, dict)]
+        story = [s for s in wf.scenes_in_story(scenes[0]) if isinstance(s, dict)] if scenes else []
         if len(story) != len(scenes):  # 不止一集：不自动做
             return
-        n = len(story)
+        from utility.speaking_marks import ensure_cover_steps, unique_cover_step_count
+
+        ensure_cover_steps(story)
+        n = unique_cover_step_count(story)
+        if not (2 <= n <= 6):
+            return
         picked = None
         try:  # t176u / t237u: 封面逐场提取固定用 Grok（QN/MOSS 效果差；手动「图片修改」仍可选 QN/MOSS）
             import config
@@ -245,7 +259,7 @@ class PromptFlowsMixin:
             # 只选 Chrome 账户；后端固定 Grok（取消 = 不做）
             picked = ask_llm_and_account(
                 self.root, pref_key=PICTURE_SUBMIT_PREF,
-                title=f"从封面提取每一场的图（Grok · 共 {n} 场，取消 = 不做）",
+                title=f"从封面提取每一场的图（Grok · 共 {n} 步，取消 = 不做）",
                 fixed_backend="grok",
             )
         if not picked:
@@ -261,7 +275,9 @@ class PromptFlowsMixin:
         aspect = config_prompt.output_aspect_line(_project_video_size())
         jobs = []
         from utility.scene_image_slots import cover_extract_source
-        for k, sc in enumerate(story, 1):
+        from utility.speaking_marks import iter_cover_extract_targets
+
+        for sc, k in iter_cover_extract_targets(story):
             body = config_prompt.build_step_image_clipbody(
                 k, visual_style=style, keep_style=True, caption="keywords", extract_only=True, fyi="",
             )
@@ -312,9 +328,14 @@ class PromptFlowsMixin:
         done = [0]
 
         def in_episode_label(scene, fallback) -> str:
+            from utility.speaking_marks import scene_cover_step
+
             story = self.workflow.scenes_in_story(scene) if self.workflow else []
             for i, s in enumerate(story or []):
                 if s is scene:
+                    step = scene_cover_step(scene)
+                    if step:
+                        return f"第{i + 1}场/封面第{step}步"
                     return f"第{i + 1}场"
             return str(scene.get("id") or fallback)
 
@@ -604,7 +625,11 @@ class PromptFlowsMixin:
                     if p not in attach and len(base) + len(attach) < cap:
                         attach.append(p)
                 parts = [meta["aspect"], ""] if meta.get("aspect") else []
-                parts.append(f"Scene {k} of {n}. Image 1 = the base picture of this scene. Edit only Image 1.")
+                from utility.speaking_marks import scene_cover_step, unique_cover_step_count
+
+                step = scene_cover_step(job[0]) or k
+                total = unique_cover_step_count([j[0] for j in jobs if isinstance(j[0], dict)]) or n
+                parts.append(f"Scene {step} of {total}. Image 1 = the base picture of this scene. Edit only Image 1.")
                 if attach:
                     parts.append("The other attached images are character portraits:")
                     for i, p in enumerate(attach, 2):

@@ -904,6 +904,13 @@ class MagicWorkflow(EpisodeOpsMixin):
                 if not story_scene.get("caption"):
                     story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
                     changed = True
+            try:
+                from utility.speaking_marks import ensure_cover_steps
+
+                if ensure_cover_steps(self.scenes):
+                    changed = True
+            except Exception as exc:
+                print(f"⚠️ 恢复封面步序号失败: {exc}")
             if changed:
                 self.save_scenes_to_json()
             return
@@ -936,6 +943,12 @@ class MagicWorkflow(EpisodeOpsMixin):
             story_scene.pop("narrator", None)
             if not story_scene.get("caption"):
                 story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
+        try:
+            from utility.speaking_marks import ensure_cover_steps
+
+            ensure_cover_steps(self.scenes)
+        except Exception as exc:
+            print(f"⚠️ 写入封面步序号失败: {exc}")
 
         # 从 PROJECT_CONFIG 封面媒体填充 clip_image，并按首图宽高比设定横/竖屏尺寸
         self._apply_cover_media_to_scenes(scene_list)

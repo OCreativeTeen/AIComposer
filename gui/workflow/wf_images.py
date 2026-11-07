@@ -1135,13 +1135,20 @@ class ImagesMixin:
         Manual 图片修改 calls this immediately after the stills are written.
         Cover-extract batch defers it until remix success, rejection, failure,
         or skip so both halves copy the same final caption/visual/actor.
+        After a valid split (or a re-extract of an already-split pair), each
+        half gets its own still preview clip from its image and speaking
+        duration — silent if that half has no regenerated audio yet.
         """
         if not self.workflow or not isinstance(scene, dict):
             return None
+        from utility.speaking_marks import (
+            apply_monologue_split_after_image,
+            index_after_monologue_insert,
+            sync_cover_step_partners,
+        )
+
         sibling = None
         try:
-            from utility.speaking_marks import apply_monologue_split_after_image
-
             next_id = None
             try:
                 base = int(self.workflow.max_id(scene) or 0)
@@ -1155,17 +1162,30 @@ class ImagesMixin:
             )
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ 自言自语分场未执行: {exc}")
-            return None
-        if sibling is not None:
-            try:
-                idx = next(i for i, item in enumerate(self.workflow.scenes) if item is scene)
-                if getattr(self, "current_scene_index", 0) > idx:
-                    self.current_scene_index += 1
-            except (StopIteration, TypeError, AttributeError):
-                pass
+            sibling = None
+        try:
+            self.current_scene_index = index_after_monologue_insert(
+                getattr(self.workflow, "scenes", None), scene, getattr(self, "current_scene_index", 0)
+            )
+        except Exception:
+            pass
+        partners = []
+        try:
+            partners = sync_cover_step_partners(getattr(self.workflow, "scenes", None), scene)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 同步同一步封面图失败: {exc}")
+        if sibling is not None or partners:
+            preview_targets = [scene]
+            if sibling is not None:
+                preview_targets.append(sibling)
+            preview_targets.extend(partners)
+            self._rebuild_monologue_preview_clips(*preview_targets)
+        if sibling is not None or partners:
             try:
                 if hasattr(self, "update_scene_display"):
                     self.update_scene_display()
+                if hasattr(self, "refresh_gui_scenes"):
+                    self.refresh_gui_scenes()
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 分场后刷新界面失败: {exc}")
             try:
@@ -1173,6 +1193,41 @@ class ImagesMixin:
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 分场后保存失败: {exc}")
         return sibling
+
+    def _rebuild_monologue_preview_clips(self, *scenes) -> None:
+        """Write a readable still clip for each half; never reuse dropped full-speech audio."""
+        from utility.file_util import get_file_path
+        from utility.still_preview import estimate_speaking_preview_seconds, write_still_preview_mp4
+        from project_manager import refresh_scene_media
+
+        seen = []
+        for scene in scenes:
+            if not isinstance(scene, dict) or any(scene is prev for prev in seen):
+                continue
+            seen.append(scene)
+            image = get_file_path(scene, "clip_image") or scene.get("clip_image") or ""
+            if not (image and os.path.isfile(image)):
+                continue
+            audio = get_file_path(scene, "clip_audio") or ""
+            if not (audio and os.path.isfile(audio)):
+                audio = ""
+            tmp = None
+            try:
+                import tempfile
+
+                fd, tmp = tempfile.mkstemp(suffix=".mp4")
+                os.close(fd)
+                duration = estimate_speaking_preview_seconds(scene.get("speaking") or "")
+                write_still_preview_mp4(image, tmp, duration=duration, audio_path=audio)
+                refresh_scene_media(scene, "clip", ".mp4", tmp)
+                tmp = None
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 拆场预览视频没有写成（id={scene.get('id')}）：{exc}")
+                if tmp and os.path.isfile(tmp):
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
 
     def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False, defer_monologue_split: bool = False) -> None:
         """图片修改返回了一张图：独立写成这一场的 clip_image、clip_image_last 和 zero_image。

@@ -446,5 +446,177 @@ class MonologueSplitAfterImageTest(unittest.TestCase):
 
 
 
+
+class CoverStepAndPreviewTest(unittest.TestCase):
+    def setUp(self):
+        MonologueSplitAfterImageTest.setUp(self)
+
+    def tearDown(self):
+        MonologueSplitAfterImageTest.tearDown(self)
+
+    def _scene_with_images(self, *args, **kwargs):
+        return MonologueSplitAfterImageTest._scene_with_images(self, *args, **kwargs)
+
+    def _four_scenes(self):
+        return [
+            self._scene_with_images("<1s> 心里先转了一圈。<2> 你今天怎么这么累？", sid=10100),
+            self._scene_with_images("<1> 第二场对白，不拆。", sid=10200),
+            self._scene_with_images("<1> 先坐下再说。<1s> 原来我不是坏掉了。", sid=10300),
+            self._scene_with_images("<2> 第四场也只是对白。", sid=10400),
+        ]
+
+    def test_four_scenes_split_mapping_leading_and_trailing(self):
+        from utility.speaking_marks import (
+            apply_monologue_split_after_image,
+            cover_step_sequence,
+            ensure_cover_steps,
+            iter_cover_extract_targets,
+            unique_cover_step_count,
+        )
+
+        scenes = self._four_scenes()
+        ensure_cover_steps(scenes)
+        self.assertEqual(cover_step_sequence(scenes), [1, 2, 3, 4])
+        self.assertEqual(unique_cover_step_count(scenes), 4)
+        first = apply_monologue_split_after_image(scenes, scenes[0], next_id=20100)
+        self.assertIsNotNone(first)
+        self.assertEqual(len(scenes), 5)
+        self.assertEqual(cover_step_sequence(scenes), [1, 1, 2, 3, 4])
+        self.assertEqual(unique_cover_step_count(scenes), 4)
+        targets = list(iter_cover_extract_targets(scenes))
+        self.assertEqual([step for _sc, step in targets], [1, 2, 3, 4])
+        self.assertIs(targets[0][0], scenes[0])
+        self.assertIs(targets[1][0], scenes[2])
+        later = apply_monologue_split_after_image(scenes, scenes[3], next_id=20200)
+        self.assertIsNotNone(later)
+        self.assertEqual(len(scenes), 6)
+        self.assertEqual(cover_step_sequence(scenes), [1, 1, 2, 3, 3, 4])
+        self.assertEqual(unique_cover_step_count(scenes), 4)
+        self.assertEqual([step for _sc, step in iter_cover_extract_targets(scenes)], [1, 2, 3, 4])
+
+    def test_recover_mapping_on_reopen_without_stamped_steps(self):
+        from utility.speaking_marks import (
+            COVER_STEP_KEY,
+            apply_monologue_split_after_image,
+            cover_step_sequence,
+            ensure_cover_steps,
+            unique_cover_step_count,
+        )
+
+        scenes = self._four_scenes()
+        apply_monologue_split_after_image(scenes, scenes[0], next_id=20100)
+        for scene in scenes:
+            scene.pop(COVER_STEP_KEY, None)
+        self.assertTrue(ensure_cover_steps(scenes))
+        self.assertEqual(cover_step_sequence(scenes), [1, 1, 2, 3, 4])
+        self.assertEqual(unique_cover_step_count(scenes), 4)
+        self.assertFalse(ensure_cover_steps(scenes))
+
+    def test_selection_index_and_failed_preview_leave_split(self):
+        from utility.speaking_marks import (
+            apply_monologue_split_after_image,
+            index_after_monologue_insert,
+        )
+        from utility.still_preview import write_still_preview_mp4
+
+        scenes = self._four_scenes()
+        neighbor = scenes[2]
+        out = apply_monologue_split_after_image(scenes, scenes[0], next_id=20100)
+        self.assertIsNotNone(out)
+        self.assertEqual(index_after_monologue_insert(scenes, scenes[0], 0), 0)
+        self.assertEqual(index_after_monologue_insert(scenes, scenes[0], 2), 3)
+        self.assertIs(scenes[3], neighbor)
+        self.assertEqual(len(scenes), 5)
+        missing = os.path.join(self.tmp, "no-such.png")
+        dest = os.path.join(self.tmp, "fail.mp4")
+        with self.assertRaises(Exception):
+            write_still_preview_mp4(missing, dest, duration=2.0)
+        self.assertFalse(os.path.isfile(dest) and os.path.getsize(dest) > 0)
+        self.assertEqual(len(scenes), 5)
+        self.assertTrue(scenes[0]["speaking"].startswith("<1s>"))
+        self.assertIn("<2>", out["speaking"])
+
+    def test_both_halves_get_readable_preview_clips(self):
+        import subprocess
+        from utility.speaking_marks import apply_monologue_split_after_image
+        from utility.scene_image_slots import scene_has_frozen_zero_last
+        from utility.still_preview import attach_still_preview_to_scene, estimate_speaking_preview_seconds
+
+        ffmpeg = "ffmpeg"
+        still = os.path.join(self.media, "colored.png")
+        subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=c=0x3399ff:s=160x120:d=1", "-frames:v", "1", still],
+            check=True,
+        )
+        beep = os.path.join(self.tmp, "full_speech.wav")
+        subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "sine=f=880:d=8", "-ar", "44100", "-ac", "2", beep],
+            check=True,
+        )
+        short = self._scene_with_images("<1s> 短。<2> 你回来了吗？今天还好吗？我们好好说清楚这一整件事的来龙去脉吧。", sid=30100)
+        short["clip"] = os.path.join(self.tmp, "old_full.mp4")
+        short["clip_audio"] = beep
+        neighbor = self._scene_with_images("<1> 邻场对白。", sid=30200)
+        for slot in ("clip_image", "clip_image_last", "zero_image"):
+            short[slot] = still
+        scenes = [short, neighbor]
+        sibling = apply_monologue_split_after_image(scenes, short, next_id=40100)
+        self.assertIsNotNone(sibling)
+        self.assertNotIn("clip_audio", short)
+        self.assertNotIn("clip_audio", sibling)
+        clip_a = os.path.join(self.media, "half_a.mp4")
+        clip_b = os.path.join(self.media, "half_b.mp4")
+        attach_still_preview_to_scene(short, clip_a)
+        attach_still_preview_to_scene(sibling, clip_b)
+        self.assertNotIn("clip_audio", short)
+        self.assertNotIn("clip_audio", sibling)
+        self.assertNotEqual(os.path.abspath(short["clip"]), os.path.abspath(sibling["clip"]))
+        self.assertTrue(scene_has_frozen_zero_last(short))
+        self.assertTrue(scene_has_frozen_zero_last(sibling))
+
+        def probe_duration(path):
+            out = subprocess.check_output(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", path],
+                text=True,
+            ).strip()
+            return float(out)
+
+        def max_volume(path):
+            proc = subprocess.run(
+                [ffmpeg, "-hide_banner", "-i", path, "-af", "volumedetect", "-f", "null", "-"],
+                check=True, capture_output=True, text=True,
+            )
+            log = (proc.stderr or "") + (proc.stdout or "")
+            for line in log.splitlines():
+                if "max_volume" in line:
+                    return float(line.rsplit(" ", 2)[-2])
+            raise AssertionError("no max_volume in " + log)
+
+        dur_a = probe_duration(clip_a)
+        dur_b = probe_duration(clip_b)
+        est_a = estimate_speaking_preview_seconds(short["speaking"])
+        est_b = estimate_speaking_preview_seconds(sibling["speaking"])
+        self.assertGreater(est_b, est_a)
+        self.assertGreater(dur_a, 0.8)
+        self.assertGreater(dur_b, dur_a + 0.4)
+        self.assertLess(dur_b, 7.5)
+        self.assertLess(max_volume(clip_a), -40)
+        self.assertLess(max_volume(clip_b), -40)
+        frame = os.path.join(self.tmp, "frame.png")
+        subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", clip_a, "-frames:v", "1", frame],
+            check=True,
+        )
+        raw = subprocess.check_output(
+            [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", frame, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        )
+        self.assertGreater(max(raw), 40)
+        self.assertIs(scenes[2], neighbor)
+
+
+
 if __name__ == "__main__":
     unittest.main()
