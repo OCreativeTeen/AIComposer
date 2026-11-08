@@ -758,10 +758,15 @@ MINIMAX_H3_API_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.a
 MINIMAX_H3_FPS = 24
 
 
+def _align_h3_frames(n: int) -> int:
+    """Next legal MiniMax H3 length: 17n+5, at least 5 frames (workflow ComfyMathExpression)."""
+    n = max(5, int(n))
+    return n + (5 - n % 17) % 17
+
+
 def minimax_h3_frames(seconds: float, fps: int = MINIMAX_H3_FPS) -> int:
     """和工作流里 ComfyMathExpression 一样：max(5, round(s*fps)) 再向上取到 17n+5（模型要求的帧数）。"""
-    n = max(5, int(round(float(seconds) * fps)))
-    return n + (5 - n % 17) % 17
+    return _align_h3_frames(max(5, int(round(float(seconds) * fps))))
 
 
 def _find_nodes(prompt: Dict[str, Any], class_type: str) -> list:
@@ -858,19 +863,70 @@ def _parse_size(text: str, fallback: tuple) -> tuple:
         return fallback
 
 
-MINIMAX_LENGTHS = (6, 9, 12)  # t179u: MiniMax 6 / 9 / 12 秒（实际按帧：158 / 226 / 294 帧）
+MINIMAX_LENGTHS = (6, 9, 12)  # 旧 UI 三档名义秒；分辨率门槛仍按 158 / 226 / 294 帧
+MINIMAX_MIN_NOMINAL = 5  # 工作流 PrimitiveFloat 默认 5.0 秒（不是产品里发明的更短下限）
+MINIMAX_MAX_NOMINAL = 12
 
 
 def minimax_exact_seconds(seconds) -> float:
-    """t166u: 名义秒数 → 实际生成的秒数（17k+5 帧 / 24fps）：6→6.583，9→9.417，12→12.25。"""
+    """名义秒数 → 实际生成的秒数（17k+5 帧 / 24fps）：5→5.167，6→6.583，9→9.417，12→12.25。"""
     return minimax_h3_frames(float(seconds)) / MINIMAX_H3_FPS
 
 
-MINIMAX_MAX_SECONDS = minimax_exact_seconds(12)  # 294 帧 = 12.25 秒
+MINIMAX_MIN_FRAMES = minimax_h3_frames(MINIMAX_MIN_NOMINAL)  # 124 帧 = 5.167 秒
+MINIMAX_MAX_FRAMES = minimax_h3_frames(MINIMAX_MAX_NOMINAL)  # 294 帧 = 12.25 秒
+MINIMAX_MIN_SECONDS = minimax_exact_seconds(MINIMAX_MIN_NOMINAL)
+MINIMAX_MAX_SECONDS = minimax_exact_seconds(MINIMAX_MAX_NOMINAL)  # 294 帧 = 12.25 秒
+MINIMAX_AUDIO_MIN_SECONDS = 4.0  # 带场景音频时的现有下限（不是无声自动的 5 秒）
+MINIMAX_AUDIO_MIN_FRAMES = minimax_h3_frames(MINIMAX_AUDIO_MIN_SECONDS)  # 107 帧 = 4.458 秒
+
+
+def minimax_frames_for_speech(speech_seconds: float, fps: int = MINIMAX_H3_FPS,
+                             min_frames: int | None = None, max_frames: int | None = None) -> int:
+    """台词/目标秒数 → 提交帧数：ceil(s×fps)+1 安全帧，再向上对齐 17n+5。
+
+    默认夹在无声自动的 124–294（5.17–12.25 秒）。带场景音频时传入 min_frames=107（4 秒档）。
+    """
+    import math
+
+    lo = MINIMAX_MIN_FRAMES if min_frames is None else int(min_frames)
+    hi = MINIMAX_MAX_FRAMES if max_frames is None else int(max_frames)
+    s = float(speech_seconds or 0)
+    if s <= 0:
+        return lo
+    raw = math.ceil(s * float(fps) - 1e-9) + 1
+    return max(lo, min(hi, _align_h3_frames(raw)))
+
+
+def minimax_seconds_from_frames(frames: int) -> float:
+    return int(frames) / float(MINIMAX_H3_FPS)
+
+
+def minimax_submit_seconds(duration) -> float:
+    """Parse extra['duration'] into PrimitiveFloat seconds (legal frames / 24).
+
+    Does **not** snap to 6/9/12. Legacy bucket strings ('6s'/'9s'/'12s', plus
+    old 7/10/15 mappings) become that bucket's exact frame length. Numeric
+    values (including already-aligned 7.2916…) are aligned via 17n+5 and
+    clamped to 124–294 frames so a later builder cannot round them back.
+    """
+    raw = str(duration or "").strip()
+    key = raw.lower()
+    if key in ("6s", "7s", "9s", "10s", "12s", "15s"):
+        return minimax_exact_seconds(minimax_snap_seconds(key))
+    try:
+        s = float(key.rstrip("s") or 0)
+    except Exception:  # noqa: BLE001
+        s = float(MINIMAX_MIN_NOMINAL)
+    frames = max(MINIMAX_MIN_FRAMES, min(MINIMAX_MAX_FRAMES, minimax_h3_frames(s)))
+    return minimax_seconds_from_frames(frames)
 
 
 def minimax_snap_seconds(seconds) -> int:
-    """t200u/t178u: 任意秒数（含 Grok 的 6 / 10 / 15）→ 最近的 6 / 9 / 12：旧 7→6，10→9，15→12（t179u）。"""
+    """t200u/t178u: 任意秒数（含 Grok 的 6 / 10 / 15）→ 最近的 6 / 9 / 12：旧 7→6，10→9，15→12（t179u）。
+
+    只留给旧三档字符串的兼容；动态长度请用 minimax_submit_seconds / minimax_frames_for_speech。
+    """
     try:
         s = float(str(seconds).strip().rstrip("sS") or 10)
     except Exception:  # noqa: BLE001
@@ -879,11 +935,15 @@ def minimax_snap_seconds(seconds) -> int:
 
 
 def minimax_audio_video_seconds(audio_seconds) -> float:
-    """t200u: 有音频时的视频长度：跟音频走（至少 4 秒），最长 12.25 秒（294 帧）；更长或读不到按 12.25 秒。"""
+    """有音频时的视频长度：跟音频走（至少 4 秒），ceil×24 +1 再对齐 17n+5，最长 12.25 秒（294 帧）。"""
     a = float(audio_seconds or 0)
     if a <= 0 or a > MINIMAX_MAX_SECONDS:
         return MINIMAX_MAX_SECONDS
-    return max(4.0, a)
+    a = max(MINIMAX_AUDIO_MIN_SECONDS, a)
+    frames = minimax_frames_for_speech(
+        a, min_frames=MINIMAX_AUDIO_MIN_FRAMES, max_frames=MINIMAX_MAX_FRAMES,
+    )
+    return minimax_seconds_from_frames(frames)
 
 
 MINIMAX_6S_MAX_SECONDS = minimax_exact_seconds(6)  # 158 帧 = 6.583 秒，到这为止用 1312x736

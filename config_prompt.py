@@ -7915,11 +7915,28 @@ def auto_length_choice(text: str, options) -> tuple:
     return pick, f"讲话 {size} ≈ {secs:.1f}s → {pick[:-1]}秒{note}"
 
 
+def _minimax_align_frames(n: int) -> int:
+    """Same 17n+5 rule as workflow ComfyMathExpression / sd_image_processor._align_h3_frames."""
+    n = max(5, int(n))
+    return n + (5 - n % 17) % 17
+
+
 def _minimax_real_seconds(n: float) -> float:
     """t166u: MiniMax 名义秒数 → 实际秒数（17k+5 帧 / 24fps，和 sd_image_processor.minimax_h3_frames 一致）。"""
-    f = max(5, int(round(float(n) * 24)))
-    f += (5 - f) % 17
-    return f / 24
+    return _minimax_align_frames(max(5, int(round(float(n) * 24)))) / 24
+
+
+def _minimax_frames_for_speech(speech_seconds: float) -> int:
+    """ceil(s×24)+1 then 17n+5, clamped to the 5.17–12.25s product range (124–294)."""
+    import math
+
+    lo = _minimax_align_frames(max(5, int(round(5 * 24))))
+    hi = _minimax_align_frames(max(5, int(round(12 * 24))))
+    s = float(speech_seconds or 0)
+    if s <= 0:
+        return lo
+    raw = math.ceil(s * 24 - 1e-9) + 1
+    return max(lo, min(hi, _minimax_align_frames(raw)))
 
 
 def _is_minimax_opts(opts) -> bool:
@@ -7986,9 +8003,66 @@ def auto_length_speed_choice(text: str, options, normal_secs=None) -> tuple:
                            f"（导入时速度 {s:.3f} → 约 {D / s:.1f} 秒）{over}")
 
 
+def _resolved_speech_seconds(text: str, normal_secs=None) -> tuple:
+    """Shared speech-second source: estimate, optionally trust timeline/audio if close."""
+    _, d = speaking_seconds_estimate(text)
+    if not (d.get("cjk") or d.get("words")):
+        return 0.0, "估算", ""
+    secs = minimax_speech_seconds(text)
+    est = secs
+    src = "估算"
+    note = ""
+    if isinstance(normal_secs, tuple):
+        normal_secs, src = normal_secs
+    elif normal_secs and float(normal_secs) > 0:
+        src = "配音时间轴"
+    if normal_secs and float(normal_secs) > 0:
+        if abs(float(normal_secs) - est) <= MINIMAX_AUDIO_TRUST * est:
+            secs = round(max(float(normal_secs), est), 2)
+        else:
+            note = f"；{src} {float(normal_secs):.1f} 秒跟字数估算差太多，不用"
+            src = "估算"
+    else:
+        src = "估算"
+    return secs, src + note, ""
+
+
+def auto_minimax_dynamic_choice(text: str, normal_secs=None) -> tuple:
+    """MiniMax 自动：ceil(台词秒×24)+1，向上对齐 17n+5，夹在 124–294 帧（5.17–12.25 秒）。
+
+    返回 (长度如 '7.291666667s', 语速档 s, 正常语速秒数, 说明)。
+    太短用最短；超过最长用 12.25 秒并沿用现有说快 / 导入放慢。
+    """
+    secs, src, _ = _resolved_speech_seconds(text, normal_secs)
+    if secs <= 0:
+        frames = _minimax_frames_for_speech(0)
+        D = frames / 24
+        pick = f"{D:.10g}s"
+        return pick, 1.0, 0.0, f"没有讲话 → {D:.2f}秒（{frames}帧），语速 1.0"
+    frames = _minimax_frames_for_speech(secs)
+    D = frames / 24
+    pick = f"{D:.10g}s"
+    if secs <= D + 1e-9:
+        return pick, 1.0, secs, f"正常语速约 {secs:.1f} 秒（{src}）→ {D:.2f}秒（{frames}帧），正常语速"
+    raw = D / secs
+    s = round(max(AUTO_SPEED_FLOOR, raw), 3)
+    over = (f"（⚠️ 太长：压到下限 {AUTO_SPEED_FLOOR:g} 也要约 {secs * s:.1f} 秒，超过 {D:.2f} 秒，尾巴可能说不完）"
+            if raw < AUTO_SPEED_FLOOR else "")
+    return pick, s, secs, (f"正常语速约 {secs:.1f} 秒（{src}）→ {D:.2f}秒（{frames}帧），说快 {1 / s:.2f} 倍"
+                           f"（导入时速度 {s:.3f} → 约 {D / s:.1f} 秒）{over}")
+
+
 def auto_info_text(length: str, speed: float) -> str:
     """t169u: 生场视频「自动」下面那行。"""
-    t = f"自动: {str(length)[:-1]}秒"
+    raw = str(length or "")
+    if raw not in ("6s", "7s", "9s", "10s", "12s", "15s"):
+        try:
+            D = float(raw.rstrip("sS"))
+            t = f"自动: {D:.2f}秒（{_minimax_align_frames(max(5, int(round(D * 24))))}帧）"
+        except Exception:  # noqa: BLE001
+            t = f"自动: {raw[:-1]}秒" if raw.endswith(("s", "S")) else f"自动: {raw}"
+    else:
+        t = f"自动: {raw[:-1]}秒"
     if float(speed) < 0.9995:
         t += f"，说快 {1 / float(speed):.2f} 倍（导入时放慢到 {float(speed):.3f}）"
     return t
@@ -7999,9 +8073,11 @@ AUTO_LEN_STD = ("6s", "10s", "15s")  # Grok / Gemini 的长度选项（和生场
 
 
 def auto_length_for_backend(text: str, minimax: bool, normal_secs=None) -> tuple:
-    """t165u: 生场视频「自动」和本场内容里的讲话估算共用：(长度, 语速档, 正常语速秒数, 说明)。
-    MiniMax 6/9/12（实际 6.58/9.42/12.25 秒），Grok / Gemini 6/10/15；超过最长 + 0.5 秒才说快一档，导入时按同一档放慢。"""
-    return auto_length_speed_choice(text, AUTO_LEN_MINIMAX if minimax else AUTO_LEN_STD, normal_secs)
+    """生场视频「自动」和本场内容里的讲话估算共用：(长度, 语速档, 正常语速秒数, 说明)。
+    MiniMax：动态帧数（5.17–12.25 秒 / 124–294 帧）；Grok / Gemini 仍是 6/10/15。"""
+    if minimax:
+        return auto_minimax_dynamic_choice(text, normal_secs)
+    return auto_length_speed_choice(text, AUTO_LEN_STD, normal_secs)
 
 
 def speech_pace_line(speed: float) -> str:

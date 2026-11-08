@@ -112,7 +112,12 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     else:
         key = config.minimax_variant_key(backend) or config.MINIMAX_DEFAULT_VARIANT
     v = config.minimax_variant(key)
-    _secs = float(_sdp.minimax_snap_seconds(extra.get("duration") or "10s"))  # t179u: 6 / 9 / 12（7→6，10→9，15→12）
+    _secs = _sdp.minimax_submit_seconds(extra.get("duration") or "")
+    if extra.get("h3_frames"):
+        try:
+            _secs = _sdp.minimax_submit_seconds(_sdp.minimax_seconds_from_frames(int(extra.get("h3_frames"))))
+        except Exception:  # noqa: BLE001
+            pass
     _imgs = [p for p in (image_paths or []) if p] if isinstance(image_paths, (list, tuple)) else []
     if not image_path and _imgs:
         image_path = _imgs[0]
