@@ -12,7 +12,11 @@ Lifecycle (scenes created WITH a project cover):
      files: clip_image, clip_image_last, and zero_image. Cover extraction
      reads the frozen zero_image_last (not the already-changed clip).
   4. Video generation/import updates only clip image fields (typically
-     clip_image_last from the last frame). It must not rewrite zero images.
+     clip_image_last from the last frame). It must not rewrite zero images,
+     except the sanctioned clip-tail chain: after a clip scene video is saved,
+     last_image_replacement independently copies that last frame into the
+     next scene's zero_image_last (even if that slot was the frozen cover).
+     Other writers still obey the freeze. zero_image is never part of this chain.
 
 Copies are always separate files (never a shared path, symlink, or hardlink).
 A failed multi-slot write leaves scene keys unchanged (no partial update).
@@ -31,6 +35,10 @@ COVER_ORIGIN_FROZEN = "cover"
 COVER_SEED_SLOTS = ("clip_image", "clip_image_last", "zero_image", "zero_image_last")
 EDIT_OUTPUT_SLOTS = ("clip_image", "clip_image_last", "zero_image")
 FROZEN_SLOT = "zero_image_last"
+# Persisted when the sanctioned clip-tail chain overwrites next.zero_image_last.
+# Does not disable freeze for edits / shared-zero / other imports.
+ZERO_LAST_CHAIN_KEY = "zero_image_last_chain"
+ZERO_LAST_CHAIN_CLIP = "clip"
 
 # Shared picker / persisted "image" preference (图片修改 + 生场视频).
 IMAGE_CHOICE_KEYS = ("clip_image", "clip_image_last", "zero_image", "zero_image_last")
@@ -202,6 +210,38 @@ def seed_scene_images_from_cover(scene: dict, cover: str) -> dict:
 def write_edited_scene_images(scene: dict, source: str) -> dict:
     """Edit / cover extraction: three new files; frozen zero_image_last skipped."""
     return write_independent_slots(scene, EDIT_OUTPUT_SLOTS, source, mark_frozen=False)
+
+
+def write_chained_next_zero_image_last(next_scene: dict, source: str) -> str:
+    """Copy a clip last-frame into the next scene's ``zero_image_last``.
+
+    This is the only writer allowed to replace a cover-frozen ``zero_image_last``.
+    It does not call ``refresh_scene_media`` and does not change
+    ``is_frozen_zero_last_write`` / ``should_skip_shared_zero_image``, so edits,
+    shared-zero, drag/drop, and other imports still skip this slot.
+    ``zero_image`` is not touched. On failure the next scene's keys and existing
+    file stay as they were; a partial dest file is removed.
+    """
+    if not isinstance(next_scene, dict):
+        return ""
+    if not source or not os.path.isfile(source):
+        raise FileNotFoundError(f"没有可衔接的末帧：{source}")
+    from project_manager import allocate_scene_media_path
+
+    ext = os.path.splitext(source)[1].lower() or ".webp"
+    if ext not in (".webp", ".png", ".jpg", ".jpeg"):
+        ext = ".webp"
+    dest = allocate_scene_media_path(next_scene, FROZEN_SLOT, ext)
+    try:
+        _copy_independent(source, dest)
+        if _same_file(source, dest):
+            raise RuntimeError(f"衔接拷贝后仍与源是同一文件：{dest}")
+        next_scene[FROZEN_SLOT] = dest
+        next_scene[ZERO_LAST_CHAIN_KEY] = ZERO_LAST_CHAIN_CLIP
+        return dest
+    except Exception:
+        safe_remove(dest)
+        raise
 
 
 def clone_image_slots(source: dict, dest: dict) -> dict:

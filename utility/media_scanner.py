@@ -397,8 +397,12 @@ class MediaScanner:
 
 
     def last_image_replacement(self, current_scene, video_path, media_type):
-        # 视频生成/导入只更新 clip 图槽；zero 视频不得改写 zero_image / zero_image_last。
-        from utility.scene_image_slots import video_import_updates_image_slots
+        # 视频生成/导入只更新 clip 图槽；zero 视频不得改写 zero 图片。
+        # clip 场景视频另将末帧独立拷到下一场 zero_image_last（允许覆盖其冻结封面原图）。
+        from utility.scene_image_slots import (
+            video_import_updates_image_slots,
+            write_chained_next_zero_image_last,
+        )
 
         if not video_import_updates_image_slots(media_type):
             print("🧊 导入或生成 zero 视频时不改写 zero 图片（封面原图 zero_image_last 保持冻结）")
@@ -416,6 +420,12 @@ class MediaScanner:
         oldi, last_image = refresh_scene_media(current_scene, media_type+"_image_last", ".webp", last_image)
         next_scene = self.workflow.next_scene_of_story(current_scene)
         # check if has next scene , if yes,   ask use if want to replace next scene['clip_image'] with last_image ? if yes, replace it.
+
+        if str(media_type or "") == "clip" and next_scene:
+            try:
+                write_chained_next_zero_image_last(next_scene, last_image)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 下一场 zero_image_last 未写入 clip 末帧衔接：{exc}")
 
         if current_scene.get(media_type+"_status", "ORIG") == "ENH2":
             refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)

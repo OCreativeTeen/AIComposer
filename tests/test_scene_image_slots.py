@@ -211,5 +211,219 @@ class SceneImageSlotsTest(unittest.TestCase):
         self.assertIn("video_import_updates_image_slots", src)
 
 
+def _ensure_scanner_imports(media_dir: str):
+    """Stub config / refresh_scene_media so MediaScanner can load without .env."""
+    pm = _install_pm_stub(media_dir)
+
+    def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
+        from utility.scene_image_slots import is_frozen_zero_last_write
+
+        if not isinstance(scene, dict):
+            raise TypeError("scene 必须是字典")
+        if is_frozen_zero_last_write(scene, media_type):
+            old = scene.get(media_type)
+            return old, old
+        old = scene.get(media_type)
+        dest = pm.allocate_scene_media_path(scene, media_type, media_postfix)
+        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+        if replacement and os.path.isfile(replacement):
+            shutil.copy2(replacement, dest)
+            if not make_replacement_copy and os.path.abspath(replacement) != os.path.abspath(dest):
+                try:
+                    os.remove(replacement)
+                except OSError:
+                    pass
+        scene[media_type] = dest
+        return old, dest
+
+    pm.refresh_scene_media = refresh_scene_media
+    if "config" not in sys.modules:
+        cfg = types.ModuleType("config")
+        cfg.audio_language_label = lambda language: "Chinese" if language else ""
+        sys.modules["config"] = cfg
+    elif not hasattr(sys.modules["config"], "audio_language_label"):
+        sys.modules["config"].audio_language_label = lambda language: "Chinese" if language else ""
+    try:
+        import tkinter.messagebox  # noqa: F401
+    except Exception:
+        tk = types.ModuleType("tkinter")
+        mb = types.ModuleType("tkinter.messagebox")
+        sys.modules["tkinter"] = tk
+        sys.modules["tkinter.messagebox"] = mb
+
+
+class _FakeFFmpeg:
+    def __init__(self, tail_path, *, fail=False, fail_resize=False):
+        self.tail_path = tail_path
+        self.fail = fail
+        self.fail_resize = fail_resize
+
+    def extract_frame(self, video_path, first):
+        if self.fail:
+            return None
+        tmp = self.tail_path + ".extract.webp"
+        shutil.copy2(self.tail_path, tmp)
+        return tmp
+
+    def resize_image_smart(self, path):
+        if self.fail_resize:
+            return None
+        return path
+
+
+class _FakeWorkflow:
+    def __init__(self, nxt):
+        self._next = nxt
+        self.ffmpeg_processor = None
+
+    def next_scene_of_story(self, scene):
+        return self._next
+
+
+class ClipTailChainTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="slot_chain_")
+        self.media = os.path.join(self.tmp, "media")
+        os.makedirs(self.media)
+        self.cover = os.path.join(self.tmp, "cover.webp")
+        with open(self.cover, "wb") as f:
+            f.write(b"COVER-BYTES-AAAA")
+        self.tail = os.path.join(self.tmp, "tail.webp")
+        with open(self.tail, "wb") as f:
+            f.write(b"CLIP-TAIL-FRAME")
+        self.pm = _ensure_scanner_imports(self.media)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _scanner(self, nxt, *, fail=False):
+        from utility.media_scanner import MediaScanner
+
+        wf = _FakeWorkflow(nxt)
+        wf.ffmpeg_processor = _FakeFFmpeg(self.tail, fail=fail)
+        return MediaScanner(wf, 0)
+
+    def _seed(self, sid):
+        from utility.scene_image_slots import seed_scene_images_from_cover
+
+        scene = {"id": sid}
+        seed_scene_images_from_cover(scene, self.cover)
+        return scene
+
+    def test_clip_gen_chains_independent_next_zero_last(self):
+        from utility.scene_image_slots import (
+            ZERO_LAST_CHAIN_CLIP,
+            ZERO_LAST_CHAIN_KEY,
+            is_frozen_zero_last_write,
+            write_edited_scene_images,
+        )
+
+        current = self._seed(501)
+        nxt = self._seed(502)
+        old_next_zero = nxt["zero_image"]
+        old_next_zero_bytes = Path(nxt["zero_image"]).read_bytes()
+        old_next_last = nxt["zero_image_last"]
+        scanner = self._scanner(nxt)
+        scanner.last_image_replacement(current, os.path.join(self.tmp, "clip.mp4"), "clip")
+
+        self.assertTrue(os.path.isfile(current["clip_image_last"]))
+        self.assertEqual(Path(current["clip_image_last"]).read_bytes(), b"CLIP-TAIL-FRAME")
+        self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), b"CLIP-TAIL-FRAME")
+        self.assertNotEqual(os.path.abspath(nxt["zero_image_last"]), os.path.abspath(current["clip_image_last"]))
+        self.assertNotEqual(
+            (os.stat(nxt["zero_image_last"]).st_dev, os.stat(nxt["zero_image_last"]).st_ino),
+            (os.stat(current["clip_image_last"]).st_dev, os.stat(current["clip_image_last"]).st_ino),
+        )
+        self.assertNotEqual(os.path.abspath(nxt["zero_image_last"]), os.path.abspath(old_next_last))
+        self.assertEqual(os.path.abspath(nxt["zero_image"]), os.path.abspath(old_next_zero))
+        self.assertEqual(Path(nxt["zero_image"]).read_bytes(), old_next_zero_bytes)
+        self.assertEqual(nxt.get(ZERO_LAST_CHAIN_KEY), ZERO_LAST_CHAIN_CLIP)
+        self.assertTrue(is_frozen_zero_last_write(nxt, "zero_image_last"))
+
+        chained = nxt["zero_image_last"]
+        chained_bytes = Path(chained).read_bytes()
+        edit = os.path.join(self.tmp, "edit-after-chain.png")
+        with open(edit, "wb") as f:
+            f.write(b"EDIT-AFTER-CHAIN")
+        written = write_edited_scene_images(nxt, edit)
+        self.assertEqual(set(written), {"clip_image", "clip_image_last", "zero_image"})
+        self.assertEqual(nxt["zero_image_last"], chained)
+        self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), chained_bytes)
+
+    def test_final_scene_and_failed_extract_do_not_write_next(self):
+        current = self._seed(511)
+        leftover = self._seed(599)
+        old_last = leftover["zero_image_last"]
+        scanner = self._scanner(None)
+        scanner.last_image_replacement(current, os.path.join(self.tmp, "clip.mp4"), "clip")
+        self.assertEqual(leftover["zero_image_last"], old_last)
+        self.assertEqual(Path(leftover["zero_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
+        self.assertTrue(os.path.isfile(current["clip_image_last"]))
+
+        current2 = self._seed(512)
+        nxt = self._seed(513)
+        before = dict(nxt)
+        fail_scanner = self._scanner(nxt, fail=True)
+        fail_scanner.last_image_replacement(current2, os.path.join(self.tmp, "clip.mp4"), "clip")
+        self.assertEqual(nxt.get("zero_image_last"), before.get("zero_image_last"))
+        self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
+        self.assertEqual(Path(current2["clip_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
+
+    def test_narration_and_zero_do_not_chain_next_zero_last(self):
+        current = self._seed(521)
+        nxt = self._seed(522)
+        old_last = nxt["zero_image_last"]
+        scanner = self._scanner(nxt)
+        scanner.last_image_replacement(current, os.path.join(self.tmp, "n.mp4"), "narration")
+        self.assertEqual(nxt["zero_image_last"], old_last)
+        self.assertEqual(Path(current["narration_image_last"]).read_bytes(), b"CLIP-TAIL-FRAME")
+
+        current_z = self._seed(523)
+        nxt_z = self._seed(524)
+        old_z_last = nxt_z["zero_image_last"]
+        old_z_clip_last = current_z["clip_image_last"]
+        scanner.last_image_replacement(current_z, os.path.join(self.tmp, "z.mp4"), "zero")
+        self.assertEqual(nxt_z["zero_image_last"], old_z_last)
+        self.assertEqual(current_z["clip_image_last"], old_z_clip_last)
+        self.assertEqual(Path(nxt_z["zero_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
+
+    def test_enh2_still_writes_next_clip_image_and_chains_zero_last(self):
+        current = self._seed(531)
+        current["clip_status"] = "ENH2"
+        nxt = self._seed(532)
+        old_zero = nxt["zero_image"]
+        old_clip = nxt["clip_image"]
+        scanner = self._scanner(nxt)
+        scanner.last_image_replacement(current, os.path.join(self.tmp, "clip.mp4"), "clip")
+        self.assertEqual(Path(nxt["clip_image"]).read_bytes(), b"CLIP-TAIL-FRAME")
+        self.assertNotEqual(os.path.abspath(nxt["clip_image"]), os.path.abspath(old_clip))
+        self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), b"CLIP-TAIL-FRAME")
+        self.assertEqual(os.path.abspath(nxt["zero_image"]), os.path.abspath(old_zero))
+        self.assertEqual(Path(nxt["zero_image"]).read_bytes(), b"COVER-BYTES-AAAA")
+
+    def test_chain_copy_failure_leaves_next_unchanged(self):
+        import utility.scene_image_slots as slots
+        from utility.scene_image_slots import write_chained_next_zero_image_last
+
+        nxt = self._seed(541)
+        before = dict(nxt)
+        before_last = nxt["zero_image_last"]
+        real = slots._copy_independent
+
+        def boom(source, dest):
+            raise RuntimeError("simulated chain copy failure")
+
+        slots._copy_independent = boom
+        try:
+            with self.assertRaises(RuntimeError):
+                write_chained_next_zero_image_last(nxt, self.tail)
+        finally:
+            slots._copy_independent = real
+        self.assertEqual(nxt.get("zero_image_last"), before_last)
+        self.assertEqual(nxt.get("cover_origin"), before.get("cover_origin"))
+        self.assertNotIn("zero_image_last_chain", nxt)
+        self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
+
+
 if __name__ == "__main__":
     unittest.main()
