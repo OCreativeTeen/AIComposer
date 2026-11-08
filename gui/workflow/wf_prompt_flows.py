@@ -115,12 +115,29 @@ class PromptFlowsMixin:
             k = next((i for i, s in enumerate(story) if s is cur), 0)
             return story[k:], k + 1, len(story)
 
+        def get_project_cover() -> str:
+            from utility.scene_image_slots import resolve_project_cover_image
+
+            wf = getattr(self, "workflow", None)
+            row = None
+            try:
+                row = self._current_feature_row()
+            except Exception:
+                row = None
+            return resolve_project_cover_image(
+                cover_seeded_path=getattr(wf, "cover_seeded_path", "") if wf else "",
+                cover_override=getattr(wf, "_seed_cover_override", "") if wf else "",
+                project_config=project_manager.PROJECT_CONFIG,
+                item=row if isinstance(row, dict) else None,
+            )
+
         open_picture_prompt_dialog(
             self.root,
             self._nb_picture_btn,
             batch_scenes=batch_scenes,
             run_batch=self._run_picture_batch,
             get_step_no=self._current_cover_step,
+            get_project_cover=get_project_cover,
             get_scene=current_scene,
             get_style=get_style,
             get_place=get_place,

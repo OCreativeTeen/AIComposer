@@ -108,6 +108,79 @@ def cover_extract_source(scene, fallback: str = "") -> str:
     return fb if fb and os.path.isfile(fb) else ""
 
 
+def _existing_file(path: str) -> str:
+    p = str(path or "").strip()
+    return os.path.abspath(p) if p and os.path.isfile(p) else ""
+
+
+def _primary_cover_from_mapping(src) -> str:
+    """First existing project/item cover file. Never reads scene image slots."""
+    if not isinstance(src, dict):
+        return ""
+    try:
+        import project_manager as _pm
+        getter = getattr(_pm, "get_primary_cover_image", None)
+        if callable(getter):
+            found = _existing_file(getter(src) or "")
+            if found:
+                return found
+    except Exception:
+        pass
+    raw = src.get("cover_image")
+    if isinstance(raw, str):
+        entries = [raw]
+    elif isinstance(raw, (list, tuple)):
+        entries = list(raw)
+    else:
+        entries = []
+    for entry in entries:
+        found = _existing_file(entry)
+        if found:
+            return found
+    return ""
+
+
+def resolve_project_cover_image(
+    *,
+    cover_seeded_path: str = "",
+    cover_override: str = "",
+    project_config=None,
+    item=None,
+) -> str:
+    """Authoritative original project cover (not a scene still).
+
+    Precedence: ``cover_seeded_path``, then ``cover_override`` (workflow
+    ``_seed_cover_override``), then the persistent item/project ``cover_image``
+    list (same first-existing file as ``get_primary_cover_image`` / newest-first
+    covers[0]). Missing cover returns "".
+
+    Never reads clip_image / clip_image_last / zero_image / zero_image_last.
+    After t297u, zero_image_last may be a chained previous-scene tail, so
+    ``cover_extract_source`` is not safe for the manual 从封面提取 dialog.
+    Automatic ``_maybe_auto_extract_steps_from_cover`` still uses
+    ``cover_extract_source`` and is intentionally unchanged.
+    """
+    for candidate in (cover_seeded_path, cover_override):
+        found = _existing_file(candidate)
+        if found:
+            return found
+    for src in (project_config, item):
+        found = _primary_cover_from_mapping(src)
+        if found:
+            return found
+    return ""
+
+
+def manual_cover_extract_images(project_cover: str) -> list:
+    """Images submitted for manual cover extract: the true cover, or empty.
+
+    Empty means the caller must disable/error; never fall back to a chosen
+    scene slot or chained last frame.
+    """
+    found = _existing_file(project_cover)
+    return [found] if found else []
+
+
 def _same_file(a: str, b: str) -> bool:
     try:
         return bool(a and b and os.path.isfile(a) and os.path.isfile(b) and os.path.samefile(a, b))

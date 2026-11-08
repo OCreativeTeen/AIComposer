@@ -425,5 +425,173 @@ class ClipTailChainTest(unittest.TestCase):
         self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
 
 
+
+class ProjectCoverResolveTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cover_resolve_")
+        self.seeded = os.path.join(self.tmp, "seeded_cover.webp")
+        self.override = os.path.join(self.tmp, "override_cover.webp")
+        self.primary = os.path.join(self.tmp, "primary_cover.webp")
+        self.secondary = os.path.join(self.tmp, "older_cover.webp")
+        self.item_cover = os.path.join(self.tmp, "item_cover.webp")
+        self.missing = os.path.join(self.tmp, "gone.webp")
+        self.clip = os.path.join(self.tmp, "scene_clip.webp")
+        self.chained = os.path.join(self.tmp, "chained_last.webp")
+        for path, payload in (
+            (self.seeded, b"SEEDED"),
+            (self.override, b"OVERRIDE"),
+            (self.primary, b"PRIMARY"),
+            (self.secondary, b"SECONDARY"),
+            (self.item_cover, b"ITEM"),
+            (self.clip, b"CLIP"),
+            (self.chained, b"CHAIN"),
+        ):
+            with open(path, "wb") as f:
+                f.write(payload)
+        self.pm = _install_pm_stub(os.path.join(self.tmp, "media"))
+        os.makedirs(os.path.join(self.tmp, "media"), exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_seeded_path_wins_over_override_and_persistent(self):
+        from utility.scene_image_slots import resolve_project_cover_image
+
+        found = resolve_project_cover_image(
+            cover_seeded_path=self.seeded,
+            cover_override=self.override,
+            project_config={"cover_image": [self.primary, self.secondary]},
+            item={"cover_image": self.item_cover},
+        )
+        self.assertEqual(os.path.abspath(found), os.path.abspath(self.seeded))
+
+    def test_override_wins_when_seeded_missing(self):
+        from utility.scene_image_slots import resolve_project_cover_image
+
+        found = resolve_project_cover_image(
+            cover_seeded_path=self.missing,
+            cover_override=self.override,
+            project_config={"cover_image": [self.primary]},
+        )
+        self.assertEqual(os.path.abspath(found), os.path.abspath(self.override))
+
+    def test_project_primary_is_first_existing_cover(self):
+        from utility.scene_image_slots import resolve_project_cover_image
+
+        found = resolve_project_cover_image(
+            project_config={"cover_image": [self.missing, self.primary, self.secondary]},
+        )
+        self.assertEqual(os.path.abspath(found), os.path.abspath(self.primary))
+
+    def test_item_cover_used_when_project_has_none(self):
+        from utility.scene_image_slots import resolve_project_cover_image
+
+        found = resolve_project_cover_image(
+            project_config={"cover_image": [self.missing]},
+            item={"cover_image": self.item_cover},
+        )
+        self.assertEqual(os.path.abspath(found), os.path.abspath(self.item_cover))
+
+    def test_missing_cover_returns_empty(self):
+        from utility.scene_image_slots import (
+            manual_cover_extract_images,
+            resolve_project_cover_image,
+        )
+
+        found = resolve_project_cover_image(
+            cover_seeded_path=self.missing,
+            project_config={"title": "no cover"},
+        )
+        self.assertEqual(found, "")
+        self.assertEqual(manual_cover_extract_images(found), [])
+        self.assertEqual(manual_cover_extract_images(self.missing), [])
+
+    def test_scene_slots_cannot_override_true_cover(self):
+        from utility.scene_image_slots import (
+            manual_cover_extract_images,
+            resolve_project_cover_image,
+        )
+
+        scene = {
+            "clip_image": self.clip,
+            "clip_image_last": self.clip,
+            "zero_image": self.clip,
+            "zero_image_last": self.chained,
+            "cover_origin": "cover",
+            "image": "clip_image",
+        }
+        found = resolve_project_cover_image(
+            project_config=scene,
+            item=scene,
+        )
+        self.assertEqual(found, "")
+        found = resolve_project_cover_image(
+            project_config={"cover_image": [self.primary], **scene},
+        )
+        self.assertEqual(os.path.abspath(found), os.path.abspath(self.primary))
+        images = manual_cover_extract_images(found)
+        self.assertEqual(images, [os.path.abspath(self.primary)])
+        self.assertNotEqual(images[0], os.path.abspath(self.clip))
+        self.assertNotEqual(images[0], os.path.abspath(self.chained))
+
+    def test_batch_jobs_share_same_true_cover(self):
+        from utility.scene_image_slots import (
+            manual_cover_extract_images,
+            resolve_project_cover_image,
+        )
+
+        cover = resolve_project_cover_image(
+            project_config={"cover_image": [self.primary]},
+        )
+        scenes = [
+            {"id": 1, "clip_image": self.clip, "zero_image_last": self.chained, "cover_step": 1},
+            {"id": 2, "clip_image": self.clip, "zero_image_last": self.chained, "cover_step": 2},
+        ]
+        refs = [manual_cover_extract_images(cover) for _sc in scenes]
+        self.assertEqual(refs[0], refs[1])
+        self.assertEqual(refs[0], [os.path.abspath(self.primary)])
+        self.assertTrue(all(img != os.path.abspath(self.clip) for job in refs for img in job))
+
+    def test_auto_cover_extract_source_still_prefers_chained_zero_last(self):
+        """Document unchanged auto path: cover_extract_source may pick t297u chain."""
+        from utility.scene_image_slots import cover_extract_source
+
+        scene = {
+            "cover_origin": "cover",
+            "zero_image_last": self.chained,
+            "clip_image": self.clip,
+        }
+        self.assertEqual(cover_extract_source(scene, self.primary), self.chained)
+
+
+class ManualCoverDialogContractTest(unittest.TestCase):
+    def test_cover_mode_instantiates_preview_not_four_slot_picker(self):
+        src = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
+        start = src.index('if mode == "cover":')
+        else_idx = src.index("else:", start)
+        cover_block = src[start:else_idx]
+        rest_after = src[else_idx:else_idx + 500]
+        self.assertIn("pack_project_cover_preview", cover_block)
+        self.assertNotIn("pack_clip_image_choice", cover_block)
+        self.assertIn("pack_clip_image_choice", rest_after)
+        self.assertIn("get_project_cover", src)
+        self.assertIn("manual_cover_extract_images", src)
+        self.assertIn("没有可用的项目封面，无法从封面提取。", src)
+
+    def test_ask_picture_edit_mode_still_present_unchanged_shape(self):
+        src = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
+        self.assertIn("def ask_picture_edit_mode(", src)
+        self.assertIn("PICTURE_EDIT_MODES", src)
+
+    def test_auto_extract_flow_still_uses_cover_extract_source(self):
+        src = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
+        fn = src.index("def _maybe_auto_extract_steps_from_cover")
+        nxt = src.find("\n    def ", fn + 10)
+        body = src[fn:nxt if nxt != -1 else None]
+        self.assertIn("cover_extract_source(", body)
+        self.assertNotIn("resolve_project_cover_image", body)
+        self.assertNotIn("manual_cover_extract_images", body)
+
+
 if __name__ == "__main__":
     unittest.main()

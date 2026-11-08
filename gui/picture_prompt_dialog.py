@@ -226,6 +226,7 @@ def open_picture_prompt_dialog(
     batch_scenes=None,
     run_batch=None,
     get_step_no=None,
+    get_project_cover=None,
     mode=None,
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
@@ -324,16 +325,49 @@ def open_picture_prompt_dialog(
     for value, label in config_prompt.PICTURE_FLOW_TASK_CHOICES:
         ttk.Radiobutton(task_box, text=label, value=value, variable=task_var).pack(anchor=tk.W)
 
-    from gui.clip_image_choice import pack_clip_image_choice
+    _img_box = None
+    _cover_box = None
+    _cover_path = ""
 
-    def _scene_image(key: str) -> str:
-        sc = get_scene() if get_scene is not None else None
-        return (sc.get(key) or "") if isinstance(sc, dict) else ""
+    def chosen_image() -> str:
+        return last.get("image", "clip_image")
 
-    # Which image goes to the LLM; remembered with the other choices (key "image").
-    _img_box, chosen_image, image_to_save = pack_clip_image_choice(
-        bottom, _scene_image, initial=last.get("image", "clip_image")
-    )
+    def image_to_save() -> str:
+        # Cover mode has no picker; keep the last saved slot key as-is.
+        return last.get("image", "clip_image")
+
+    if mode == "cover":
+        from gui.clip_image_choice import pack_project_cover_preview
+        from utility.scene_image_slots import resolve_project_cover_image
+
+        if callable(get_project_cover):
+            try:
+                _cover_path = str(get_project_cover() or "").strip()
+            except Exception:
+                _cover_path = ""
+        if not (_cover_path and os.path.isfile(_cover_path)):
+            try:
+                _cover_path = resolve_project_cover_image(
+                    project_config=project_manager.PROJECT_CONFIG,
+                )
+            except Exception:
+                _cover_path = _cover_path if _cover_path and os.path.isfile(_cover_path) else ""
+        if _cover_path and os.path.isfile(_cover_path):
+            _cover_path = os.path.abspath(_cover_path)
+        else:
+            _cover_path = ""
+        _cover_box = pack_project_cover_preview(bottom, _cover_path)
+    else:
+        from gui.clip_image_choice import pack_clip_image_choice
+
+        def _scene_image(key: str) -> str:
+            sc = get_scene() if get_scene is not None else None
+            return (sc.get(key) or "") if isinstance(sc, dict) else ""
+
+        # Which image goes to the LLM; remembered with the other choices (key "image").
+        _img_box, chosen_image, image_to_save = pack_clip_image_choice(
+            bottom, _scene_image, initial=last.get("image", "clip_image")
+        )
 
     # FYI / 注意: text persisted in picture_prompt; checkbox always ON on open.
     _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
@@ -438,7 +472,16 @@ def open_picture_prompt_dialog(
         for btn in field_buttons:
             btn.configure(state=("disabled" if extract or step_mode else "normal"))
         if mode == "cover":
-            hint.config(foreground="", text=f"从封面提取：把现在的图当封面，取出第 {step_no} 步这一场的画面。画风不变，不加字。可以写「注意 / FYI」。")
+            if _cover_path and os.path.isfile(_cover_path):
+                hint.config(
+                    foreground="",
+                    text=f"从封面提取：用项目封面取出第 {step_no} 步这一场的画面。画风不变，不加字。可以写「注意 / FYI」。",
+                )
+            else:
+                hint.config(
+                    foreground="#b00020",
+                    text="从封面提取：没有可用的项目封面，无法提交。不会改用场景里选中的图或链式末帧。",
+                )
             return
         if mode == "cast":
             hint.config(foreground="", text="补全/修正人物：按 视觉、讲话 和人物肖像图补上缺的人物、改正对不上的人物。画风不变，不加字，不画对话泡泡。")
@@ -464,6 +507,87 @@ def open_picture_prompt_dialog(
     def on_go(backend: str = "grok", account: str = "") -> None:
         if mode == "cast" and not fix_on():
             messagebox.showwarning("图片修改", "补全/修正人物用不了：" + (_tip["text"] or "没有人物肖像图。"), parent=dlg)
+            return
+        if mode == "cover":
+            from utility.scene_image_slots import manual_cover_extract_images
+            from utility.speaking_marks import scene_cover_step
+
+            images = manual_cover_extract_images(_cover_path)
+            if not images:
+                messagebox.showwarning("图片修改", "没有可用的项目封面，无法从封面提取。", parent=dlg)
+                return
+
+            def _cover_step_prompt(step: int) -> str:
+                style = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
+                prompt = config_prompt.build_step_image_clipbody(
+                    step,
+                    visual_style=style,
+                    keep_style=task_var.get() != "restyle",
+                    caption=text_var.get(),
+                    extract_only=True,
+                    fyi=(get_fyi_text() or "").strip() if fyi_include_var.get() else "",
+                )
+                aspect = config_prompt.output_aspect_line(_project_video_size())
+                if aspect:
+                    prompt = aspect + "\n\n" + prompt
+                return prompt
+
+            scope = "scene"
+            batch_list, k_no, m_no = [], 0, 0
+            if callable(batch_scenes) and callable(run_batch):
+                got = batch_scenes()
+                if isinstance(got, tuple):
+                    batch_list, k_no, m_no = got
+                else:
+                    batch_list = list(got or [])
+                n_batch = len(batch_list)
+                here = f"（第{k_no}场）" if k_no else ""
+                span = f"（第{k_no}–{m_no}场，共{n_batch}场；前面的场不动）" if k_no else f"（共{n_batch}场）"
+                answer = messagebox.askyesnocancel(
+                    "图片修改",
+                    f"是 = 只处理当前这一场{here}\n"
+                    f"否 = 从当前第{k_no}场到本集结束{span}，每一场都用同一张项目封面提取各自的步骤\n"
+                    "取消 = 不处理",
+                    parent=dlg,
+                )
+                if answer is None:
+                    return
+                scope = "scene" if answer else "episode"
+            if scope == "episode":
+                jobs, skipped = [], []
+                scene = get_scene() if get_scene is not None else None
+                for sc in batch_list:
+                    if not isinstance(sc, dict):
+                        continue
+                    no = k_no + len(jobs) + len(skipped)
+                    label = f"第{no}场" if k_no else str(sc.get("id") or no)
+                    k = int(scene_cover_step(sc) or 0)
+                    if k <= 0 and sc is scene:
+                        k = step_no
+                    if k <= 0:
+                        skipped.append(f"{label}：没有步骤号")
+                        continue
+                    prompt = _cover_step_prompt(k)
+                    aspect = config_prompt.output_aspect_line(_project_video_size())
+                    jobs.append((
+                        sc, prompt, list(images),
+                        {"aspect": aspect, "actors": [], "base": images[0]},
+                    ))
+                remember()
+                dlg.destroy()
+                try:
+                    run_batch(jobs, backend, skipped, account)
+                except TypeError:
+                    run_batch(jobs, backend, skipped)
+                return
+            if step_no <= 0:
+                messagebox.showwarning("图片修改", "当前场景没有步骤号，无法从封面提取。", parent=dlg)
+                return
+            prompt = _cover_step_prompt(step_no)
+            remember()
+            dlg.destroy()
+            if callable(open_manual):
+                _call_open_manual(prompt, list(images), backend, account)
             return
         if narrative_var.get() == "step" and step_no > 0:
             # 提取第 N 步：沿用 Step Image 提示词，当前选中的图当输入，结果走图片修改的正常回填
@@ -794,14 +918,27 @@ def open_picture_prompt_dialog(
         if mode == "cover":
             _fields.pack_forget()
             fix_box.pack_forget()
+            if _img_box is not None:
+                _img_box.pack_forget()
         else:
             fix_cb.pack_forget()  # 补全人物一定开着；不能用时 fix_note 里写原因
             _fields.pack_forget()
+            if _cover_box is not None:
+                _cover_box.pack_forget()
         refresh()
 
     from gui.slide_prompt_dialog import big_submit_button
 
-    big_submit_button(dlg, bottom, on_submit, text="提交").pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    submit_btn = big_submit_button(dlg, bottom, on_submit, text="提交")
+    submit_btn.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    if mode == "cover" and not (_cover_path and os.path.isfile(_cover_path)):
+        try:
+            submit_btn.state(["disabled"])
+        except Exception:
+            try:
+                submit_btn.configure(state="disabled")
+            except Exception:
+                pass
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
     narrative_var.trace_add("write", refresh)

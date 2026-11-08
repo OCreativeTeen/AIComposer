@@ -19,16 +19,47 @@ THUMB_W, THUMB_H = 96, 60
 SLOTS = IMAGE_CHOICE_LABELS
 
 
-def _thumb(path: str):
+COVER_PREVIEW_W, COVER_PREVIEW_H = 160, 100
+
+
+def _thumb(path: str, width: int = THUMB_W, height: int = THUMB_H):
     try:
         from PIL import Image, ImageTk
 
         with Image.open(path) as img:
             img = img.convert("RGB")
-            img.thumbnail((THUMB_W, THUMB_H))
+            img.thumbnail((width, height))
             return ImageTk.PhotoImage(img)
     except Exception:
         return None
+
+
+def pack_project_cover_preview(parent, path, *, title: str = "项目封面（提交给 LLM）", side=tk.LEFT):
+    """Single preview of the authoritative project cover (no four-slot picker)."""
+    box = ttk.LabelFrame(parent, text=title, padding=(8, 4))
+    box.pack(side=side, anchor=tk.S, padx=(8, 0))
+    p = str(path or "").strip()
+    ok = bool(p) and os.path.isfile(p)
+    tile = tk.Frame(box, width=COVER_PREVIEW_W, height=COVER_PREVIEW_H, bg="#dddddd")
+    tile.pack()
+    tile.pack_propagate(False)
+    photos = []
+    if ok:
+        photo = _thumb(p, COVER_PREVIEW_W, COVER_PREVIEW_H)
+        if photo is not None:
+            photos.append(photo)
+            tk.Label(tile, image=photo, bg="#dddddd", bd=0).pack(fill=tk.BOTH, expand=True)
+        else:
+            tk.Label(tile, text=os.path.basename(p), bg="#dddddd", fg="gray40").pack(fill=tk.BOTH, expand=True)
+        ttk.Label(box, text=os.path.basename(p), wraplength=180).pack(anchor=tk.W, pady=(4, 0))
+    else:
+        tk.Label(tile, text="没有可用的项目封面", bg="#dddddd", fg="gray40").pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            box, text="不会改用场景里选中的图", foreground="gray40", wraplength=180
+        ).pack(anchor=tk.W, pady=(4, 0))
+    box._photos = photos
+    box._cover_path = p if ok else ""
+    return box
 
 
 def pack_clip_image_choice(parent, get_path, *, title: str = "交给 LLM 的图", side=tk.LEFT, initial: str = "clip_image"):
