@@ -68,7 +68,18 @@ FILE_CLI_KINDS = ("video",) + STUDIO_CLI_KINDS
 
 class FileResult(str):
     """手动窗口的「文件」结果：就是一个文件路径（str 子类，老代码当字符串用也不出错）。
-    例如 CLI自动 生成视频时返回下载好的 mp4 路径。用 ``isinstance(resp, FileResult)`` 区分。"""
+    例如 CLI自动 生成视频时返回下载好的 mp4 路径。用 ``isinstance(resp, FileResult)`` 区分。
+
+    二次提交时 ``paths`` 含每一次生成的文件（生成顺序，第一次在前）；字符串本身是最新一次。
+    """
+
+    def __new__(cls, path, paths=None):
+        obj = str.__new__(cls, path or "")
+        if paths is None:
+            obj.paths = [str(path)] if path else []
+        else:
+            obj.paths = [str(item) for item in paths if item]
+        return obj
 
     @property
     def path(self) -> str:
@@ -411,7 +422,14 @@ class LLMApi:
         )
         if isinstance(response, FileResult) and callable(on_file_response):
             try:
-                on_file_response(str(response))
+                from utility.program_media import file_result_paths
+
+                paths = file_result_paths(response) or [str(response)]
+                try:
+                    on_file_response(str(response), all_paths=paths)
+                except TypeError:
+                    for item in paths:
+                        on_file_response(item)
             except Exception as exc:
                 print(f"⚠️ on_file_response 回调失败: {exc}")
         if response is not None and callable(on_image_response) and hasattr(response, "save"):
@@ -1432,6 +1450,8 @@ class LLMApi:
 
         result_model = [None]
         result_response = [None]
+        cli_cancel = [False]
+        studio_collected = []
 
         def get_request_copy_content() -> str:
             content = system_text.get('1.0', tk.END).strip()
@@ -1542,9 +1562,16 @@ class LLMApi:
             dialog.destroy()
 
         def on_cancel():
-            self._last_dialog_cancelled = True
-            result_model[0] = MANUAL
-            result_response[0] = None
+            cli_cancel[0] = True
+            if studio_collected:
+                # 第一次已完成：取消第二次，仍交回已有结果。
+                result_model[0] = MANUAL
+                result_response[0] = FileResult(studio_collected[-1], paths=list(studio_collected))
+                self._last_dialog_cancelled = False
+            else:
+                self._last_dialog_cancelled = True
+                result_model[0] = MANUAL
+                result_response[0] = None
             dialog.destroy()
 
         def on_copy():
@@ -1713,17 +1740,65 @@ class LLMApi:
 
                     if cli_kind in STUDIO_CLI_KINDS:
                         from . import notebooklm_cdp
+                        from utility.program_media import (
+                            run_sequential_generations,
+                            settle_generated_file,
+                            studio_times_from_extra,
+                        )
 
-                        studio_file = notebooklm_cdp.make_studio(
-                            cli_kind, prompt, dest_dir=file_dest_dir or "", status=_cli_set_status,
-                            extra=extra_params,
+                        times = studio_times_from_extra(extra_params)
+
+                        def _one_studio(index: int) -> str:
+                            _cli_set_status(f"第 {index + 1}/{times} 次生成 …")
+                            studio_file = notebooklm_cdp.make_studio(
+                                cli_kind, prompt, dest_dir=file_dest_dir or "", status=_cli_set_status,
+                                extra=extra_params,
+                            )
+                            settled = settle_generated_file(studio_file, file_dest_dir or "")
+                            studio_collected.append(settled)
+                            return settled
+
+                        def _studio_status(n, total, ev):
+                            if ev == "start":
+                                _cli_set_status(f"第 {n}/{total} 次生成 …")
+                            elif ev == "done":
+                                _cli_set_status(f"第 {n}/{total} 次已完成")
+
+                        paths, studio_err, studio_cancelled = run_sequential_generations(
+                            _one_studio,
+                            times,
+                            should_cancel=lambda: bool(cli_cancel[0]),
+                            on_status=_studio_status,
                         )
 
                         def _apply_studio_file():
-                            _cli_done_ui()
-                            cli_status.config(text=f"CLI自动 完成：{os.path.basename(studio_file)}", foreground="#1f7f1f")
-                            _finish_with_file(studio_file)
+                            try:
+                                if paths:
+                                    note = ""
+                                    if studio_err:
+                                        note = f"（后续失败：{studio_err}，已保留已完成的结果）"
+                                    elif studio_cancelled and times > 1:
+                                        note = "（已取消后续生成，保留已完成的结果）"
+                                    names = "、".join(os.path.basename(p) for p in paths)
+                                    cli_status.config(
+                                        text=f"CLI自动 完成：{names}{note}",
+                                        foreground="#1f7f1f",
+                                    )
+                            except tk.TclError:
+                                pass
+                            try:
+                                _cli_done_ui()
+                            except tk.TclError:
+                                pass
+                            if paths:
+                                _finish_with_files(paths)
+                                return
+                            if studio_cancelled:
+                                return
+                            raise studio_err or RuntimeError("生成结果是空的")
 
+                        if not paths and studio_err:
+                            raise studio_err
                         _cli_ui(_apply_studio_file)
                     elif cli_kind == "video":
                         if not image_path:
@@ -1849,17 +1924,29 @@ class LLMApi:
 
             threading.Thread(target=_work_in_account, name="grok-cli-auto", daemon=True).start()
 
-        def _finish_with_file(path: str) -> None:
-            """文件结果：关窗，返回 FileResult(path)。"""
-            result_model[0] = MANUAL
-            result_response[0] = FileResult(path)
-            self._last_dialog_cancelled = False
+        def _finish_with_files(paths) -> None:
+            """文件结果：关窗，返回 FileResult（paths 为生成顺序，字符串是最新一次）。"""
+            items = [str(p) for p in (paths or []) if p]
+            if not items:
+                return
+            if result_response[0] is None:
+                result_model[0] = MANUAL
+                result_response[0] = FileResult(items[-1], paths=items)
+                self._last_dialog_cancelled = False
             try:
                 dialog.clipboard_clear()
                 dialog.clipboard_append(get_request_copy_content())
             except tk.TclError:
                 pass
-            dialog.destroy()
+            try:
+                if dialog.winfo_exists():
+                    dialog.destroy()
+            except tk.TclError:
+                pass
+
+        def _finish_with_file(path: str) -> None:
+            """文件结果：关窗，返回 FileResult(path)。"""
+            _finish_with_files([path] if path else [])
 
         def _result_filetypes():
             kinds = {

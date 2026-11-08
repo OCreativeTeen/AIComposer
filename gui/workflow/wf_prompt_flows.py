@@ -22,11 +22,13 @@ class PromptFlowsMixin:
             if not isinstance(src, dict):
                 continue
             stored_cover = project_manager.get_primary_cover_image(src)
-            stored_slide = (src.get("slide") or "").strip()
+            from utility.program_media import get_primary_program_media
+
+            stored_slide = get_primary_program_media(src, "slides")
             if not cover and stored_cover:
                 cover = stored_cover
-            if not slide and stored_slide and os.path.isfile(stored_slide):
-                slide = os.path.abspath(stored_slide)
+            if not slide and stored_slide:
+                slide = stored_slide
         if not cover:
             cover = _find_gen_video_webp_for_row(row) or ""
         if not slide:
@@ -39,7 +41,7 @@ class PromptFlowsMixin:
         cover, slide = self._project_cover_and_slide()
         if cover:
             vd["cover_image"] = cover
-        if slide:
+        if slide and not isinstance(vd.get("slide"), list):
             vd["slide"] = slide
         sc = vd.get("scene_content") or []
         story_raw = json.dumps(sc, ensure_ascii=False, indent=2) if isinstance(sc, list) and sc else ""
@@ -1156,7 +1158,7 @@ class PromptFlowsMixin:
 
         def open_slides_manual(
             prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "", actor_pdf: str = "",
-            cross_episodes: bool = False,
+            cross_episodes: bool = False, extra_sources=None, times: int = 1,
         ) -> None:
             """提交：手工 LLM 窗口 CLI自动 → NotebookLM Studio（kind）→ 下载 → 系统程序打开。"""
             import os
@@ -1164,32 +1166,28 @@ class PromptFlowsMixin:
 
             working = config.WORKING_DIR
 
-            def _open_file(path: str) -> None:
-                """Studio 下载结果移到 D:\\AI_MEDIA\\working（同名覆盖）。PDF 走拆页预览 / 分配；其余直接打开。"""
-                import shutil
+            def _open_file(path: str, all_paths=None) -> None:
+                """Studio 下载结果移到 working（不覆盖已有文件）。PDF 走拆页预览 / 分配；其余直接打开。"""
+                from utility.program_media import settle_generated_file
 
-                try:
-                    os.makedirs(working, exist_ok=True)
-                    dest = os.path.join(working, os.path.basename(path))
-                    if os.path.abspath(dest) != os.path.abspath(path):
-                        if os.path.exists(dest):
-                            os.remove(dest)
-                        shutil.move(path, dest)
-                    path = dest
-                except OSError as exc:
-                    print(f"⚠️ 移动到 working 失败，用原位置：{exc}")
-                if path.lower().endswith(".pdf"):
-                    self.root.after(
-                        50,
-                        lambda p=path: self._on_media_drop_pdf(p, origin="全集生成", cross_episodes=cross_episodes),
-                    )
-                    return
-                try:
-                    os.startfile(path)
-                except OSError as exc:
-                    messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=self.root)
+                batch = [item for item in (all_paths or [path]) if item]
+                for item in batch:
+                    try:
+                        item = settle_generated_file(item, working)
+                    except Exception as exc:
+                        print(f"⚠️ 移动到 working 失败，用原位置：{exc}")
+                    if str(item).lower().endswith(".pdf"):
+                        self.root.after(
+                            50,
+                            lambda p=item: self._on_media_drop_pdf(p, origin="全集生成", cross_episodes=cross_episodes),
+                        )
+                        continue
+                    try:
+                        os.startfile(item)
+                    except OSError as exc:
+                        messagebox.showwarning("打开失败", f"打不开：{exc}\n{item}", parent=self.root)
 
-            extra = {"output": kind}
+            extra = {"output": kind, "studio_times": 2 if int(times or 1) >= 2 else 1}
             # 画面比例用项目的宽高（1920×1080 → 16:9，1080×1920 → 9:16）。
             _pc = project_manager.PROJECT_CONFIG or {}
             extra["video_size"] = project_manager.video_size_key(_pc.get("video_width"), _pc.get("video_height"))

@@ -263,7 +263,9 @@ class PdfEpisodeMixin:
             os.path.join(media, base),
         ]
         pc = project_manager.PROJECT_CONFIG
-        slide = (pc.get("slide") or "").strip() if isinstance(pc, dict) else ""
+        from utility.program_media import get_primary_program_media
+
+        slide = get_primary_program_media(pc, "slides") if isinstance(pc, dict) else ""
         if slide and os.path.basename(slide) == base:
             candidates.append(slide)
         for path in candidates:

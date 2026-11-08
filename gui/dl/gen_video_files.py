@@ -44,12 +44,17 @@ def _gen_video_id_stem_candidates_for_row(video: dict) -> list[str]:
 
 
 def _find_gen_video_slide_for_row(video: dict) -> str:
-    """``gen_video/<id>.pdf`` 或 video_detail['slide'] 记录的幻灯片路径。"""
+    """``gen_video/<id>.pdf`` 或 video_detail['slide'] 记录的幻灯片路径（支持列表，取当前/最新）。"""
     if not isinstance(video, dict):
         return ""
-    stored = (video.get(GEN_VIDEO_SLIDE_KEY) or "").strip()
-    if stored and os.path.isfile(stored):
-        return os.path.abspath(stored)
+    from utility.program_media import get_primary_program_media, get_program_media_list
+
+    stored = get_primary_program_media(video, "slides")
+    if stored:
+        return stored
+    # 列表里的路径可能暂时不在磁盘上：不要误把整个 list 当字符串 .strip()
+    if get_program_media_list(video, "slides"):
+        return ""
     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
     if not gen_dir:
         return ""

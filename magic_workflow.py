@@ -2133,7 +2133,9 @@ class MagicWorkflow(EpisodeOpsMixin):
         pc = project_manager.PROJECT_CONFIG
         if not isinstance(pc, dict):
             return
-        if not (project_manager.get_cover_images(pc) or pc.get("slide") or pc.get("cover_video")):
+        from utility.program_media import get_primary_program_media, get_program_media_list
+
+        if not (project_manager.get_cover_images(pc) or get_program_media_list(pc, "slides") or pc.get("cover_video")):
             project_manager.hydrate_config_cover_media(pc)
 
         n_scenes = len(self.scenes)
@@ -2144,7 +2146,7 @@ class MagicWorkflow(EpisodeOpsMixin):
         self._seed_cover_override = ""
         multi = isinstance(scene_list, list) and len(scene_list) > 1
         covers = [c for c in (project_manager.get_cover_images(pc) or []) if isinstance(c, str) and os.path.isfile(c)]
-        pdf_opt = (pc.get("slide") or "").strip() if multi else ""
+        pdf_opt = get_primary_program_media(pc, "slides") if multi else ""
         if pdf_opt and not os.path.isfile(pdf_opt):
             pdf_opt = ""
         picked = None
@@ -2162,7 +2164,7 @@ class MagicWorkflow(EpisodeOpsMixin):
 
         # 多场景：用幻灯片 PDF 逐页对应 clip_image
         if isinstance(scene_list, list) and len(scene_list) > 1:
-            slide_pdf = (pc.get("slide") or "").strip()
+            slide_pdf = get_primary_program_media(pc, "slides")
             if not (picked and picked[0] == "pdf") and (not slide_pdf or not os.path.isfile(slide_pdf)) and n_scenes <= 6:
                 # 没有分页 PDF、只有 2-6 场：预览里的封面图给每一场当 clip_image / clip_image_last
                 if self._seed_scenes_from_cover(pc):

@@ -245,75 +245,226 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         except Exception as exc:  # noqa: BLE001
             print(f"节目生成：内容来源没有记下：{exc}")
 
-    def _add_infographic_cover(path: str) -> None:
-        """信息图回来：追加成这一条的封面（cover_image 列表，不覆盖已有的）。
-        和封面导入同一流程：加水印 → gen_video/<名>.webp；没有水印配置就原图拷进 gen_video。"""
+    def _ingest_infographic_file(path: str) -> str:
+        """信息图文件：加水印 → gen_video webp（名字带时间，不覆盖上一张）。返回封面路径，不弹窗。"""
         import shutil
         from datetime import datetime
 
         from gui.dl.cover_title import save_cover_image_as_gen_video_webp
+        from utility.program_media import unique_dest_path
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        src = os.path.join(os.path.dirname(path), f"Infographic_{stamp}{os.path.splitext(path)[1]}")
+        src = unique_dest_path(
+            os.path.dirname(path) or ".",
+            f"Infographic_{stamp}{os.path.splitext(path)[1]}",
+        )
         try:
-            shutil.copy2(path, src)  # 名字带时间，gen_video 里不会覆盖上一张信息图封面
+            shutil.copy2(path, src)
         except OSError:
             src = path
-        try:
-            ok, dest, err = save_cover_image_as_gen_video_webp(
-                src, video_detail, channel=gui._channel_config_key(), cleanup_source=(src != path)
+        ok, dest, err = save_cover_image_as_gen_video_webp(
+            src, video_detail, channel=gui._channel_config_key(), cleanup_source=(src != path)
+        )
+        if ok:
+            return os.path.abspath(dest)
+        gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+        if not gen_dir:
+            raise OSError(err or "没有 gen_video 目录")
+        os.makedirs(gen_dir, exist_ok=True)
+        dest = unique_dest_path(gen_dir, os.path.basename(src))
+        shutil.copy2(src, dest)
+        if src != path:
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+        return os.path.abspath(dest)
+
+    def _commit_infographic_covers(dests, selected: str = "") -> str:
+        """把已入库的信息图封面追加进 cover_image；selected 作为当前（最新）。返回当前封面。"""
+        from utility.program_media import order_after_selection
+
+        ordered = order_after_selection(list(dests or []), selected)
+        # append 会把每一项插到最前，所以从旧到新写入，最后一项（当前）在最前。
+        for dest in reversed(ordered):
+            project_manager.append_cover_image(video_detail, dest)
+        gui._persist_video_detail_story(video_detail, parent=dlg)
+        ctx = getattr(dlg, "_summary_drop_ctx", None)
+        refresh = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:  # noqa: BLE001
+                pass
+        n = len(project_manager.get_cover_images(video_detail))
+        current = ordered[0] if ordered else ""
+        if current:
+            print(f"节目生成：信息图已加为封面（共 {n} 张，当前 {os.path.basename(current)}）")
+            show_auto_close_popup(
+                dlg, "信息图",
+                f"信息图已加为这一条的封面（共 {n} 张）：\n{os.path.basename(current)}",
             )
-            if not ok:
-                gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
-                if not gen_dir:
-                    raise OSError(err or "没有 gen_video 目录")
-                os.makedirs(gen_dir, exist_ok=True)
-                dest = os.path.join(gen_dir, os.path.basename(src))
-                shutil.copy2(src, dest)
-                if src != path:
-                    try:
-                        os.remove(src)
-                    except OSError:
-                        pass
-                project_manager.append_cover_image(video_detail, os.path.abspath(dest))
-            gui._persist_video_detail_story(video_detail, parent=dlg)
-            ctx = getattr(dlg, "_summary_drop_ctx", None)
-            refresh = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
-            if callable(refresh):
-                try:
-                    refresh()
-                except Exception:  # noqa: BLE001
-                    pass
-            n = len(project_manager.get_cover_images(video_detail))
-            print(f"节目生成：信息图已加为封面（共 {n} 张）：{dest}")
-            show_auto_close_popup(dlg, "信息图", f"信息图已加为这一条的封面（共 {n} 张）：\n{os.path.basename(dest)}")
+        return current
+
+    def _add_infographic_cover(path: str) -> None:
+        """信息图回来：追加成这一条的封面（cover_image 列表，不覆盖已有的）。"""
+        try:
+            dest = _ingest_infographic_file(path)
+            _commit_infographic_covers([dest], dest)
         except Exception as exc:  # noqa: BLE001
             messagebox.showwarning("信息图", f"信息图没能加为封面：{exc}\n{path}", parent=dlg)
 
-    def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
-                    actor_pdf: str = "", _cross: bool = False, extra_sources=None) -> None:
-        def _open_file(path: str) -> None:
-            import shutil
+    def _ask_pick_infographic(paths, video_size: str) -> str:
+        """两张信息图候选：16:9 上下排，9:16 左右排。返回用户选的路径；关窗则第一张。"""
+        from utility.program_media import infographic_candidates_side_by_side
 
+        items = [p for p in (paths or []) if p and os.path.isfile(p)]
+        if not items:
+            return (paths or [""])[0] if paths else ""
+        if len(items) == 1:
+            return items[0]
+        chosen = [items[0]]
+        win = tk.Toplevel(dlg)
+        win.title("选择信息图")
+        win.transient(dlg)
+        ttk.Label(win, text="生成了两张信息图，请选一张作为当前封面（两张都会保留）。").pack(
+            anchor=tk.W, padx=12, pady=(10, 6)
+        )
+        side = infographic_candidates_side_by_side(video_size)
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+        photos = []
+        highlight = {"path": items[0]}
+
+        def _thumb(path):
             try:
-                os.makedirs(working, exist_ok=True)
-                dest = os.path.join(working, os.path.basename(path))
-                if os.path.abspath(dest) != os.path.abspath(path):
-                    if os.path.exists(dest):
-                        os.remove(dest)
-                    shutil.move(path, dest)
-                path = dest
-            except OSError as exc:
-                print(f"⚠️ 节目生成：移动到 working 失败，用原位置：{exc}")
-            print(f"节目生成：已保存 {path}")
-            if kind == "infographic" and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-                if not cover_state["added"]:
-                    cover_state["added"] = True
-                    _add_infographic_cover(path)
+                from PIL import Image, ImageTk
+                im = Image.open(path)
+                im = im.convert("RGB") if im.mode not in ("RGB", "RGBA") else im
+                if side:
+                    im.thumbnail((320, 560))
+                else:
+                    im.thumbnail((560, 320))
+                photo = ImageTk.PhotoImage(im)
+                photos.append(photo)
+                return photo
+            except Exception:  # noqa: BLE001
+                return None
+
+        frames = []
+
+        def _paint():
+            for fr, path in frames:
+                on = highlight["path"] == path
+                try:
+                    fr.configure(highlightbackground="#1f5fbf" if on else "#cccccc", highlightthickness=4 if on else 1)
+                except tk.TclError:
+                    pass
+
+        def _pick(path):
+            highlight["path"] = path
+            chosen[0] = path
+            _paint()
+
+        for path in items:
+            fr = tk.Frame(body, bd=0, highlightthickness=1, highlightbackground="#cccccc")
+            if side:
+                fr.pack(side=tk.LEFT, padx=8, pady=4, fill=tk.BOTH, expand=True)
+            else:
+                fr.pack(side=tk.TOP, padx=4, pady=8, fill=tk.BOTH, expand=True)
+            frames.append((fr, path))
+            photo = _thumb(path)
+            if photo is not None:
+                btn = tk.Button(fr, image=photo, command=lambda p=path: _pick(p), relief=tk.FLAT)
+            else:
+                btn = tk.Button(fr, text=os.path.basename(path), command=lambda p=path: _pick(p), width=36, height=8)
+            btn.pack(padx=4, pady=4)
+            ttk.Label(fr, text=os.path.basename(path)).pack(pady=(0, 6))
+        _paint()
+
+        def _ok():
+            chosen[0] = highlight["path"]
+            win.destroy()
+
+        ttk.Button(win, text="选用这个", command=_ok).pack(pady=(4, 12))
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
+        dlg.wait_window(win)
+        return chosen[0] if chosen[0] else items[0]
+
+    def _persist_overview_media(kind: str, paths) -> None:
+        from utility.program_media import append_program_media, field_for_kind
+
+        if not field_for_kind(kind):
+            return
+        for path in paths or []:
+            if path:
+                append_program_media(video_detail, kind, path)
+        try:
+            gui._persist_video_detail_story(video_detail, parent=dlg)
+        except Exception as exc:  # noqa: BLE001
+            print(f"节目生成：保存 {kind} 失败：{exc}")
+        ctx = getattr(dlg, "_summary_drop_ctx", None)
+        refresh = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+        if callable(refresh):
             try:
-                os.startfile(path)
+                refresh()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
+                    actor_pdf: str = "", _cross: bool = False, extra_sources=None, times: int = 1) -> None:
+        from utility.program_media import settle_generated_file
+
+        try:
+            times = 2 if int(times or 1) >= 2 else 1
+        except (TypeError, ValueError):
+            times = 1
+
+        def _open_file(path: str, all_paths=None) -> None:
+            batch = [p for p in (all_paths or [path]) if p]
+            moved = []
+            for item in batch:
+                try:
+                    moved.append(settle_generated_file(item, working))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 节目生成：移动到 working 失败，用原位置：{exc}")
+                    moved.append(item)
+            if not moved:
+                return
+            print("节目生成：已保存 " + "、".join(moved))
+            selected = moved[-1]
+            if kind == "infographic":
+                image_paths = [p for p in moved if str(p).lower().endswith((".png", ".jpg", ".jpeg", ".webp"))]
+                if image_paths and not cover_state["added"]:
+                    pick_from = image_paths
+                    if len(pick_from) >= 2:
+                        selected = _ask_pick_infographic(pick_from, extra.get("video_size") or "")
+                    else:
+                        selected = pick_from[0]
+                    dests = []
+                    dest_of = {}
+                    try:
+                        for src in pick_from:
+                            dest = _ingest_infographic_file(src)
+                            dests.append(dest)
+                            dest_of[src] = dest
+                        selected_dest = dest_of.get(selected) or dests[0]
+                        cover_state["added"] = True
+                        _commit_infographic_covers(dests, selected_dest)
+                        selected = selected_dest
+                    except Exception as exc:  # noqa: BLE001
+                        messagebox.showwarning("信息图", f"信息图没能加为封面：{exc}", parent=dlg)
+            else:
+                _persist_overview_media(kind, moved)
+                selected = moved[-1]
+            try:
+                os.startfile(selected)
             except OSError as exc:
-                messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=dlg)
+                messagebox.showwarning("打开失败", f"打不开：{exc}\n{selected}", parent=dlg)
 
         cover_state = {"added": False}  # 这一次手动窗口：文件和粘贴的图只加一次封面
 
@@ -341,6 +492,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         extra = {"output": kind}
         # 画面比例：STORY 窗口第 1 行的选择 → NotebookLM 视频概览 / 信息图的比例（演示文稿写进提示词）。
         extra["video_size"] = _story_video_size_choice(scene_ui, video_detail)
+        extra["studio_times"] = times
         if notebook_url:
             extra["notebook_url"] = notebook_url
         if source_pdf:
@@ -973,11 +1125,13 @@ class SceneEditorImpl:
                         if not gen_dir:
                             raise OSError("没有 gen_video 目录")
                         os.makedirs(gen_dir, exist_ok=True)
-                        dest = os.path.join(
+                        from utility.program_media import append_program_media, unique_dest_path
+
+                        dest = unique_dest_path(
                             gen_dir, _gen_video_slide_pdf_dest_filename(video_detail)
                         )
                         safe_copy_overwrite(pdf_path, dest)
-                        video_detail[GEN_VIDEO_SLIDE_KEY] = os.path.abspath(dest)
+                        append_program_media(video_detail, "slides", os.path.abspath(dest))
                     except Exception as exc:
                         messagebox.showerror("PDF", f"无法保存这份 PDF：\n{exc}", parent=dlg)
                         return
@@ -1207,11 +1361,22 @@ class SceneEditorImpl:
 
             def _material_entries() -> list:
                 out = []
-                slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
-                if slide and os.path.isfile(slide):
-                    pages = int(_remember_pdf_source(slide).get("pages") or 0)
-                    out.append({"kind": "pdf", "path": slide, "select": "pdf", "analyze": True,
-                                "title": f"PDF：{os.path.basename(slide)}", "detail": f"共 {pages} 页"})
+                from utility.program_media import list_existing_program_media
+
+                slides = list_existing_program_media(video_detail, "slides")
+                if not slides:
+                    one = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                    if one and os.path.isfile(one):
+                        slides = [one]
+                if slides:
+                    for i, slide in enumerate(slides, 1):
+                        pages = int(_remember_pdf_source(slide).get("pages") or 0)
+                        label = f"PDF {i}/{len(slides)}" if len(slides) > 1 else "PDF"
+                        detail = f"共 {pages} 页"
+                        if len(slides) > 1 and i == 1:
+                            detail += " · 当前（最新）"
+                        out.append({"kind": "pdf", "path": slide, "select": "pdf", "analyze": True,
+                                    "title": f"{label}：{os.path.basename(slide)}", "detail": detail})
                 else:
                     out.append({"kind": "pdf", "path": "", "select": "", "placeholder": True,
                                 "tile": "无 PDF", "title": "（没有 PDF）",
@@ -1247,6 +1412,22 @@ class SceneEditorImpl:
                     out.append({"kind": "transcript", "path": "", "select": "", "placeholder": True,
                                 "tile": "无文字稿", "title": "（没有文字稿）",
                                 "detail": "双击：现在转录" if media_path else "先加音频或 mp4，才能转录"})
+                for overview_kind, overview_label, overview_slot in (
+                    ("audio_overview", "语音概览", "audio"),
+                    ("video_overview", "视频概览", "video"),
+                ):
+                    overviews = list_existing_program_media(video_detail, overview_kind)
+                    for i, opath in enumerate(overviews, 1):
+                        label = f"{overview_label} {i}/{len(overviews)}" if len(overviews) > 1 else overview_label
+                        detail = "当前（最新）。双击打开" if i == 1 and len(overviews) > 1 else "双击打开"
+                        out.append({
+                            "kind": overview_slot,
+                            "path": opath,
+                            "select": "media",
+                            "program_kind": overview_kind,
+                            "title": f"{label}：{os.path.basename(opath)}",
+                            "detail": detail,
+                        })
                 return out
 
             def _offer_rename_now(path: str) -> None:
@@ -1392,7 +1573,22 @@ class SceneEditorImpl:
                     key = os.path.normcase(os.path.abspath(path))
                     _set_cover_list([p for p in _material_images() if os.path.normcase(os.path.abspath(p)) != key])
                     return
+                program_kind = entry.get("program_kind") or ""
+                if program_kind:
+                    from utility.program_media import remove_program_media
+
+                    remove_program_media(video_detail, program_kind, path)
+                    persist(video_detail, parent=dlg)
+                    _sync_material_widgets()
+                    return
                 if kind == "pdf":
+                    from utility.program_media import get_program_media_list, remove_program_media
+
+                    if len(get_program_media_list(video_detail, "slides")) > 1:
+                        remove_program_media(video_detail, "slides", path)
+                        persist(video_detail, parent=dlg)
+                        _sync_material_widgets()
+                        return
                     video_detail.pop(GEN_VIDEO_SLIDE_KEY, None)
                     # gen_video/<id>.pdf 会按名字被自动找回：改名让它不再算这一条的 PDF（文件还在）
                     gen_dir = os.path.abspath(getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or "")

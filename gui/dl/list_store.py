@@ -331,12 +331,17 @@ def _fresh_story_row_id(existing: set) -> str:
 def _copy_story_list_row(src: dict, new_id: str) -> dict:
     """复制故事材料。新 ``id``；去掉项目信息。幻灯片 PDF 仍指向原来的文件。"""
     row = copy.deepcopy(src)
+    from utility.program_media import coerce_program_media_list
+
     slide = _find_gen_video_slide_for_row(src)
     for key in _STORY_COPY_PROJECT_KEYS:
         row.pop(key, None)
     row["id"] = new_id
     row["view_count"] = 0
-    if slide:
+    slides = coerce_program_media_list(src.get(GEN_VIDEO_SLIDE_KEY))
+    if slides:
+        row[GEN_VIDEO_SLIDE_KEY] = list(slides)
+    elif slide:
         row[GEN_VIDEO_SLIDE_KEY] = slide
     stored_video = (row.get("video") or "").strip()
     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""

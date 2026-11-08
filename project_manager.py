@@ -1640,7 +1640,9 @@ def resolve_video_detail_cover_media(video_detail: dict) -> dict:
         print(f"⚠️ resolve_video_detail_cover_media: {e}")
         cover = slide = video = ""
         stored_cover = get_primary_cover_image(video_detail)
-        stored_slide = (video_detail.get("slide") or "").strip()
+        from utility.program_media import get_primary_program_media
+
+        stored_slide = get_primary_program_media(video_detail, "slides")
         stored_video = (video_detail.get("video") or "").strip()
         if stored_cover:
             cover = stored_cover
@@ -1667,14 +1669,19 @@ def hydrate_config_cover_media(cfg: dict, video_detail: dict | None = None) -> N
     if row is None:
         row = cfg
     media = resolve_video_detail_cover_media(row)
+    from utility.program_media import LISTISH_FIELDS, get_primary_program_media
+
     for k, v in media.items():
-        if v:
-            cfg[k] = v
+        if not v:
+            continue
+        # 不要把 cover_image / slide / 概览 的列表压成单个路径
+        if k in LISTISH_FIELDS and isinstance(cfg.get(k), list):
+            continue
+        cfg[k] = v
     # 列表行已写 slide 但 gen_video 查找未命中时仍保留已有合法路径
-    if not cfg.get("slide"):
-        stored = (row.get("slide") if isinstance(row, dict) else None) or cfg.get("slide")
-        stored = (stored or "").strip()
-        if stored and os.path.isfile(stored):
+    if not get_primary_program_media(cfg, "slides"):
+        stored = get_primary_program_media(row if isinstance(row, dict) else None, "slides") or get_primary_program_media(cfg, "slides")
+        if stored and os.path.isfile(stored) and not isinstance(cfg.get("slide"), list):
             cfg["slide"] = os.path.abspath(stored)
 
 

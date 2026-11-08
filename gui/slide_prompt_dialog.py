@@ -184,7 +184,7 @@ def open_slide_prompt_dialog(
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
     ``saved_choice`` 是项目里记下的上次选择；``save_choice(dict)`` 在关窗或拷贝时把当前选择记回项目。
-    按「提交」：拷走提示词并关窗；给了 ``open_manual(prompt)`` 就再交给手工 LLM 窗口（NotebookLM 演示文稿）。
+    按「一次性提交」或「二次提交」：拷走提示词并关窗；给了 ``open_manual(..., times=)`` 就再交给手工 LLM 窗口（NotebookLM）。
 
     ``get_scene_range(range_key)`` → ``(scenes, episodes)``：range_key 是 "episode"（本集）或 "to_end"（本集到结束），
     episodes 是和 scenes 等长的每场集名。不给就只有本集（``get_scenes``），也不显示「范围」。
@@ -478,14 +478,14 @@ def open_slide_prompt_dialog(
         if material_var.get():
             hint.config(
                 text=f"材料 PDF：{os.path.basename(material_pdf)} 拷成 {CONTENT_PDF_NAME} 上传。"
-                f"按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+                f"按「一次性提交」或「二次提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
             )
             return
         if analysis_var.get():
             single = "幻灯片按分析报告的结构一部分一页。" if output_var.get() == "slides" else ""
             hint.config(
                 text=f"分析内容：分析报告写进 {CONTENT_PDF_NAME} 上传（不进提示词）。{single}"
-                f"按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+                f"按「一次性提交」或「二次提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
             )
             return
         hint.config(
@@ -529,7 +529,30 @@ def open_slide_prompt_dialog(
                 print(f"{title}：内容来源没有记下：{exc}")
         dlg.destroy()
 
-    def copy_analysis_prompt() -> None:
+    def launch_manual(prompt, kind, nb_url, source_pdf, actor_pdf="", cross=False, extra_sources=None, times=1):
+        close()
+        if not callable(open_manual):
+            return
+        try:
+            times = 2 if int(times or 1) >= 2 else 1
+        except (TypeError, ValueError):
+            times = 1
+
+        def _go():
+            kwargs = {"times": times}
+            if extra_sources is not None:
+                kwargs["extra_sources"] = extra_sources
+            try:
+                open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, **kwargs)
+            except TypeError:
+                if extra_sources is not None:
+                    open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, extra_sources=extra_sources)
+                else:
+                    open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross)
+
+        parent.after(50, _go)
+
+    def copy_analysis_prompt(times: int = 1) -> None:
         """分析内容：分析报告 → content.pdf（来源）；提示词只有规则（+ 背景条件 + FYI），不放分析内容。"""
         try:
             analysis = (get_analysis() or "").strip()
@@ -577,12 +600,10 @@ def open_slide_prompt_dialog(
         )
         kind = output_var.get()
         nb_url = current_notebook_url()
-        close()
-        if callable(open_manual):
-            extra_sources = [material_pdf] if material_pdf else []
-            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, "", False, extra_sources=extra_sources))
+        extra_sources = [material_pdf] if material_pdf else []
+        launch_manual(prompt, kind, nb_url, pdf_path, "", False, extra_sources=extra_sources, times=times)
 
-    def copy_material_prompt() -> None:
+    def copy_material_prompt(times: int = 1) -> None:
         """材料 PDF：删掉 working 里旧的 content.pdf，把这一条的 PDF 拷过去改名 content.pdf，照 content.pdf 流程上传。"""
         import shutil
 
@@ -633,16 +654,14 @@ def open_slide_prompt_dialog(
         print(f"{title}：提交（材料 PDF）output={output_var.get()} {material_pdf} → {pdf_path}；提示词 {len(prompt)} 字")
         kind = output_var.get()
         nb_url = current_notebook_url()
-        close()
-        if callable(open_manual):
-            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, "", False))
+        launch_manual(prompt, kind, nb_url, pdf_path, "", False, times=times)
 
-    def copy_prompt() -> None:
+    def copy_prompt(times: int = 1) -> None:
         if material_var.get():
-            copy_material_prompt()
+            copy_material_prompt(times)
             return
         if analysis_var.get():
-            copy_analysis_prompt()
+            copy_analysis_prompt(times)
             return
         if not (visual_var.get() or speaking_var.get()):
             messagebox.showwarning("全集生成", "场景描述和讲话至少要选一项。", parent=dlg)
@@ -763,15 +782,16 @@ def open_slide_prompt_dialog(
         )
         kind = output_var.get()
         nb_url = current_notebook_url()
-        close()
-        if callable(open_manual):
-            cross = bool(span_zh)  # 跨集：下载回来的 PDF「写到结束」可以接着写进后面各集
-            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, actor_pdf, cross))
+        cross = bool(span_zh)  # 跨集：下载回来的 PDF「写到结束」可以接着写进后面各集
+        launch_manual(prompt, kind, nb_url, pdf_path, actor_pdf, cross, times=times)
 
-    # 提交按钮放在右下角，字比默认大 30%，加粗。
-    big_submit_button(dlg, bottom, copy_prompt).pack(
-        side=tk.RIGHT, anchor=tk.N
-    )
+    # 右下角同一列两行：一次性提交 / 二次提交。
+    submit_col = ttk.Frame(bottom)
+    submit_col.pack(side=tk.RIGHT, anchor=tk.N)
+    once_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(1), text="一次性提交")
+    once_btn.pack(anchor=tk.E)
+    twice_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(2), text="二次提交")
+    twice_btn.pack(anchor=tk.E, pady=(8, 0))
 
     # 产物（横排单选）+ 笔记本，放在提交左边。
     from utility import notebooklm_cdp
