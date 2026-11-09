@@ -227,6 +227,7 @@ def open_picture_prompt_dialog(
     run_batch=None,
     get_step_no=None,
     get_project_cover=None,
+    get_project_covers=None,
     mode=None,
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
@@ -338,8 +339,14 @@ def open_picture_prompt_dialog(
 
     if mode == "cover":
         from gui.clip_image_choice import pack_project_cover_preview
-        from utility.scene_image_slots import resolve_project_cover_image
+        from utility.scene_image_slots import list_project_cover_images, resolve_project_cover_image
 
+        _cover_paths = []
+        if callable(get_project_covers):
+            try:
+                _cover_paths = list(get_project_covers() or [])
+            except Exception:
+                _cover_paths = []
         if callable(get_project_cover):
             try:
                 _cover_path = str(get_project_cover() or "").strip()
@@ -356,7 +363,16 @@ def open_picture_prompt_dialog(
             _cover_path = os.path.abspath(_cover_path)
         else:
             _cover_path = ""
-        _cover_box = pack_project_cover_preview(bottom, _cover_path)
+        if not _cover_paths:
+            try:
+                _cover_paths = list_project_cover_images(
+                    project_config=project_manager.PROJECT_CONFIG,
+                )
+            except Exception:
+                _cover_paths = []
+        if _cover_path and _cover_path not in _cover_paths:
+            _cover_paths = [_cover_path] + list(_cover_paths)
+        _cover_box = pack_project_cover_preview(bottom, _cover_path, paths=_cover_paths)
     else:
         from gui.clip_image_choice import pack_clip_image_choice
 
@@ -461,6 +477,15 @@ def open_picture_prompt_dialog(
             _step_saved.clear()
             _set_state_tree(_bg_box, "normal")
 
+    def _selected_cover() -> str:
+        if _cover_box is not None:
+            picked = str(getattr(_cover_box, "_cover_path", "") or "").strip()
+            if picked and os.path.isfile(picked):
+                return os.path.abspath(picked)
+        if _cover_path and os.path.isfile(_cover_path):
+            return os.path.abspath(_cover_path)
+        return ""
+
     def refresh(*_args) -> None:
         extract = task_var.get() == "extract"
         step_mode = narrative_var.get() == "step"
@@ -472,7 +497,7 @@ def open_picture_prompt_dialog(
         for btn in field_buttons:
             btn.configure(state=("disabled" if extract or step_mode else "normal"))
         if mode == "cover":
-            if _cover_path and os.path.isfile(_cover_path):
+            if _selected_cover():
                 hint.config(
                     foreground="",
                     text=f"从封面提取：用项目封面取出第 {step_no} 步这一场的画面。画风不变，不加字。可以写「注意 / FYI」。",
@@ -512,7 +537,7 @@ def open_picture_prompt_dialog(
             from utility.scene_image_slots import manual_cover_extract_images
             from utility.speaking_marks import scene_cover_step
 
-            images = manual_cover_extract_images(_cover_path)
+            images = manual_cover_extract_images(_selected_cover())
             if not images:
                 messagebox.showwarning("图片修改", "没有可用的项目封面，无法从封面提取。", parent=dlg)
                 return

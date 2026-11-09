@@ -1670,11 +1670,23 @@ def hydrate_config_cover_media(cfg: dict, video_detail: dict | None = None) -> N
         row = cfg
     media = resolve_video_detail_cover_media(row)
     from utility.program_media import LISTISH_FIELDS, get_primary_program_media
+    from utility.scene_image_slots import list_project_cover_images
+
+    # 故事行上的 cover_image 列表（最新在前）原样带进项目配置，不要只留下主封面标量
+    covers = list_project_cover_images(project_config=cfg, item=row)
+    if not covers and media.get("cover_image"):
+        one = str(media.get("cover_image") or "").strip()
+        if one and os.path.isfile(one):
+            covers = [os.path.abspath(one)]
+    if covers:
+        set_cover_images(cfg, covers)
 
     for k, v in media.items():
         if not v:
             continue
         # 不要把 cover_image / slide / 概览 的列表压成单个路径
+        if k == "cover_image":
+            continue
         if k in LISTISH_FIELDS and isinstance(cfg.get(k), list):
             continue
         cfg[k] = v

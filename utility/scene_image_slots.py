@@ -171,6 +171,98 @@ def resolve_project_cover_image(
     return ""
 
 
+def list_project_cover_images(
+    *,
+    cover_seeded_path: str = "",
+    cover_override: str = "",
+    project_config=None,
+    item=None,
+) -> list:
+    """All existing project/item cover files, deduped, missing skipped.
+
+    Order: ``project_config`` covers (stored newest-first), then any extra
+    from ``item``, then seeded/override paths not already listed.
+    Does not change project state.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(path: str) -> None:
+        found = _existing_file(path)
+        if not found:
+            return
+        key = os.path.normcase(found)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(found)
+
+    def _add_from(src) -> None:
+        if not isinstance(src, dict):
+            return
+        try:
+            import project_manager as _pm
+
+            getter = getattr(_pm, "get_cover_images", None)
+            if callable(getter):
+                for entry in getter(src) or []:
+                    _add(entry)
+                return
+        except Exception:
+            pass
+        raw = src.get("cover_image")
+        if isinstance(raw, str):
+            entries = [raw]
+        elif isinstance(raw, (list, tuple)):
+            entries = list(raw)
+        else:
+            entries = []
+        for entry in entries:
+            _add(entry)
+
+    _add_from(project_config)
+    _add_from(item)
+    for extra in (cover_seeded_path, cover_override):
+        _add(extra)
+    return out
+
+
+def normalize_cover_preview_choices(paths, selected: str = "") -> tuple[list, str]:
+    """Dedupe existing cover files; pick ``selected`` if present else the first."""
+    items: list[str] = []
+    seen: set[str] = set()
+    for path in paths or []:
+        found = _existing_file(path)
+        if not found:
+            continue
+        key = os.path.normcase(found)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(found)
+    pick = _existing_file(selected)
+    if pick:
+        pkey = os.path.normcase(pick)
+        for item in items:
+            if os.path.normcase(item) == pkey:
+                return items, item
+    return items, (items[0] if items else "")
+
+
+def cover_preview_max_size(path: str) -> tuple[int, int]:
+    """Preview box larger than the 96x60 four-slot tiles; follow 16:9 vs 9:16."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            width, height = im.size
+        if height > width:
+            return (180, 320)
+    except Exception:
+        pass
+    return (320, 180)
+
+
 def manual_cover_extract_images(project_cover: str) -> list:
     """Images submitted for manual cover extract: the true cover, or empty.
 

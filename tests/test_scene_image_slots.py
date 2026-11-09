@@ -568,7 +568,7 @@ class ManualCoverDialogContractTest(unittest.TestCase):
     def test_cover_mode_instantiates_preview_not_four_slot_picker(self):
         src = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
         start = src.index('if mode == "cover":')
-        else_idx = src.index("else:", start)
+        else_idx = src.index("else:\n        from gui.clip_image_choice import pack_clip_image_choice", start)
         cover_block = src[start:else_idx]
         rest_after = src[else_idx:else_idx + 500]
         self.assertIn("pack_project_cover_preview", cover_block)
@@ -591,6 +591,124 @@ class ManualCoverDialogContractTest(unittest.TestCase):
         self.assertIn("cover_extract_source(", body)
         self.assertNotIn("resolve_project_cover_image", body)
         self.assertNotIn("manual_cover_extract_images", body)
+
+    def test_cover_mode_lists_all_covers_for_picker(self):
+        src = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
+        start = src.index('if mode == "cover":')
+        else_idx = src.index("else:\n        from gui.clip_image_choice import pack_clip_image_choice", start)
+        cover_block = src[start:else_idx]
+        self.assertIn("list_project_cover_images", cover_block)
+        self.assertIn("paths=", cover_block)
+        self.assertIn("_selected_cover", src)
+        wf = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
+        self.assertIn("def get_project_covers", wf)
+        self.assertIn("get_project_covers=get_project_covers", wf)
+
+
+class CoverListAndPickerHelperTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cover_list_")
+        self.primary = os.path.join(self.tmp, "a_primary.webp")
+        self.secondary = os.path.join(self.tmp, "b_older.webp")
+        self.missing = os.path.join(self.tmp, "gone.webp")
+        self.dup = os.path.join(self.tmp, "a_primary.webp")
+        for path, payload in ((self.primary, b"A"), (self.secondary, b"B")):
+            with open(path, "wb") as f:
+                f.write(payload)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_list_covers_newest_first_skip_missing_dedupe(self):
+        from utility.scene_image_slots import list_project_cover_images
+
+        listed = list_project_cover_images(
+            project_config={"cover_image": [self.primary, self.missing, self.secondary, self.primary]},
+            item={"cover_image": [self.secondary]},
+        )
+        self.assertEqual(
+            [os.path.abspath(self.primary), os.path.abspath(self.secondary)],
+            listed,
+        )
+
+    def test_list_covers_includes_item_extras_and_skips_absent_seeded(self):
+        from utility.scene_image_slots import list_project_cover_images
+
+        extra = os.path.join(self.tmp, "seeded.webp")
+        with open(extra, "wb") as f:
+            f.write(b"S")
+        listed = list_project_cover_images(
+            cover_seeded_path=extra,
+            cover_override=self.missing,
+            project_config={"cover_image": [self.primary]},
+            item={"cover_image": [self.secondary]},
+        )
+        self.assertEqual(os.path.abspath(listed[0]), os.path.abspath(self.primary))
+        self.assertEqual(os.path.abspath(listed[1]), os.path.abspath(self.secondary))
+        self.assertEqual(os.path.abspath(listed[2]), os.path.abspath(extra))
+
+    def test_normalize_choices_defaults_to_primary_and_skips_missing(self):
+        from utility.scene_image_slots import normalize_cover_preview_choices
+
+        items, picked = normalize_cover_preview_choices(
+            [self.primary, self.missing, self.secondary, self.primary],
+            self.primary,
+        )
+        self.assertEqual(items, [os.path.abspath(self.primary), os.path.abspath(self.secondary)])
+        self.assertEqual(picked, os.path.abspath(self.primary))
+        items, picked = normalize_cover_preview_choices(
+            [self.primary, self.secondary],
+            self.secondary,
+        )
+        self.assertEqual(picked, os.path.abspath(self.secondary))
+        items, picked = normalize_cover_preview_choices([], self.missing)
+        self.assertEqual(items, [])
+        self.assertEqual(picked, "")
+
+    def test_preview_box_larger_than_old_tiles_and_follows_aspect(self):
+        from utility.scene_image_slots import cover_preview_max_size
+
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("PIL not available")
+        land = os.path.join(self.tmp, "land.png")
+        port = os.path.join(self.tmp, "port.png")
+        Image.new("RGB", (1600, 900), (10, 20, 30)).save(land)
+        Image.new("RGB", (900, 1600), (30, 20, 10)).save(port)
+        lw, lh = cover_preview_max_size(land)
+        pw, ph = cover_preview_max_size(port)
+        self.assertEqual((lw, lh), (320, 180))
+        self.assertEqual((pw, ph), (180, 320))
+        self.assertGreater(lw * lh, 96 * 60)
+        self.assertGreater(pw * ph, 96 * 60)
+
+    def test_hydrate_copies_full_cover_list_not_just_primary(self):
+        src = Path(ROOT, "project_manager.py").read_text(encoding="utf-8")
+        start = src.index("def hydrate_config_cover_media")
+        nxt = src.find("\\ndef ", start + 10)
+        body = src[start:] if nxt < 0 else src[start:nxt]
+        # cut at next top-level def if the escaped search is literal
+        if "list_project_cover_images" not in body[:2500]:
+            body = src[start:start + 2500]
+        self.assertIn("list_project_cover_images", body)
+        self.assertIn("set_cover_images(cfg, covers)", body)
+        self.assertIn('if k == "cover_image":', body)
+        from utility.scene_image_slots import list_project_cover_images
+
+        row = {"cover_image": [self.primary, self.secondary]}
+        cfg = {}
+        covers = list_project_cover_images(project_config=cfg, item=row)
+        self.assertEqual(
+            [os.path.abspath(self.primary), os.path.abspath(self.secondary)],
+            covers,
+        )
+        crushed = {"cover_image": self.primary}
+        covers = list_project_cover_images(project_config=crushed, item=row)
+        self.assertEqual(
+            [os.path.abspath(self.primary), os.path.abspath(self.secondary)],
+            covers,
+        )
 
 
 if __name__ == "__main__":

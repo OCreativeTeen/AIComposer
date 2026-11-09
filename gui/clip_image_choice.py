@@ -34,31 +34,82 @@ def _thumb(path: str, width: int = THUMB_W, height: int = THUMB_H):
         return None
 
 
-def pack_project_cover_preview(parent, path, *, title: str = "项目封面（提交给 LLM）", side=tk.LEFT):
-    """Single preview of the authoritative project cover (no four-slot picker)."""
+def pack_project_cover_preview(parent, path, *, paths=None, title: str = "项目封面（提交给 LLM）", side=tk.LEFT):
+    """Preview the project cover(s) for 从封面提取 (no four-slot picker).
+
+    One file: a single larger preview. Several files: larger aspect-aware
+    previews with click/radio selection. Selecting does not change the
+    project's stored primary cover; it only chooses what this extract uses.
+    """
+    from utility.scene_image_slots import cover_preview_max_size, normalize_cover_preview_choices
+
+    raw = list(paths) if paths is not None else ([path] if path else [])
+    items, selected = normalize_cover_preview_choices(raw, path)
     box = ttk.LabelFrame(parent, text=title, padding=(8, 4))
     box.pack(side=side, anchor=tk.S, padx=(8, 0))
-    p = str(path or "").strip()
-    ok = bool(p) and os.path.isfile(p)
-    tile = tk.Frame(box, width=COVER_PREVIEW_W, height=COVER_PREVIEW_H, bg="#dddddd")
-    tile.pack()
-    tile.pack_propagate(False)
     photos = []
-    if ok:
-        photo = _thumb(p, COVER_PREVIEW_W, COVER_PREVIEW_H)
-        if photo is not None:
-            photos.append(photo)
-            tk.Label(tile, image=photo, bg="#dddddd", bd=0).pack(fill=tk.BOTH, expand=True)
-        else:
-            tk.Label(tile, text=os.path.basename(p), bg="#dddddd", fg="gray40").pack(fill=tk.BOTH, expand=True)
-        ttk.Label(box, text=os.path.basename(p), wraplength=180).pack(anchor=tk.W, pady=(4, 0))
-    else:
+    cells = []
+
+    def _paint(sel: str) -> None:
+        box._cover_path = sel
+        for cell, item_path in cells:
+            on = os.path.normcase(item_path) == os.path.normcase(sel) if sel else False
+            try:
+                cell.configure(
+                    highlightbackground="#1f5fbf" if on else "#cccccc",
+                    highlightthickness=3 if on else 1,
+                )
+            except tk.TclError:
+                pass
+
+    def _pick(item_path: str) -> None:
+        if var is not None:
+            var.set(item_path)
+        _paint(item_path)
+
+    if not items:
+        tile = tk.Frame(box, width=COVER_PREVIEW_W, height=COVER_PREVIEW_H, bg="#dddddd")
+        tile.pack()
+        tile.pack_propagate(False)
         tk.Label(tile, text="没有可用的项目封面", bg="#dddddd", fg="gray40").pack(fill=tk.BOTH, expand=True)
         ttk.Label(
             box, text="不会改用场景里选中的图", foreground="gray40", wraplength=180
         ).pack(anchor=tk.W, pady=(4, 0))
+        box._photos = photos
+        box._cover_path = ""
+        return box
+
+    var = tk.StringVar(master=box, value=selected) if len(items) > 1 else None
+    row = ttk.Frame(box)
+    row.pack(anchor=tk.W)
+    for i, item_path in enumerate(items):
+        max_w, max_h = cover_preview_max_size(item_path)
+        cell = tk.Frame(row, bg="#dddddd", highlightthickness=1, highlightbackground="#cccccc")
+        # 16:9 横图并排；9:16 竖图也并排，方便对比
+        cell.pack(side=tk.LEFT, padx=(0 if i == 0 else 10, 0), anchor=tk.N)
+        cells.append((cell, item_path))
+        inner = tk.Frame(cell, width=max_w, height=max_h, bg="#dddddd")
+        inner.pack(padx=4, pady=4)
+        inner.pack_propagate(False)
+        photo = _thumb(item_path, max_w, max_h)
+        if photo is not None:
+            photos.append(photo)
+            img = tk.Label(inner, image=photo, bg="#dddddd", bd=0, cursor="hand2")
+        else:
+            img = tk.Label(inner, text=os.path.basename(item_path), bg="#dddddd", fg="gray40", cursor="hand2")
+        img.pack(fill=tk.BOTH, expand=True)
+        img.bind("<Button-1>", lambda _e, p=item_path: _pick(p))
+        label = os.path.basename(item_path)
+        if len(items) > 1:
+            ttk.Radiobutton(
+                cell, text=f"{i + 1}/{len(items)}  {label}", value=item_path, variable=var,
+                command=lambda p=item_path: _pick(p),
+            ).pack(anchor=tk.W, padx=4, pady=(0, 4))
+        else:
+            ttk.Label(cell, text=label, wraplength=max(180, max_w)).pack(anchor=tk.W, padx=4, pady=(0, 4))
+    _paint(selected)
     box._photos = photos
-    box._cover_path = p if ok else ""
+    box._cover_path = selected
     return box
 
 
