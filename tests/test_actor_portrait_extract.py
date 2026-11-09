@@ -23,7 +23,10 @@ from utility.actor_portrait_extract import (
     format_actor_result_line,
     parse_verify_json,
     scan_scenes_for_portraits,
-    scene_portrait_source,
+    actor_identity,
+    clip_image_is_cover_copy,
+    extract_portraits_for_scene,
+    scene_clip_image_source,
     status_label,
     verdict_accepts,
 )
@@ -243,18 +246,134 @@ class ActorPortraitExtractTest(unittest.TestCase):
 
     def test_default_slot_and_auto_hooks(self):
         scene = {"clip_image": self.scene_img}
-        self.assertEqual(scene_portrait_source(scene), os.path.abspath(self.scene_img))
+        self.assertEqual(scene_clip_image_source(scene), os.path.abspath(self.scene_img))
         src = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
-        self.assertIn("def _maybe_auto_extract_actor_portraits", src)
-        self.assertIn("self._maybe_auto_extract_actor_portraits(account)", src)
-        cover_fn = src.index("def _maybe_auto_extract_steps_from_cover")
-        nxt = src.find("\n    def _run_picture_batch", cover_fn)
-        body = src[cover_fn:nxt]
-        self.assertGreaterEqual(body.count("_maybe_auto_extract_actor_portraits()"), 3)
-        self.assertIn("封面提取已取消，不另要 Grok 账户，也没有做", body)
-        finish_i = src.index("def finish():")
-        finish_body = src[finish_i: src.index("def _maybe_auto_extract_actor_portraits")]
-        self.assertIn("self._maybe_auto_extract_actor_portraits(account)", finish_body)
+        self.assertNotIn("_maybe_auto_extract_actor_portraits", src)
+        self.assertIn("portraits=True", src)
+        self.assertIn("def portrait_step(scene, label)", src)
+        self.assertIn("written_evt.wait(", src)
+        self.assertIn("extract_portraits_for_scene(", src)
+        self.assertIn("self._portrait_style()", src)
+        dlg = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
+        run = dlg[dlg.index("def _run_portrait_extract"):dlg.index("def on_submit")]
+        self.assertIn("scene_clip_image_source(scene, covers)", run)
+        self.assertNotIn("chosen_image()", run)
+
+    def test_no_cover_fallback_uses_only_scene_clip_image(self):
+        cover = os.path.join(self.tmp, "cover.png")
+        _rgb_image(cover, (1, 2, 3), (200, 120))
+        seeded_clip = os.path.join(self.tmp, "clip_seed.png")
+        frozen = os.path.join(self.tmp, "zero_last.png")
+        import shutil
+
+        shutil.copy2(cover, seeded_clip)
+        shutil.copy2(cover, frozen)
+        # 播种后还没提取：clip_image 是封面拷贝 → 不用，也不退到 clip_image_last / zero / 封面
+        seeded = {"cover_origin": "cover", "clip_image": seeded_clip, "clip_image_last": self.scene_img,
+                  "zero_image_last": frozen, "actor_refs": [self.woman]}
+        self.assertTrue(clip_image_is_cover_copy(seeded))
+        self.assertEqual(scene_clip_image_source(seeded), "")
+        calls = []
+        out = extract_portraits_for_scene(
+            seeded, self.avatar, covers=[cover], generate=self._gen((5, 5, 5), calls),
+            verify=lambda *a: {"match": True, "confidence": 0.99},
+            portrait_path=self._path_lookup({}), portrait_dest=self._dest,
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(out["reason"], "no_scene_clip_image")
+        # 没有 clip_image：也不用 clip_image_last
+        self.assertEqual(scene_clip_image_source({"clip_image_last": self.scene_img}), "")
+        # 和项目封面同内容（无 cover_origin 标记）也算封面拷贝
+        self.assertEqual(scene_clip_image_source({"clip_image": seeded_clip}, covers=[cover]), "")
+        # 提取后：clip_image 是这一场自己的图 → 用它
+        extracted = dict(seeded, clip_image=self.scene_img)
+        out = extract_portraits_for_scene(
+            extracted, self.avatar, covers=[cover], generate=self._gen((7, 7, 7), calls),
+            verify=lambda *a: {"match": True, "confidence": 0.9},
+            portrait_path=self._path_lookup({}), portrait_dest=self._dest,
+        )
+        self.assertEqual(out["source"], os.path.abspath(self.scene_img))
+        self.assertEqual([c[0] for c in calls], ["scene.png"])
+
+    def test_existing_portrait_skipped_when_only_parenthesis_differs(self):
+        self.assertEqual(actor_identity("woman/mature/chinese/林氏（低头，青衫）"), "woman/mature/chinese/林氏")
+        self.assertEqual(actor_identity("man/youth/chinese/贾雨村(走向门口)"), "man/youth/chinese/贾雨村")
+        existing_file = self._dest("person", "woman/mature/chinese/林氏", self.avatar)
+        with open(existing_file, "wb") as fh:
+            fh.write(b"PASTED")
+        calls = []
+
+        def portrait_path(role, name, avatar_dir="", style=None):
+            p = self._dest(role, name, avatar_dir)
+            return p if os.path.isfile(p) else ""
+
+        variant = dict(self.woman, body="woman/mature/chinese/林氏（另一场：站在门口，红衣）")
+        rows = extract_actor_portraits(
+            self.scene_img, [variant], self.avatar, generate=self._gen((3, 3, 3), calls),
+            verify=lambda *a: {"match": True, "confidence": 0.99},
+            portrait_path=portrait_path, portrait_dest=self._dest,
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(rows[0]["status"], STATUS_SKIPPED)
+        self.assertEqual(Path(existing_file).read_bytes(), b"PASTED")
+        # 同一场里两个只差括号的同一人：只提取一次
+        rows = extract_actor_portraits(
+            self.scene_img,
+            [dict(self.man, body="man/youth/chinese/贾雨村（坐）"), dict(self.man, body="man/youth/chinese/贾雨村（站）")],
+            self.avatar, generate=self._gen((4, 4, 4), calls),
+            verify=lambda *a: {"match": True, "confidence": 0.9},
+            portrait_path=portrait_path, portrait_dest=self._dest,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(rows), 1)
+        preset = actors_from_scene({"actor_refs": [dict(self.woman, body="woman/mature/chinese/林氏（低头）")]})
+        self.assertEqual(preset[0]["body"], "woman/mature/chinese/林氏")
+
+    def test_recheck_right_before_each_grok_call(self):
+        """前一个人物/场景或用户刚粘贴的肖像：下一次调用前要重新查，不再提取。"""
+        calls = []
+        state = {}
+
+        def portrait_path(role, name, avatar_dir="", style=None):
+            return state.get(name, "")
+
+        def generate(image, actor, prompt):
+            calls.append(actor["body"])
+            # Grok 处理第一个人时，用户在人物窗粘贴了第二个人的肖像
+            pasted = self._dest("person", self.man["body"], self.avatar)
+            _rgb_image(pasted, (9, 9, 9))
+            state[self.man["body"]] = pasted
+            path = os.path.join(self.tmp, f"g_{len(calls)}.png")
+            _rgb_image(path, (100, 100, 100))
+            return path
+
+        rows = extract_actor_portraits(
+            self.scene_img, [self.woman, self.man], self.avatar, generate=generate,
+            verify=lambda *a: {"match": True, "confidence": 0.9},
+            portrait_path=portrait_path, portrait_dest=self._dest,
+        )
+        self.assertEqual(calls, [self.woman["body"]])
+        self.assertEqual([r["status"] for r in rows], [STATUS_OK, STATUS_SKIPPED])
+
+    def test_paste_during_review_is_not_overwritten(self):
+        state = {}
+        pasted = self._dest("person", self.woman["body"], self.avatar)
+
+        def portrait_path(role, name, avatar_dir="", style=None):
+            return state.get(name, "")
+
+        def verify(portrait, actor, scene_image):
+            with open(pasted, "wb") as fh:
+                fh.write(b"USER-PASTE")
+            state[self.woman["body"]] = pasted
+            return {"match": True, "confidence": 0.95}
+
+        rows = extract_actor_portraits(
+            self.scene_img, [self.woman], self.avatar, generate=self._gen((6, 6, 6), []),
+            verify=verify, portrait_path=portrait_path, portrait_dest=self._dest,
+        )
+        self.assertEqual(rows[0]["status"], STATUS_SKIPPED)
+        self.assertEqual(Path(pasted).read_bytes(), b"USER-PASTE")
 
     def test_preset_actor_refs_used_without_project_manager(self):
         scene = {"actor_refs": [self.woman]}
