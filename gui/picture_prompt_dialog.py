@@ -516,7 +516,7 @@ def open_picture_prompt_dialog(
         if mode == "portrait":
             hint.config(
                 foreground="",
-                text="提取人物肖像：用 Grok Image 从当前选中的场景图（默认起始图 clip_image）提取还没有肖像的人物头部/肩部。"
+                text="提取人物肖像：用 Grok Image 从这一场自己的起始图（clip_image，不用封面）提取还没有肖像的人物头部/肩部。"
                      "提示词带上性别、年龄、国别和括号里的形象描述；图里不明显存在就不要编造。"
                      "Grok 返回的图再交给 Strata 对照人物描述和原图审核，通过才关联（和粘贴肖像相同）。"
                      "已经有肖像的跳过。不改场景图。",
@@ -855,7 +855,7 @@ def open_picture_prompt_dialog(
             extract_actor_portraits,
             format_actor_result_line,
             generate_portrait_with_grok,
-            scene_portrait_source,
+            scene_clip_image_source,
             verify_portrait_with_strata,
         )
 
@@ -863,16 +863,33 @@ def open_picture_prompt_dialog(
         if not isinstance(scene, dict):
             messagebox.showwarning("图片修改", "没有当前场景", parent=dlg)
             return
-        slot = chosen_image() if callable(chosen_image) else "clip_image"
-        image = scene_portrait_source(scene, slot)
+        # t319u: 只用这一场自己的 clip_image（不按四图选择，不用封面或封面拷贝）
+        covers = []
+        if callable(get_project_covers):
+            try:
+                covers = list(get_project_covers() or [])
+            except Exception:  # noqa: BLE001
+                covers = []
+        image = scene_clip_image_source(scene, covers)
         if not image:
-            messagebox.showwarning("图片修改", "当前场景没有可用的图，提取不了人物肖像。", parent=dlg)
+            messagebox.showwarning(
+                "图片修改",
+                "这一场还没有自己的起始图（clip_image），或起始图还是封面原图的拷贝。"
+                "先从封面提取 / 生成这一场的图，再提取人物肖像。",
+                parent=dlg,
+            )
             return
         actors = actors_from_scene(scene)
         if not actors:
             messagebox.showinfo("图片修改", "这一场没有人物，不用提取肖像。", parent=dlg)
             return
         style = (get_style() or "").strip() if callable(get_style) else ""
+        try:  # 同双击人物看肖像（wf_actors._portrait_style）的风格目录
+            import config as _cfg
+
+            style = _cfg.match_visual_style(style) or style or project_manager.current_visual_style()
+        except Exception:  # noqa: BLE001
+            pass
 
         def generate(image_path, actor, prompt):
             return generate_portrait_with_grok(image_path, actor, prompt, account=account)

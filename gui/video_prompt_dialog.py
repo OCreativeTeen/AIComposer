@@ -400,9 +400,10 @@ def open_video_prompt_dialog(
         narrative_row, visual_var, speaking_var, actor_var, override_var, anchor=tk.N
     )
 
-    groups = ttk.Frame(body)
+    # t322u: 画面 / 背景 / 演进 / 运镜 放在同一行，接在「写进提示词的内容」右边（不再单占一行，省出高度给下面）
+    groups = ttk.Frame(narrative_row)
     if not is_transition:
-        groups.pack(anchor=tk.W)
+        groups.pack(side=tk.LEFT, anchor=tk.N, padx=(8, 0))
 
     picture_box = ttk.LabelFrame(groups, text="画面", padding=(8, 4))
     picture_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
@@ -684,7 +685,9 @@ def open_video_prompt_dialog(
             prompt = prompt.replace(
                 "Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).",
                 "Sound: the given song.")
-        prompt = prompt + "\n\n" + config_prompt.video_closing_block(scenes, _tr, _start)
+        _closing = config_prompt.video_closing_block(scenes, _tr, _start)
+        if _closing:  # t321u: 结尾只有光线；禁字幕 / 画面干净不重复
+            prompt = prompt + "\n\n" + _closing
         if _cfg_mm.is_minimax(backend):
             # t165u: 提交给 MiniMax 时把同样的场景内容换成 H3 官方格式（窗口里显示的就是实际发送的）
             _secs = 10.0
@@ -707,6 +710,7 @@ def open_video_prompt_dialog(
                 fyi=get_fyi_text() if fyi_include_var.get() else "",
                 stage=bg_stage if bg_include_var.get() else None,
                 speech_speed=_speech_speed if _amode == "none" else 1.0,
+                text=text_var.get(),  # t321u: 保留 / 关键字作背景 → H3 里写「Image keywords:」那句
             )
             _h3_refs = list(portrait_refs) if (portrait_refs and _mm_r2v) else []
 

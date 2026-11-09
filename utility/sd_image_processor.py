@@ -1086,8 +1086,8 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         audio_name = upload(audio_local, f"h3_{stamp}_audio.wav")
 
     try:
-        from config_prompt import ensure_h3_no_subtitle_rules, with_h3_no_subtitle_negative
-        prompt = ensure_h3_no_subtitle_rules(prompt)  # t238u
+        from config_prompt import ensure_video_no_subtitle_first_line, with_h3_no_subtitle_negative
+        prompt = ensure_video_no_subtitle_first_line(prompt)  # t321u: 禁字幕只一句、在第一行（不再三遍）
         negative = with_h3_no_subtitle_negative(negative)
     except Exception as _e:  # noqa: BLE001
         print(f"[ComfyUI H3] 禁字幕句核对跳过：{_e}")

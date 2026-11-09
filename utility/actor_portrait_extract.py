@@ -3,9 +3,14 @@
 t316u：用 Grok Image（和「修改图片 / 补全人物」相同的图生图路径）按人物描述
 提取头部/肩部肖像；再用 Strata 看图审核。只有审核通过才关联。不改场景图。
 已有肖像的人物跳过，绝不覆盖。
+
+t319u：来源只用这一场自己的 clip_image。新项目播种时 clip_image 是封面的拷贝，
+这种还没从封面提取出来的图（与冻结的封面原图 / 项目封面内容相同）一律不用，
+也不退到 clip_image_last、zero 图或封面。人物身份 = 性别/年龄/国别/名字，括号不算。
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -61,21 +66,57 @@ def format_actor_result_line(row: dict) -> str:
     return line
 
 
-def scene_portrait_source(scene, slot: str = DEFAULT_IMAGE_SLOT) -> str:
-    """Current/primary scene still used for extraction: chosen slot, default clip_image."""
+_PAREN_TAIL = re.compile(r"[（(]([^）)]*)[）)]\s*$")
+
+
+def actor_identity(body: str) -> str:
+    """性别/年龄/国别/名字；去掉末尾括号（同 project_manager.split_actor_motion）。"""
+    text = (body or "").strip()
+    found = _PAREN_TAIL.search(text)
+    return text[: found.start()].strip() if found else text
+
+
+def _file_digest(path: str) -> tuple:
+    try:
+        with open(path, "rb") as fh:
+            return os.path.getsize(path), hashlib.sha1(fh.read()).hexdigest()
+    except OSError:
+        return None, None
+
+
+def _same_content(a: str, b: str) -> bool:
+    if not (a and b and os.path.isfile(a) and os.path.isfile(b)):
+        return False
+    if os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b)):
+        return True
+    size_a, hash_a = _file_digest(a)
+    size_b, hash_b = _file_digest(b)
+    return size_a is not None and size_a == size_b and hash_a == hash_b
+
+
+def clip_image_is_cover_copy(scene, covers=()) -> bool:
+    """clip_image 还是播种时的封面拷贝：与冻结的封面原图或任一项目封面内容相同。"""
+    if not isinstance(scene, dict):
+        return False
+    clip = scene.get(DEFAULT_IMAGE_SLOT) or ""
+    if not (isinstance(clip, str) and clip and os.path.isfile(clip)):
+        return False
+    frozen = scene.get("zero_image_last") or ""
+    if scene.get("cover_origin") == "cover" and isinstance(frozen, str) and _same_content(clip, frozen):
+        return True
+    return any(isinstance(c, str) and _same_content(clip, c) for c in (covers or ()))
+
+
+def scene_clip_image_source(scene, covers=()) -> str:
+    """这一场自己的 clip_image；没有、或还是封面拷贝 → ""。不退到其它图或封面。"""
     if not isinstance(scene, dict):
         return ""
-    keys = []
-    chosen = str(slot or DEFAULT_IMAGE_SLOT).strip() or DEFAULT_IMAGE_SLOT
-    keys.append(chosen)
-    for extra in (DEFAULT_IMAGE_SLOT, "clip_image_last"):
-        if extra not in keys:
-            keys.append(extra)
-    for key in keys:
-        path = scene.get(key) or ""
-        if isinstance(path, str) and path and os.path.isfile(path):
-            return os.path.abspath(path)
-    return ""
+    path = scene.get(DEFAULT_IMAGE_SLOT) or ""
+    if not (isinstance(path, str) and path and os.path.isfile(path)):
+        return ""
+    if clip_image_is_cover_copy(scene, covers):
+        return ""
+    return os.path.abspath(path)
 
 
 def actor_ref_from_entry(entry) -> dict | None:
@@ -116,10 +157,14 @@ def actors_from_scene(scene) -> list:
         for item in preset:
             if isinstance(item, dict) and item.get("body"):
                 row = dict(item)
+                raw = str(row["body"])
+                row["body"] = actor_identity(raw)
+                if not row.get("note") and row["body"] != raw.strip():
+                    row["note"] = raw.strip()[len(row["body"]):].strip("（）() ")
                 row.setdefault("role", "person")
                 row.setdefault("label", "人物")
                 row.setdefault("name", row["body"].split("/")[-1])
-                row.setdefault("key", f"{row['role']}:{row['body']}")
+                row["key"] = f"{row['role']}:{row['body']}"
                 out.append(row)
         return out
     import project_manager
@@ -344,10 +389,17 @@ def extract_actor_portraits(
     generate = generate or (lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account))
     verify = verify or verify_portrait_with_strata
     results = []
+    seen_ids = set()
     for actor in actors or []:
         if not isinstance(actor, dict) or not actor.get("body"):
             continue
         row = dict(actor)
+        row["body"] = actor_identity(row.get("body") or "")
+        ident = (row.get("role") or "person", row["body"])
+        if not row["body"] or ident in seen_ids:
+            continue
+        seen_ids.add(ident)
+        # 每次调 Grok 之前都重新检查（前面的场景或用户粘贴可能刚刚有了肖像）。
         existing = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
         if existing:
             row["status"] = STATUS_SKIPPED
@@ -403,8 +455,21 @@ def extract_actor_portraits(
             row["reason"] = (verdict or {}).get("reason") or ""
             results.append(row)
             continue
+        concurrent = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
+        if concurrent:  # 审核期间有人粘贴了肖像：不覆盖
+            _discard_temp(raw_path, image_path, dest)
+            row["status"] = STATUS_SKIPPED
+            row["dest"] = concurrent
+            results.append(row)
+            continue
         try:
             saved = _save_independent(raw_path, dest)
+        except FileExistsError:
+            _discard_temp(raw_path, image_path, dest)
+            row["status"] = STATUS_SKIPPED
+            row["dest"] = os.path.abspath(dest)
+            results.append(row)
+            continue
         except Exception:
             _discard_temp(raw_path, image_path, dest)
             row["status"] = STATUS_FAILED
@@ -418,19 +483,52 @@ def extract_actor_portraits(
     return results
 
 
-def scan_scenes_for_portraits(
-    scenes,
+def extract_portraits_for_scene(
+    scene,
     avatar_dir: str = "",
     *,
+    covers=(),
     style: str = "",
-    slot: str = DEFAULT_IMAGE_SLOT,
     generate=None,
     verify=None,
     account: str = "",
     portrait_path=None,
     portrait_dest=None,
 ) -> dict:
-    """Walk scenes in order; Grok+Strata for missing portraits; stop when every known actor has one."""
+    """这一场：只用它自己的 clip_image，为还没有肖像的人物提取。
+
+    返回 {"source", "results", "reason"}；没有可用的 clip_image（含封面拷贝）时 results 为空。
+    """
+    portrait_path = portrait_path or _default_portrait_path
+    portrait_dest = portrait_dest or _default_portrait_dest
+    actors = actors_from_scene(scene)
+    missing = [a for a in actors if not _has_portrait(a, avatar_dir, style, portrait_path, portrait_dest)]
+    if not missing:
+        return {"source": "", "results": [], "reason": "all_have_portraits" if actors else "no_actors"}
+    image = scene_clip_image_source(scene, covers)
+    if not image:
+        return {"source": "", "results": [], "reason": "no_scene_clip_image"}
+    rows = extract_actor_portraits(
+        image, missing, avatar_dir, style=style,
+        generate=generate, verify=verify, account=account,
+        portrait_path=portrait_path, portrait_dest=portrait_dest,
+    )
+    return {"source": image, "results": rows, "reason": ""}
+
+
+def scan_scenes_for_portraits(
+    scenes,
+    avatar_dir: str = "",
+    *,
+    covers=(),
+    style: str = "",
+    generate=None,
+    verify=None,
+    account: str = "",
+    portrait_path=None,
+    portrait_dest=None,
+) -> dict:
+    """按场景顺序逐场调用 extract_portraits_for_scene；所有已知人物都有肖像就停。"""
     portrait_path = portrait_path or _default_portrait_path
     portrait_dest = portrait_dest or _default_portrait_dest
     scenes = [s for s in (scenes or []) if isinstance(s, dict)]
@@ -443,44 +541,33 @@ def scan_scenes_for_portraits(
                 seen.add(key)
                 known.append(actor)
     reports = []
-    grok_calls = 0
-    strata_calls = 0
+    calls = {"grok": 0, "strata": 0}
+    gen_fn = generate or (lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account))
+    ver_fn = verify or verify_portrait_with_strata
 
-    def counted_generate(image, actor, prompt, _gen=generate):
-        nonlocal grok_calls
-        grok_calls += 1
-        fn = _gen or (lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account))
-        return fn(image, actor, prompt)
+    def counted_generate(image, actor, prompt):
+        calls["grok"] += 1
+        return gen_fn(image, actor, prompt)
 
-    def counted_verify(portrait, actor, scene_image, _ver=verify):
-        nonlocal strata_calls
-        strata_calls += 1
-        fn = _ver or verify_portrait_with_strata
-        return fn(portrait, actor, scene_image)
+    def counted_verify(portrait, actor, scene_image):
+        calls["strata"] += 1
+        return ver_fn(portrait, actor, scene_image)
+
+    def all_done() -> bool:
+        return not any(not _has_portrait(a, avatar_dir, style, portrait_path, portrait_dest) for a in known)
 
     for scene in scenes:
-        if not any(not _has_portrait(a, avatar_dir, style, portrait_path, portrait_dest) for a in known):
+        if all_done():
             break
-        missing_here = [
-            actor for actor in actors_from_scene(scene)
-            if not _has_portrait(actor, avatar_dir, style, portrait_path, portrait_dest)
-        ]
-        if not missing_here:
-            continue
-        image = scene_portrait_source(scene, slot)
-        if not image:
-            continue
-        batch = extract_actor_portraits(
-            image, missing_here, avatar_dir, style=style,
+        out = extract_portraits_for_scene(
+            scene, avatar_dir, covers=covers, style=style,
             generate=counted_generate, verify=counted_verify, account=account,
             portrait_path=portrait_path, portrait_dest=portrait_dest,
         )
-        reports.extend(batch)
-        if not any(not _has_portrait(a, avatar_dir, style, portrait_path, portrait_dest) for a in known):
-            break
+        reports.extend(out["results"])
     return {
         "results": reports,
-        "grok_calls": grok_calls,
-        "strata_calls": strata_calls,
+        "grok_calls": calls["grok"],
+        "strata_calls": calls["strata"],
         "actors": known,
     }
