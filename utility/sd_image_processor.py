@@ -1442,7 +1442,7 @@ def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
                              status=None, negative=None):
     """ComfyUI 跑 MOSS 图片编辑。images[0]=底图，images[1:]=参考图（最多 3，可无）。
 
-    返回 PIL.Image。server 默认 config.COMFYUI_MOSS_URL（192.168.1.30:8188，asus2060）。
+    返回 PIL.Image。server 默认 config.COMFYUI_MOSS_URL（192.168.1.x:8188，asus2060）。
     t231u: 送出前把「extract step」类提示改成 MOSS 口吻；无参考时只传 1 张底图。
     """
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
@@ -1569,7 +1569,7 @@ def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
 # ---------------------------------------------------------------------------
 # t234u: Qwen(QN) 图片编辑（ComfyUI · workflow/qwen_edit_3ref_api.json）
 # ---------------------------------------------------------------------------
-# 与 MOSS 同机（默认 COMFYUI_QN_URL = COMFYUI_MOSS_URL = 192.168.1.30:8188）。
+# 与 MOSS 同机（默认 COMFYUI_QN_URL = COMFYUI_MOSS_URL = 192.168.1.x:8188）。
 # API 工作流：LoadImage base(8) → FluxKontextImageScale(117)
 #   → TextEncodeQwenImageEditPlus 正面(39)/负面(36)：image1=缩放底图，image2/3=可选参考
 #   → VAEEncode(88) → KSampler(37) → VAEDecode → SaveImage(9)
