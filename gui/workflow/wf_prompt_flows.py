@@ -263,16 +263,19 @@ class PromptFlowsMixin:
         if wf is not None:
             wf.cover_seeded_path = ""  # 只做一次
         if not cover or not os.path.isfile(cover):
+            self._maybe_auto_extract_actor_portraits()
             return
         scenes = [s for s in (wf.scenes or []) if isinstance(s, dict)]
         story = [s for s in wf.scenes_in_story(scenes[0]) if isinstance(s, dict)] if scenes else []
-        if len(story) != len(scenes):  # 不止一集：不自动做
+        if len(story) != len(scenes):  # 不止一集：不自动做封面提取，仍尝试从已有场景图取肖像
+            self._maybe_auto_extract_actor_portraits()
             return
         from utility.speaking_marks import ensure_cover_steps, unique_cover_step_count
 
         ensure_cover_steps(story)
         n = unique_cover_step_count(story)
         if not (2 <= n <= 6):
+            self._maybe_auto_extract_actor_portraits()
             return
         picked = None
         try:  # t176u / t237u: 封面逐场提取固定用 Grok（QN/MOSS 效果差；手动「图片修改」仍可选 QN/MOSS）
@@ -304,6 +307,7 @@ class PromptFlowsMixin:
             )
         if not picked:
             print("ℹ️ 从封面逐场提取：取消，没有做。")
+            print("ℹ️ 自动提取人物肖像：封面提取已取消，不另要 Grok 账户，也没有做。")
             return
         backend, account = picked
         pc = project_manager.PROJECT_CONFIG or {}
@@ -772,6 +776,7 @@ class PromptFlowsMixin:
             if auto:  # t176u: 自动提取不弹要按确定的窗，只显示几秒的提示
                 print(note)
                 show_auto_close_popup(self.root, "从封面逐场提取", note, duration_ms=4000)
+                self._maybe_auto_extract_actor_portraits(account)
             else:
                 messagebox.showinfo("图片修改", note, parent=self.root)
             # 最后再查一遍：这一段里 clip 视频还比图旧的场景（以前漏做的）一起重做（本地 ffmpeg，静态图 + clip 音频）。
@@ -781,6 +786,88 @@ class PromptFlowsMixin:
         if remix_visual:
             threading.Thread(target=remix_worker, daemon=True).start()
         threading.Thread(target=worker, daemon=True).start()
+
+    def _maybe_auto_extract_actor_portraits(self, account: str = "") -> None:
+        """t316u: 封面逐场提取完成（或因条件跳过）后，从第 1 场起用 Grok Image + Strata 审核提取肖像。
+
+        需要 Grok Chrome 账户：若封面提取已经选过，传入同一个账户；否则按封面提取同样的规则
+        复用上次 Grok 账户或弹窗（取消 = 不做）。用户取消封面提取的账户选择时不会走到这里。
+        每位尚无肖像、且出现在该场的人物：一次 Grok 提取 + 一次 Strata 审核（有返回图时）。
+        失败静默跳过并继续下一场；全部有肖像后提前停止。不改场景图。后台线程，不挡界面。
+        """
+        import threading
+
+        from gui.picture_prompt_dialog import PICTURE_SUBMIT_PREF, ask_llm_and_account
+
+        wf = getattr(self, "workflow", None)
+        if not wf:
+            return
+        scenes = [s for s in (wf.scenes or []) if isinstance(s, dict)]
+        if not scenes:
+            return
+        try:
+            import config
+
+            avatar_dir = os.path.join(config.get_project_path(self.get_pid()), "avatar")
+        except Exception:  # noqa: BLE001
+            return
+        style = ""
+        try:
+            var = getattr(self, "scene_visual_style", None)
+            style = (var.get() or "").strip() if var is not None else ""
+        except Exception:  # noqa: BLE001
+            style = ""
+        pc = project_manager.PROJECT_CONFIG or {}
+        style = style or (pc.get("visual_style") or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
+        account = (account or "").strip()
+        if not account:
+            try:
+                from utility import chrome_account
+
+                last = dict(config.load_yt_tools_prefs().get(PICTURE_SUBMIT_PREF) or {})
+                llm = str(last.get("llm") or "").strip().lower()
+                acct = chrome_account.normalize(last.get("account") or "")
+                if llm == "grok" and chrome_account.profile_dir(acct):
+                    account = acct
+                    print(f"🖼 自动提取人物肖像：用 Grok / {acct or '默认账户'}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"自动提取人物肖像：读上次的选择失败，改为弹窗：{exc}")
+        if not account:
+            picked = ask_llm_and_account(
+                self.root, pref_key=PICTURE_SUBMIT_PREF,
+                title="提取人物肖像（Grok · 取消 = 不做）",
+                fixed_backend="grok",
+            )
+            if not picked:
+                print("ℹ️ 自动提取人物肖像：取消，没有做。")
+                return
+            account = picked[1]
+
+        def generate(image_path, actor, prompt):
+            from utility.actor_portrait_extract import generate_portrait_with_grok
+
+            return generate_portrait_with_grok(image_path, actor, prompt, account=account)
+
+        def work() -> None:
+            from utility.actor_portrait_extract import format_actor_result_line, scan_scenes_for_portraits
+
+            try:
+                report = scan_scenes_for_portraits(
+                    scenes, avatar_dir, style=style, generate=generate, account=account,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 自动提取人物肖像失败：{exc}")
+                return
+            rows = report.get("results") or []
+            if not rows:
+                return
+            print(
+                f"🖼 自动提取人物肖像：Grok {report.get('grok_calls') or 0} 次，"
+                f"Strata 审核 {report.get('strata_calls') or 0} 次\n"
+                + "\n".join(format_actor_result_line(r) for r in rows)
+            )
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _stale_still_clip_scenes(self, scenes: list) -> list:
         """clip 视频比 clip_image 旧（或没有 clip 视频）、且有 clip 音频的场景：需要用新图重做静态视频。"""

@@ -163,11 +163,13 @@ PICTURE_EDIT_MODES = (
      "把现在的图当封面，从里面取出这一场的画面。不加字，不改画风。"),
     ("cast", "补全/修正人物",
      "按 视觉、讲话 和人物肖像图，补上缺的人物或改正对不上的人物。不加字，不改画风，不画对话泡泡。"),
+    ("portrait", "提取人物肖像",
+     "从当前场景图里，按人物的性别、年龄、国别等描述提取还没有肖像的人物头部。已经有肖像的不改；图里找不到就不关联。"),
 )
 
 
 def ask_picture_edit_mode(parent, anchor=None, *, initial: str = "modify", step_no: int = 0):
-    """t216u: 图片修改第一步：选类型。返回 "modify" / "cover" / "cast"，取消返回 None。"""
+    """t216u / t315u: 图片修改第一步：选类型。返回 "modify" / "cover" / "cast" / "portrait"，取消返回 None。"""
     box = tk.Toplevel(parent)
     box.title("图片修改 · 选类型")
     box.transient(parent)
@@ -511,6 +513,15 @@ def open_picture_prompt_dialog(
         if mode == "cast":
             hint.config(foreground="", text="补全/修正人物：按 视觉、讲话 和人物肖像图补上缺的人物、改正对不上的人物。画风不变，不加字，不画对话泡泡。")
             return
+        if mode == "portrait":
+            hint.config(
+                foreground="",
+                text="提取人物肖像：用 Grok Image 从当前选中的场景图（默认起始图 clip_image）提取还没有肖像的人物头部/肩部。"
+                     "提示词带上性别、年龄、国别和括号里的形象描述；图里不明显存在就不要编造。"
+                     "Grok 返回的图再交给 Strata 对照人物描述和原图审核，通过才关联（和粘贴肖像相同）。"
+                     "已经有肖像的跳过。不改场景图。",
+            )
+            return
         if step_mode:
             hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格）和说明文字（只管这一步的字），其他选项不进提示词。")
             return
@@ -530,6 +541,9 @@ def open_picture_prompt_dialog(
         dlg.destroy()
 
     def on_go(backend: str = "grok", account: str = "") -> None:
+        if mode == "portrait":
+            _run_portrait_extract(account)
+            return
         if mode == "cast" and not fix_on():
             messagebox.showwarning("图片修改", "补全/修正人物用不了：" + (_tip["text"] or "没有人物肖像图。"), parent=dlg)
             return
@@ -835,8 +849,55 @@ def open_picture_prompt_dialog(
             except TypeError:
                 open_manual(prompt, images)
 
+    def _run_portrait_extract(account: str = "") -> None:
+        from utility.actor_portrait_extract import (
+            actors_from_scene,
+            extract_actor_portraits,
+            format_actor_result_line,
+            generate_portrait_with_grok,
+            scene_portrait_source,
+            verify_portrait_with_strata,
+        )
+
+        scene = get_scene() if get_scene is not None else None
+        if not isinstance(scene, dict):
+            messagebox.showwarning("图片修改", "没有当前场景", parent=dlg)
+            return
+        slot = chosen_image() if callable(chosen_image) else "clip_image"
+        image = scene_portrait_source(scene, slot)
+        if not image:
+            messagebox.showwarning("图片修改", "当前场景没有可用的图，提取不了人物肖像。", parent=dlg)
+            return
+        actors = actors_from_scene(scene)
+        if not actors:
+            messagebox.showinfo("图片修改", "这一场没有人物，不用提取肖像。", parent=dlg)
+            return
+        style = (get_style() or "").strip() if callable(get_style) else ""
+
+        def generate(image_path, actor, prompt):
+            return generate_portrait_with_grok(image_path, actor, prompt, account=account)
+
+        try:
+            rows = extract_actor_portraits(
+                image, actors, actor_avatar_dir or "", style=style,
+                generate=generate, verify=verify_portrait_with_strata, account=account,
+            )
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showwarning("图片修改", f"提取人物肖像失败：{exc}", parent=dlg)
+            return
+        remember()
+        dlg.destroy()
+        lines = [format_actor_result_line(row) for row in rows]
+        print("提取人物肖像（" + os.path.basename(image) + "）：\n" + "\n".join(lines))
+        messagebox.showinfo("提取人物肖像", "\n".join(lines) if lines else "没有可处理的人物。", parent=parent)
+
     def on_submit() -> None:
         """t129u / t229u: 「提交」先问后端（Grok / Gemini / MOSS / QN）和 Chrome 账户；MOSS/QN 本机 ComfyUI，不用账户。"""
+        if mode == "portrait":
+            picked = ask_llm_and_account(dlg, title="提取人物肖像（Grok）", fixed_backend="grok")
+            if picked:
+                _run_portrait_extract(picked[1])
+            return
         picked = ask_llm_and_account(dlg, extra_backends=(("moss", "MOSS"), ("qn", "QN")))
         if picked:
             on_go(picked[0], picked[1])
@@ -930,8 +991,11 @@ def open_picture_prompt_dialog(
         if mode == "cover":
             forced["narrative"] = (narrative_var, "step")
             forced["fix_cast"] = (fix_cast_var, False)
-        else:
+        elif mode == "cast":
             forced["fix_cast"] = (fix_cast_var, True)
+            forced["narrative"] = (narrative_var, "narration" if narrative_var.get() == "step" else narrative_var.get())
+        else:
+            forced["fix_cast"] = (fix_cast_var, False)
             forced["narrative"] = (narrative_var, "narration" if narrative_var.get() == "step" else narrative_var.get())
         for key, (var, val) in forced.items():
             cur = var.get()
@@ -945,6 +1009,11 @@ def open_picture_prompt_dialog(
             fix_box.pack_forget()
             if _img_box is not None:
                 _img_box.pack_forget()
+        elif mode == "portrait":
+            _fields.pack_forget()
+            fix_box.pack_forget()
+            if _cover_box is not None:
+                _cover_box.pack_forget()
         else:
             fix_cb.pack_forget()  # 补全人物一定开着；不能用时 fix_note 里写原因
             _fields.pack_forget()

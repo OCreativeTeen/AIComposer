@@ -252,6 +252,26 @@ def actor_portrait_path(role: str, name: str, avatar_dir: str = "", style: str |
     return ""
 
 
+def actor_portrait_dest(role: str, name: str, avatar_dir: str = "", style: str | None = None) -> str:
+    """粘贴肖像写入的路径：讲员 ``avatar/<风格>/<stem>.png``，项目人物 ``<项目>/avatar/<stem>.png``。"""
+    import config
+
+    name = (name or "").strip()
+    if not name:
+        return ""
+    stem = portrait_stem(name)
+    if not stem:
+        return ""
+    if role == "host":
+        folder = config.avatar_style_dest_dir(_style_or_current(style))
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, stem + ".png")
+    if not avatar_dir:
+        return ""
+    os.makedirs(avatar_dir, exist_ok=True)
+    return os.path.join(os.path.abspath(avatar_dir), stem + ".png")
+
+
 # 「换成」覆盖 → D:\AI_MEDIA\avatar\<gender>_<era>_<ethnicity>.png（例：中国人 · 民国 + woman → woman_民国_chinese.png）。
 # 族裔沿用头像库已有的词：chinese / english（西方人）；新加 japanese / black / tribal。
 OVERRIDE_ETHNICITY = {"中国人": "chinese", "日本人": "japanese", "西方人": "english", "黑人": "black", "原始部落人": "tribal"}
