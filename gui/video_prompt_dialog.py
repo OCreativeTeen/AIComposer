@@ -363,8 +363,8 @@ def open_video_prompt_dialog(
     style_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
     for value, label in config_prompt.STORY_STYLE_CHOICES:
         ttk.Radiobutton(style_box, text=label, value=value, variable=style_var).pack(anchor=tk.W)
-    style_note = ttk.Label(style_box, foreground="#1f5fbf", wraplength=340, justify=tk.LEFT)
-    style_note.pack(anchor=tk.W, pady=(4, 0))
+    # t334u: 叙事风格的说明不放在框里（框太高、把下面挤下去），放到这一行最右边单独一列（见下面运镜之后）
+    style_note = ttk.Label(narrative_row, foreground="#1f5fbf", wraplength=300, justify=tk.LEFT)
 
     def _on_style(*_a) -> None:
         key = config_prompt.normalize_story_style(style_var.get()) or config_prompt.STORY_STYLE_CHOICES[0][0]
@@ -430,6 +430,8 @@ def open_video_prompt_dialog(
     camera_box.pack(side=tk.LEFT, anchor=tk.N)
     for value, label in config_prompt.VIDEO_FLOW_CAMERA_CHOICES:
         ttk.Radiobutton(camera_box, text=label, value=value, variable=camera_var).pack(anchor=tk.W)
+    # t334u: 叙事风格说明 = 这一行最右边的一列（运镜右边），换风格 / 勾人物时照样更新
+    style_note.pack(side=tk.LEFT, anchor=tk.N, padx=(12, 0), pady=(6, 0))
 
 
     summary = None
@@ -1358,15 +1360,21 @@ def open_video_prompt_dialog(
     if isinstance(episode, dict) and callable(open_manual):
         ep_btn.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     # t155u/t161u: 说清楚声音输入只有 MiniMax 支持
-    ttk.Label(
+    audio_note = ttk.Label(
         advanced,
         text="场景音频：仅 MiniMax 能用，选「作为说话」或「作为唱歌」时把当前场景音频一起送去对口型（长度选项灰掉，视频长度跟音频、至少 4 秒；音频 > 12.25 秒自动分成几段（每段 ≤ 12.25 秒 = 294 帧、切在停顿处），同一台机器依次生成，后一段接前一段最后一帧，再接起来换原声导入）。选「不加」时不送音频，也从不分段：一场只生成一段，长度按台词算帧（24fps，ceil 后再加 1 帧，向上对齐模型要求的 17n+5），范围 5.17–12.25 秒（124–294 帧；5 秒来自工作流默认 PrimitiveFloat，不是 6 秒档往下猜）。"
         "太短用 5.17 秒，超过 12.25 秒用 12.25 秒并加语速档让人物说快，导入时按同一档放慢到实际这两端的时长。分辨率仍按实际长度分档（含带音频、分段的每一段）：≤ 6.58 秒（158 帧）1312×736（竖屏 736×1312），≤ 9.42 秒（226 帧）1280×704（竖屏 704×1280），更长 1120×640（竖屏 640×1120）。"
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         + ("" if _has_audio else "（这一场没有音频）"),
-        foreground="#b05a00", wraplength=620, justify=tk.LEFT,
-    ).pack(anchor=tk.W, pady=(0, 6), before=lower)
+        foreground="#b05a00", wraplength=900, justify=tk.LEFT,
+    )
+    # t334u: 场景音频说明占满整行（跟着对话框宽度折行），两三行就完，不再窄窄一条很高
+    audio_note.pack(anchor=tk.W, fill=tk.X, pady=(0, 6), before=lower)
+    audio_note.bind(
+        "<Configure>",
+        lambda e: audio_note.configure(wraplength=max(300, e.width - 4)) if abs(int(audio_note.cget("wraplength")) - (e.width - 4)) > 2 else None,
+    )
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     text_var.trace_add("write", refresh_choices)
