@@ -710,6 +710,48 @@ class CoverListAndPickerHelperTest(unittest.TestCase):
             covers,
         )
 
+    def test_seeding_uses_covers_zero_without_multi_cover_prompt(self):
+        from utility.scene_image_slots import (
+            covers_for_pdf_prompt,
+            needs_cover_vs_pdf_prompt,
+            primary_cover_for_seeding,
+        )
+
+        third = os.path.join(self.tmp, "c_oldest.webp")
+        with open(third, "wb") as f:
+            f.write(b"C")
+        covers = [self.primary, self.secondary, third]
+        self.assertFalse(needs_cover_vs_pdf_prompt(covers, ""))
+        self.assertFalse(needs_cover_vs_pdf_prompt(covers, None))
+        self.assertTrue(needs_cover_vs_pdf_prompt(covers, "/tmp/slides.pdf"))
+        self.assertTrue(needs_cover_vs_pdf_prompt([self.primary], "/tmp/slides.pdf"))
+        self.assertFalse(needs_cover_vs_pdf_prompt([], "/tmp/slides.pdf"))
+        self.assertEqual(covers_for_pdf_prompt(covers), [self.primary])
+        self.assertEqual(primary_cover_for_seeding(covers), self.primary)
+        self.assertNotEqual(primary_cover_for_seeding(covers), third)
+        self.assertEqual(primary_cover_for_seeding(covers, override=self.secondary), self.secondary)
+        mw = Path(ROOT, "magic_workflow.py").read_text(encoding="utf-8")
+        seed_i = mw.index("def _seed_cover_path")
+        nxt = mw.find("\n    def ", seed_i + 10)
+        seed_fn = mw[seed_i: nxt if nxt != -1 else seed_i + 800]
+        if "primary_cover_for_seeding" not in seed_fn:
+            seed_fn = mw[seed_i:seed_i + 800]
+        self.assertIn("primary_cover_for_seeding", seed_fn)
+        self.assertNotIn("covers[-1]", seed_fn)
+        apply_i = mw.index("def _apply_cover_media_to_scenes")
+        ask_i = mw.index("def _ask_cover_or_pdf")
+        apply_fn = mw[apply_i:ask_i]
+        self.assertIn("needs_cover_vs_pdf_prompt", apply_fn)
+        self.assertIn("covers_for_pdf_prompt", apply_fn)
+        self.assertNotIn("len(covers) + (1 if pdf_opt else 0) >= 2", apply_fn)
+        # 自动从封面提取仍走 cover_seeded_path；不改提取循环
+        wf = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
+        fn = wf.index("def _maybe_auto_extract_steps_from_cover")
+        nxt = wf.find("\n    def ", fn + 10)
+        body = wf[fn:nxt if nxt != -1 else fn + 2500]
+        self.assertIn("cover_seeded_path", body)
+        self.assertIn("cover_extract_source(", body)
+
 
 if __name__ == "__main__":
     unittest.main()

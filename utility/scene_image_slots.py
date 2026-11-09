@@ -249,6 +249,30 @@ def normalize_cover_preview_choices(paths, selected: str = "") -> tuple[list, st
     return items, (items[0] if items else "")
 
 
+def needs_cover_vs_pdf_prompt(covers, pdf_path: str = "") -> bool:
+    """新项目只在「至少一张封面 + 一份分页 PDF」时询问用封面还是 PDF。
+
+    多张封面本身不弹窗挑图：建项目播种用当前封面（列表第一张）。
+    """
+    has_cover = any(isinstance(c, str) and str(c).strip() for c in (covers or []))
+    return bool(has_cover) and bool(str(pdf_path or "").strip())
+
+
+def covers_for_pdf_prompt(covers) -> list:
+    """封面-对-PDF 询问只出示当前封面（covers[0]），不把每张封面都当成选项。"""
+    items = [c for c in (covers or []) if isinstance(c, str) and str(c).strip()]
+    return items[:1]
+
+
+def primary_cover_for_seeding(covers, override: str = "") -> str:
+    """建项目播种用的封面：有覆盖路径就用覆盖，否则用 covers[0]（当前/最新）。"""
+    ov = str(override or "").strip()
+    if ov:
+        return ov
+    items = [c for c in (covers or []) if isinstance(c, str) and str(c).strip()]
+    return items[0] if items else ""
+
+
 def cover_preview_max_size(path: str) -> tuple[int, int]:
     """Preview box larger than the 96x60 four-slot tiles; follow 16:9 vs 9:16."""
     try:

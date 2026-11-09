@@ -145,6 +145,42 @@ def infographic_candidates_side_by_side(video_size: str) -> bool:
     return False
 
 
+STUDIO_TIMES_MAX = 3
+
+
+def clamp_studio_times(times) -> int:
+    """节目生成次数：1、2 或 3。非法或过小当作 1，超过 3 封顶。"""
+    try:
+        n = int(times or 1)
+    except (TypeError, ValueError):
+        return 1
+    if n < 1:
+        return 1
+    if n > STUDIO_TIMES_MAX:
+        return STUDIO_TIMES_MAX
+    return n
+
+
+def infographic_pick_thumb_size(video_size: str, count: int) -> tuple[int, int]:
+    """信息图候选缩略图最大边框，使 2–3 张能放进普通屏幕。
+
+    16:9 上下排：按高度均分；9:16 左右排：按宽度均分。
+    """
+    try:
+        n = int(count or 1)
+    except (TypeError, ValueError):
+        n = 1
+    n = 1 if n < 1 else n
+    side = infographic_candidates_side_by_side(video_size)
+    if side:
+        max_w = max(160, min(400, 1100 // n))
+        max_h = max(220, min(560, int(max_w * 16 / 9)))
+        return (max_w, max_h)
+    max_h = max(140, min(300, 720 // n))
+    max_w = max(240, min(560, int(max_h * 16 / 9)))
+    return (max_w, max_h)
+
+
 def file_result_paths(response) -> list[str]:
     """FileResult.paths 或单个路径字符串 → 路径列表。"""
     if response is None:
@@ -203,14 +239,10 @@ def run_sequential_generations(
     """依次调用 ``generate(index) -> path``，绝不并行。
 
     返回 ``(paths, error_or_None, cancelled)``。
-    第二次失败时保留已完成的第一次；取消则不再启动下一次。
+    某次失败时保留已经完成的结果；取消则不再启动下一次。
     拒绝与已有结果（existing 或本轮已收集）同一路径的产物。
     """
-    try:
-        n = int(times or 1)
-    except (TypeError, ValueError):
-        n = 1
-    n = 2 if n >= 2 else 1
+    n = clamp_studio_times(times)
     paths: list[str] = []
     seen = set()
     for raw in existing or ():
@@ -238,7 +270,7 @@ def run_sequential_generations(
         except (OSError, ValueError):
             key = path
         if key in seen:
-            return paths, RuntimeError("第二次生成得到了与已有结果相同的文件，已忽略"), False
+            return paths, RuntimeError("后来的生成得到了与已有结果相同的文件，已忽略"), False
         seen.add(key)
         paths.append(path)
         if on_status:
@@ -249,8 +281,4 @@ def run_sequential_generations(
 def studio_times_from_extra(extra) -> int:
     if not isinstance(extra, dict):
         return 1
-    try:
-        n = int(extra.get("studio_times") or 1)
-    except (TypeError, ValueError):
-        return 1
-    return 2 if n >= 2 else 1
+    return clamp_studio_times(extra.get("studio_times"))

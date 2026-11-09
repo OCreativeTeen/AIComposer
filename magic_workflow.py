@@ -2150,8 +2150,11 @@ class MagicWorkflow(EpisodeOpsMixin):
         if pdf_opt and not os.path.isfile(pdf_opt):
             pdf_opt = ""
         picked = None
-        if len(covers) + (1 if pdf_opt else 0) >= 2:
-            picked = self._ask_cover_or_pdf(covers, pdf_opt, n_scenes)
+        from utility.scene_image_slots import covers_for_pdf_prompt, needs_cover_vs_pdf_prompt
+
+        # 多张封面不弹窗互选；只有封面 vs 分页 PDF 才问，默认候选是当前封面 covers[0]。
+        if needs_cover_vs_pdf_prompt(covers, pdf_opt):
+            picked = self._ask_cover_or_pdf(covers_for_pdf_prompt(covers), pdf_opt, n_scenes)
             if not picked:
                 # 都不用 / 关窗：当作没有封面、没有 PDF；add_story_scene 已随机填好频道图和 clip 视频
                 print("ℹ️ 新项目：不用封面 / PDF，场景保留随机的频道图片和 clip 视频")
@@ -2245,12 +2248,15 @@ class MagicWorkflow(EpisodeOpsMixin):
                     print(f"⚠️ 设置封面 clip 失败: {e}")
 
     def _seed_cover_path(self, pc: dict) -> str:
-        """建项目时给场景用的封面：封面列表里最新的一张（最后追加的，例如刚回来的信息图）。"""
+        """建项目时给场景用的封面：用户选中的当前封面（cover_image[0] / 最新一张）。"""
+        from utility.scene_image_slots import primary_cover_for_seeding
+
         override = getattr(self, "_seed_cover_override", "") or ""
         if override and os.path.isfile(override):
             return override
         covers = [c for c in (project_manager.get_cover_images(pc) or []) if isinstance(c, str) and os.path.isfile(c)]
-        return covers[-1] if covers else ""
+        seed = primary_cover_for_seeding(covers)
+        return seed if seed and os.path.isfile(seed) else ""
 
     @staticmethod
     def _has_own_clip_image(scene: dict) -> bool:

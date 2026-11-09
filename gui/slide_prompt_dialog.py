@@ -95,17 +95,27 @@ def pack_narrative_choices(parent, narrative_var, *, title: str = "叙事风格"
     return box, buttons
 
 
-def big_submit_button(dlg, parent, command, text: str = "提交"):
-    """三个提示窗共用的大「提交」按钮：字号大 30%、加粗。返回按钮，由调用方 pack。"""
+def big_submit_button(dlg, parent, command, text: str = "提交", *, compact: bool = False):
+    """提示窗共用的大「提交」按钮：字号大 30%、加粗。返回按钮，由调用方 pack。
+
+    ``compact=True`` 给节目/全集生成的一列三行按钮：字号和内边距略小。
+    图片/视频提示窗仍用默认较大样式。
+    """
     base_font = tkfont.nametofont("TkDefaultFont")
+    scale = 1.12 if compact else 1.3
+    pad = (10, 5) if compact else (18, 10)
+    style_name = "SlideCopyCompact.TButton" if compact else "SlideCopy.TButton"
     big_font = tkfont.Font(
         family=base_font.actual("family"),
-        size=max(1, round(abs(base_font.actual("size")) * 1.3)),
+        size=max(1, round(abs(base_font.actual("size")) * scale)),
         weight="bold",
     )
-    dlg._big_submit_font = big_font  # 保持引用，否则字体被回收
-    ttk.Style().configure("SlideCopy.TButton", font=big_font, padding=(18, 10))
-    return ttk.Button(parent, text=text, style="SlideCopy.TButton", command=command)
+    if compact:
+        dlg._compact_submit_font = big_font
+    else:
+        dlg._big_submit_font = big_font  # 保持引用，否则字体被回收
+    ttk.Style().configure(style_name, font=big_font, padding=pad)
+    return ttk.Button(parent, text=text, style=style_name, command=command)
 
 
 def pack_scene_field_choices(
@@ -184,7 +194,7 @@ def open_slide_prompt_dialog(
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
     ``saved_choice`` 是项目里记下的上次选择；``save_choice(dict)`` 在关窗或拷贝时把当前选择记回项目。
-    按「一次性提交」或「二次提交」：拷走提示词并关窗；给了 ``open_manual(..., times=)`` 就再交给手工 LLM 窗口（NotebookLM）。
+    按「一次提交」「二次提交」或「三次提交」：拷走提示词并关窗；给了 ``open_manual(..., times=)`` 就再交给手工 LLM 窗口（NotebookLM）。
 
     ``get_scene_range(range_key)`` → ``(scenes, episodes)``：range_key 是 "episode"（本集）或 "to_end"（本集到结束），
     episodes 是和 scenes 等长的每场集名。不给就只有本集（``get_scenes``），也不显示「范围」。
@@ -478,14 +488,14 @@ def open_slide_prompt_dialog(
         if material_var.get():
             hint.config(
                 text=f"材料 PDF：{os.path.basename(material_pdf)} 拷成 {CONTENT_PDF_NAME} 上传。"
-                f"按「一次性提交」或「二次提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+                f"按「一次提交」「二次提交」或「三次提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
             )
             return
         if analysis_var.get():
             single = "幻灯片按分析报告的结构一部分一页。" if output_var.get() == "slides" else ""
             hint.config(
                 text=f"分析内容：分析报告写进 {CONTENT_PDF_NAME} 上传（不进提示词）。{single}"
-                f"按「一次性提交」或「二次提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+                f"按「一次提交」「二次提交」或「三次提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
             )
             return
         hint.config(
@@ -533,10 +543,9 @@ def open_slide_prompt_dialog(
         close()
         if not callable(open_manual):
             return
-        try:
-            times = 2 if int(times or 1) >= 2 else 1
-        except (TypeError, ValueError):
-            times = 1
+        from utility.program_media import clamp_studio_times
+
+        times = clamp_studio_times(times)
 
         def _go():
             kwargs = {"times": times}
@@ -785,13 +794,15 @@ def open_slide_prompt_dialog(
         cross = bool(span_zh)  # 跨集：下载回来的 PDF「写到结束」可以接着写进后面各集
         launch_manual(prompt, kind, nb_url, pdf_path, actor_pdf, cross, times=times)
 
-    # 右下角同一列两行：一次性提交 / 二次提交。
+    # 右下角同一列三行：一次提交 / 二次提交 / 三次提交（略缩小以放下三颗按钮）。
     submit_col = ttk.Frame(bottom)
     submit_col.pack(side=tk.RIGHT, anchor=tk.N)
-    once_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(1), text="一次性提交")
+    once_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(1), text="一次提交", compact=True)
     once_btn.pack(anchor=tk.E)
-    twice_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(2), text="二次提交")
-    twice_btn.pack(anchor=tk.E, pady=(8, 0))
+    twice_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(2), text="二次提交", compact=True)
+    twice_btn.pack(anchor=tk.E, pady=(6, 0))
+    thrice_btn = big_submit_button(dlg, submit_col, lambda: copy_prompt(3), text="三次提交", compact=True)
+    thrice_btn.pack(anchor=tk.E, pady=(6, 0))
 
     # 产物（横排单选）+ 笔记本，放在提交左边。
     from utility import notebooklm_cdp

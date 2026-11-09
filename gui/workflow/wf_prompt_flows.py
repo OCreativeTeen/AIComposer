@@ -1208,7 +1208,9 @@ class PromptFlowsMixin:
                     except OSError as exc:
                         messagebox.showwarning("打开失败", f"打不开：{exc}\n{item}", parent=self.root)
 
-            extra = {"output": kind, "studio_times": 2 if int(times or 1) >= 2 else 1}
+            from utility.program_media import clamp_studio_times
+
+            extra = {"output": kind, "studio_times": clamp_studio_times(times)}
             # 画面比例用项目的宽高（1920×1080 → 16:9，1080×1920 → 9:16）。
             _pc = project_manager.PROJECT_CONFIG or {}
             extra["video_size"] = project_manager.video_size_key(_pc.get("video_width"), _pc.get("video_height"))

@@ -315,8 +315,11 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             messagebox.showwarning("信息图", f"信息图没能加为封面：{exc}\n{path}", parent=dlg)
 
     def _ask_pick_infographic(paths, video_size: str) -> str:
-        """两张信息图候选：16:9 上下排，9:16 左右排。返回用户选的路径；关窗则第一张。"""
-        from utility.program_media import infographic_candidates_side_by_side
+        """2–3 张信息图候选：16:9 上下排，9:16 左右排。返回用户选的路径；关窗则第一张。"""
+        from utility.program_media import (
+            infographic_candidates_side_by_side,
+            infographic_pick_thumb_size,
+        )
 
         items = [p for p in (paths or []) if p and os.path.isfile(p)]
         if not items:
@@ -327,10 +330,12 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         win = tk.Toplevel(dlg)
         win.title("选择信息图")
         win.transient(dlg)
-        ttk.Label(win, text="生成了两张信息图，请选一张作为当前封面（两张都会保留）。").pack(
-            anchor=tk.W, padx=12, pady=(10, 6)
-        )
+        ttk.Label(
+            win,
+            text=f"生成了 {len(items)} 张信息图，请选一张作为当前封面（都会保留）。",
+        ).pack(anchor=tk.W, padx=12, pady=(10, 6))
         side = infographic_candidates_side_by_side(video_size)
+        thumb_box = infographic_pick_thumb_size(video_size, len(items))
         body = ttk.Frame(win)
         body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
         photos = []
@@ -341,10 +346,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
                 from PIL import Image, ImageTk
                 im = Image.open(path)
                 im = im.convert("RGB") if im.mode not in ("RGB", "RGBA") else im
-                if side:
-                    im.thumbnail((320, 560))
-                else:
-                    im.thumbnail((560, 320))
+                im.thumbnail(thumb_box)
                 photo = ImageTk.PhotoImage(im)
                 photos.append(photo)
                 return photo
@@ -419,10 +421,9 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
                     actor_pdf: str = "", _cross: bool = False, extra_sources=None, times: int = 1) -> None:
         from utility.program_media import settle_generated_file
 
-        try:
-            times = 2 if int(times or 1) >= 2 else 1
-        except (TypeError, ValueError):
-            times = 1
+        from utility.program_media import clamp_studio_times
+
+        times = clamp_studio_times(times)
 
         def _open_file(path: str, all_paths=None) -> None:
             batch = [p for p in (all_paths or [path]) if p]

@@ -16,11 +16,13 @@ import tempfile
 
 from utility.program_media import (
     append_program_media,
+    clamp_studio_times,
     coerce_program_media_list,
     file_result_paths,
     get_primary_program_media,
     get_program_media_list,
     infographic_candidates_side_by_side,
+    infographic_pick_thumb_size,
     list_existing_program_media,
     order_after_selection,
     remove_program_media,
@@ -243,6 +245,119 @@ def test_file_result_paths_and_studio_times():
     assert studio_times_from_extra({"studio_times": "1"}) == 1
     assert studio_times_from_extra({}) == 1
     assert studio_times_from_extra(None) == 1
+    assert studio_times_from_extra({"studio_times": 3}) == 3
+    assert studio_times_from_extra({"studio_times": "3"}) == 3
+    assert studio_times_from_extra({"studio_times": 4}) == 3
+    assert studio_times_from_extra({"studio_times": 0}) == 1
+    assert clamp_studio_times(3) == 3
+    assert clamp_studio_times("2") == 2
+    assert clamp_studio_times(-1) == 1
+    assert clamp_studio_times("nope") == 1
+
+
+def test_run_sequential_count_3_first_completes_before_next():
+    order = []
+
+    def generate(i):
+        order.append(("start", i))
+        time.sleep(0.015)
+        order.append(("done", i))
+        return f"/tmp/thrice-{i}.pdf"
+
+    paths, err, cancelled = run_sequential_generations(generate, 3)
+    assert err is None
+    assert cancelled is False
+    assert paths == ["/tmp/thrice-0.pdf", "/tmp/thrice-1.pdf", "/tmp/thrice-2.pdf"]
+    assert order == [
+        ("start", 0), ("done", 0),
+        ("start", 1), ("done", 1),
+        ("start", 2), ("done", 2),
+    ]
+
+
+def test_error_third_preserves_first_two():
+    def generate(i):
+        if i < 2:
+            return f"/tmp/keep-{i}.pdf"
+        raise RuntimeError("third failed")
+
+    paths, err, cancelled = run_sequential_generations(generate, 3)
+    assert paths == ["/tmp/keep-0.pdf", "/tmp/keep-1.pdf"]
+    assert isinstance(err, RuntimeError)
+    assert "third failed" in str(err)
+    assert cancelled is False
+
+
+def test_cancel_after_two_of_three_keeps_partial():
+    calls = []
+    cancel_after = {"n": 0}
+
+    def generate(i):
+        calls.append(i)
+        cancel_after["n"] += 1
+        return f"/tmp/c3-{i}.pdf"
+
+    paths, err, cancelled = run_sequential_generations(
+        generate, 3, should_cancel=lambda: cancel_after["n"] >= 2
+    )
+    assert paths == ["/tmp/c3-0.pdf", "/tmp/c3-1.pdf"]
+    assert err is None
+    assert cancelled is True
+    assert calls == [0, 1]
+
+
+def test_same_artifact_rejected_on_third():
+    def generate(i):
+        if i < 2:
+            return f"/tmp/uniq-{i}.pdf"
+        return "/tmp/uniq-0.pdf"
+
+    paths, err, cancelled = run_sequential_generations(generate, 3)
+    assert paths == ["/tmp/uniq-0.pdf", "/tmp/uniq-1.pdf"]
+    assert err is not None
+    assert cancelled is False
+
+
+def test_infographic_three_image_layout_fits_screen():
+    assert infographic_candidates_side_by_side("1920x1080") is False
+    assert infographic_candidates_side_by_side("1080x1920") is True
+    stack2 = infographic_pick_thumb_size("1920x1080", 2)
+    stack3 = infographic_pick_thumb_size("16:9", 3)
+    side2 = infographic_pick_thumb_size("1080x1920", 2)
+    side3 = infographic_pick_thumb_size("9:16", 3)
+    assert stack3[1] <= stack2[1]
+    assert side3[0] <= side2[0]
+    # three landscape stacked: total height under a typical 1080p usable area
+    assert stack3[1] * 3 + 180 <= 1080
+    assert stack3[0] <= 560
+    # three portraits side-by-side: total width under a typical 1366-wide window
+    assert side3[0] * 3 + 160 <= 1366
+    assert side3[1] <= 560
+
+
+def test_infographic_selection_orders_chosen_first_of_three():
+    tmp_path = Path(tempfile.mkdtemp())
+    a = _touch(str(tmp_path / "a.png"))
+    b = _touch(str(tmp_path / "b.png"))
+    c = _touch(str(tmp_path / "c.png"))
+    ordered = order_after_selection([a, b, c], b)
+    assert ordered[0] == b
+    assert ordered[1:] == [a, c]
+    item = {"cover_image": []}
+    for path in reversed(ordered):
+        item["cover_image"] = [path] + [p for p in item["cover_image"] if p != path]
+    assert item["cover_image"][0] == b
+    assert item["cover_image"] == [b, a, c]
+
+
+def test_submit_dialog_has_three_compact_buttons():
+    src = Path(ROOT, "gui/slide_prompt_dialog.py").read_text(encoding="utf-8")
+    assert 'text="一次提交"' in src
+    assert 'text="二次提交"' in src
+    assert 'text="三次提交"' in src
+    assert "一次性提交" not in src
+    assert "copy_prompt(3)" in src
+    assert "compact=True" in src
 
 
 def test_cover_video_not_a_program_kind():
