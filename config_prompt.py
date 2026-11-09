@@ -1782,11 +1782,14 @@ def in_scene_direction_lines(visual: str, names) -> list:
 
 
 def video_caption_rule(text: str) -> str:
-    """t172u: 视频用。「关键字作背景」时关键词已经在起始图里，视频只保持原样，不再画新字。"""
-    if text == "keywords":
-        return ("Words already drawn into the start picture stay exactly as they are, as part of the scene. "
-                "No new writing appears in the video; the spoken lines are heard, not shown.")
-    return flow_caption_rule(text)
+    """t172u/t321u: 视频用。「保留 / 关键字作背景」= 起始图里本来就有的几个关键字原样留在背景（第二条说明，
+    写清它不是讲话 / 字幕 / caption）；「去掉文字 / 用画面讲」只用正面短句，不提字幕。"""
+    if text in IMAGE_TEXT_KEEP_CHOICES:
+        return VIDEO_IMAGE_KEYWORDS_RULE
+    if text == "express":
+        return "Picture: the scene alone tells it; the frame holds no lettering."
+    return ("Picture: lettering printed beside or under the start image is not part of the scene; "
+            "continue the scene itself through that area.")
 
 
 def _picture_flow_text_rule(text: str) -> str:
@@ -3565,7 +3568,7 @@ SINGLE_INNER_MONOLOGUE_RULE = (
     "Entire-scene self-talk: this scene has exactly one speaking turn and that turn is marked <Ns>; "
     "the same actor N delivers the exact supplied speaking line in their own voice as off-mouth delivery "
     "(lips closed, no lip sync), audible not mute; this is NOT narration of actions or setting, not an intro/outro, "
-    "and not another narrator; no on-screen text or subtitles of the line."
+    "and not another narrator."
 )
 
 AUDIBLE_FROM_SPEAKING_RULE = (
@@ -3599,7 +3602,7 @@ H3_SINGLE_INNER_SILENT_CAST_CLAUSE = (
 SPOKEN_SOURCE_RULE = (
     "Spoken words: only this scene's speaking transcript is spoken, verbatim, once each, by the labeled actor "
     "in that actor's own voice (gender and age from actor metadata when present; do not infer a name or gender "
-    "from the number alone); visual, caption, actor list, reference notes, FYI and direction text are silent "
+    "from the number alone); visual, scene title, actor list, reference notes, FYI and direction text are silent "
     "picture instructions and must never be read, summarized, translated, or turned into narration; "
     "neighbor scenes are independent and contribute no speech here."
 )
@@ -3608,11 +3611,13 @@ SPOKEN_TRANSCRIPT_BEGIN = "BEGIN_SPOKEN_TRANSCRIPT"
 SPOKEN_TRANSCRIPT_END = "END_SPOKEN_TRANSCRIPT"
 
 SILENT_VISUAL_PREFIX = "Silent picture direction (never speak this text): "
+# t321u: 讲话内容只是声音（音轨），标清楚；不再在这里提字幕（禁字幕只在第一行说一次）
+SPOKEN_AUDIO_ONLY_LABEL = "Audio only: the speaking lines below are the voice track, heard and not shown."
 
 
 def format_spoken_transcript_block(scenes) -> str:
     """Authoritative spoken lines for this prompt only (never visual / caption / FYI)."""
-    rows_out = [SPOKEN_TRANSCRIPT_BEGIN, SPOKEN_SOURCE_RULE, SPEAK_LINE_ONCE_RULE]
+    rows_out = [SPOKEN_TRANSCRIPT_BEGIN, SPOKEN_AUDIO_ONLY_LABEL, SPOKEN_SOURCE_RULE, SPEAK_LINE_ONCE_RULE]
     any_line = False
     for sc in scenes or []:
         if not isinstance(sc, dict):
@@ -3621,14 +3626,14 @@ def format_spoken_transcript_block(scenes) -> str:
         script = dialogue_script(sc) if speaking else []
         if not speaking:
             rows_out.append(
-                "This scene has no speaking; speak nothing. Do not narrate visual, caption, actor, FYI, or story_content."
+                "This scene has no speaking; speak nothing. Do not narrate visual, scene title, actor, FYI, or story_content."
             )
             continue
         any_line = True
         rows_out.extend(script)
-    if not any_line and len(rows_out) == 2:
+    if not any_line and len(rows_out) == 4:
         rows_out.append(
-            "This scene has no speaking; speak nothing. Do not narrate visual, caption, actor, FYI, or story_content."
+            "This scene has no speaking; speak nothing. Do not narrate visual, scene title, actor, FYI, or story_content."
         )
     rows_out.append(SPOKEN_TRANSCRIPT_END)
     return "\n".join(rows_out)
@@ -4153,20 +4158,11 @@ def _video_direction_lines(scenes: list, use_visual: bool) -> list:
 
 def _video_text_line(text: str, background: str, narrative: str) -> str:
     """说明文字（画面上的字），只写一次。t163u: 短、正面，少用 caption / text 这类词。"""
-    if text == "erase":
-        return ("Picture: lettering printed beside or under the start image is not part of the scene; "
-                "continue the scene itself through that area.")
-    if text == "express":
-        return "Picture: the scene alone tells it; the frame holds no lettering."
-    if text != "keep":
-        return "Text: " + video_caption_rule(text).replace("\n", " ")
-    if background == "art_text":
-        return ("Text: one short artistic keyword (Chinese at most 8 characters, English at most 3 words) may sit in the deep "
-                "background, taken from the spoken content. Never a sentence. " + KEYWORD_PLACE_SHORT_EN)
-    if background == "bubble" and narrative == "story":
+    if text == "keep" and background == "bubble" and narrative == "story":
         return ("Text: at most one small thought bubble near a speaker, holding a keyword from their line; "
-                "never a subtitle bar, never over a face.")
-    return "Picture: keep lettering that is physically part of the scene (e.g. a sign) as it is; add nothing new."
+                "never over a face.")
+    # t321u: 保留 / 关键字作背景（含「背景文字」）= 只留起始图里已有的几个关键字；不从讲话里取字
+    return video_caption_rule(text)
 
 
 def _video_style_line(frames: str, evolve: str, style: str) -> str:
@@ -4194,11 +4190,7 @@ def _video_camera_short(camera: str) -> str:
 
 
 # t159u: 视频（Grok / Gemini / MiniMax 共用）的两条硬规则，放在提示词最前面（不只在 FYI 里）。
-VIDEO_NO_CAPTION_RULE = (
-    "Clean film image: only the scene fills the frame. Spoken lines are heard only as voices; "
-    "the picture shows only the scene.\n"
-    "画面干净：画面里只有场景本身，台词只用声音表现。"
-)
+VIDEO_NO_CAPTION_RULE = "Clean film image: only the scene fills the frame."  # t321u: 禁字幕只在第一行说一次
 VIDEO_CONTINUITY_MARK = "CONTINUITY (real time)"
 VIDEO_CONTINUITY_RULE = (
     "This is one continuous real-time moment of a few seconds: the room, the view outside, the light and "
@@ -4261,9 +4253,9 @@ def video_guard_block(scenes, transition=None, start_image: str = "", audio_mode
 
 
 def video_closing_block(scenes, transition=None, start_image: str = "") -> str:
-    """t163u: 结尾再强调一次：画面干净 + 光线。"""
+    """t163u/t321u: 结尾只再强调光线（画面干净 / 禁字幕不重复）。没有就返回空。"""
     _talk, _changes, light = _guard_parts(scenes, transition, start_image)
-    return "REMEMBER:\n- Clean film image: only the scene fills the frame." + (f"\n- {light}" if light else "")
+    return f"REMEMBER:\n- {light}" if light else ""
 
 
 def strip_caption_lines(text: str) -> str:
@@ -4862,7 +4854,7 @@ def h3_on_camera_line(names: list, *, inner_vo: bool = False, mixed_mono: bool =
         return (f"On camera: {who} " + ("are" if many else "is") + " on camera inside the frame, acting and thinking "
                 "naturally with " + ("their mouths" if many else "the mouth") + " closed for the entire scene "
                 "(off-mouth delivery of that same person's exact speaking text, not a different narrator, "
-                "not mute, not picture narration, and not on-screen text); " + ("they do" if many else "the character does")
+                "not mute, and not picture narration); " + ("they do" if many else "the character does")
                 + " not move the lips or form syllables, including at 0.0 s; while thinking, "
                 + ("each person" if many else "the person") + " may act and stays where they are in <Picture 1>"
                 + extra + ".")
@@ -5018,91 +5010,80 @@ def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None =
 
 
 
-# t238u: MiniMax H3 — 禁止字幕/台词上屏（正词写三遍；负面词有则并入）
-# t244/t246: 所有视频生成必须永久禁止任何字幕/captions（不只MiniMax，是第一行不可变规则）
+# t321u: 禁字幕只说一次，放在最前面，并写清「字幕 = 讲话内容，不是图片里已有的文字」。
+# 以前（t238u/t244）在第一行重复三遍「永远不许加任何字幕」，H3 里又插三遍禁字幕句，还禁止「说明文字」——
+# 而「说明文字」正是窗口里「保留 / 关键字作背景」那个选项的名字。H3 只有正面提示词，反复写 subtitles / captions 反而把它们引出来。
 VIDEO_NO_SUBTITLE_CRITICAL_LINE = (
+    "NO SUBTITLES: subtitles / captions mean the speaking content (dialogue, narration, self-talk); "
+    "it is heard as voice only and is never written on screen, in any language. "
+    "This is not about text already in the image. "
+    "（字幕 = 讲话内容，只用声音，不上屏；不是图片里已有的文字。）"
+)
+# t321u: 「保留 / 关键字作背景」时的第二条说明：要留的字只是起始图里本来就有的几个场景关键字。
+IMAGE_TEXT_KEEP_CHOICES = ("keep", "keywords")
+VIDEO_IMAGE_KEYWORDS_RULE = (
+    "Image keywords: the only words in the video are the few key words already drawn in the start picture "
+    "(the scene's keywords); they stay in the background exactly as they are. "
+    "They are not the speaking content, not subtitles and not captions; no other text is written. "
+    "（图片关键字 = 起始图里本来就有的几个场景关键词，原样留在背景；不是讲话内容，不是字幕，不是 caption。）"
+)
+_LEGACY_VIDEO_NO_SUBTITLE_LINES = (
     "MOST IMPORTANT / CRITICAL REQUIREMENT: 永远不许加任何字幕！永远不许加任何字幕！永远不许加任何字幕！ "
     "NEVER add ANY subtitles, captions, dialogue text, translations, or automatic subtitles of ANY language to the video! "
     "This applies to ALL languages including Chinese, English, and any other language. "
-    "任何语言的字幕、说明文字、翻译文字、自动字幕都绝对禁止！"
+    "任何语言的字幕、说明文字、翻译文字、自动字幕都绝对禁止！",
+    "NEVER add any subtitles, captions or on-screen text of the dialogue!",
 )
-
-
-def _strip_critical_line_prefix(text: str) -> tuple:
-    """t246: 临时剥离禁字幕行前缀，返回 (前缀, 剩余内容)。
-    
-    用于 split_reference_block、ensure_h3_no_subtitle_rules 等需要检测
-    REFERENCE PICTURES: 开头的函数。处理完后需要重新组装前缀。
-    """
-    critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
-    t = (text or "").strip()
-    if not t:
-        return "", ""
-    
-    # 检查是否以禁字幕行开头
-    first_line = t.split('\n', 1)[0].strip()
-    if first_line == critical.strip():
-        # 移除第一行和紧随的空行
-        rest = t[len(first_line):].lstrip('\n')
-        return critical + "\n\n", rest.strip()
-    
-    return "", t
-
-
-def ensure_video_no_subtitle_first_line(prompt: str) -> str:
-    """t244/t246: 保证禁字幕行是视频提示词的**物理第一行**，无任何例外。
-
-    无论后端（Grok/Gemini/MiniMax）、工作流、FYI勾选状态、旧保存的提示词、
-    REFERENCE PICTURES元数据、任何前缀，禁字幕行必须始终是第一行。
-
-    幂等：如果已经是第一行则不重复添加；如果存在但不在第一行则移到第一行。
-    能在 Strata 清理、反复打磨后仍然存活。
-    不能被 FYI 禁用、自定义 FYI 或旧保存的提示词绕过。
-    REFERENCE PICTURES 等元数据保留在禁字幕行之后。
-    """
-    critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
-    text = (prompt or "").strip()
-    
-    # 空输入
-    if not text:
-        return critical
-    
-    # 检查是否已经是第一行（幂等）
-    first_line = text.split('\n', 1)[0].strip()
-    if first_line == critical.strip():
-        return text
-    
-    # 如果禁字幕行存在但不在第一行，移除它（稍后重新添加到第一行）
-    if critical in text:
-        # 移除现有的禁字幕行（可能在中间或末尾）
-        lines = text.split('\n')
-        new_lines = []
-        skip_next_blank = False
-        for i, line in enumerate(lines):
-            if critical in line:
-                # 跳过这行和紧随其后的空行
-                skip_next_blank = True
-                continue
-            if skip_next_blank and not line.strip():
-                skip_next_blank = False
-                continue
-            skip_next_blank = False
-            new_lines.append(line)
-        text = '\n'.join(new_lines).strip()
-    
-    # 始终将禁字幕行放在物理第一行，无例外
-    return critical + "\n\n" + text if text else critical
-
-
-H3_NO_SUBTITLE_RULE = "NEVER add any subtitles, captions or on-screen text of the dialogue!"
+H3_NO_SUBTITLE_RULE = _LEGACY_VIDEO_NO_SUBTITLE_LINES[1]  # 旧 H3 三遍句：只用来从旧提示词里清掉
 H3_NO_SUBTITLE_NEGATIVE = (
     "subtitles, captions, on-screen text, dialogue text on screen, burned-in subtitles, "
     "subtitle bar, caption overlay, karaoke lyrics, lower-third text"
 )
 
 
+def _remove_phrase(text: str, phrase: str) -> str:
+    out = re.sub(r"[ \t]*" + re.escape(phrase) + r"[ \t]*", " ", text or "")
+    out = "\n".join(ln.rstrip() if ln.strip() else "" for ln in out.split("\n"))
+    out = re.sub(r"(?m)^ (?=\S)", "", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def strip_video_no_subtitle_lines(prompt: str) -> str:
+    """t321u: 去掉所有禁字幕句（新的一句和旧的重复版本），其余不动。"""
+    text = prompt or ""
+    for phrase in _LEGACY_VIDEO_NO_SUBTITLE_LINES + (VIDEO_NO_SUBTITLE_CRITICAL_LINE,):
+        if phrase in text:
+            text = _remove_phrase(text, phrase)
+    return text.strip()
+
+
+def _strip_critical_line_prefix(text: str) -> tuple:
+    """t246: 临时剥离禁字幕行前缀，返回 (前缀, 剩余内容)。"""
+    critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
+    t = (text or "").strip()
+    if not t:
+        return "", ""
+    first_line = t.split('\n', 1)[0].strip()
+    if first_line == critical.strip():
+        rest = t[len(first_line):].lstrip('\n')
+        return critical + "\n\n", rest.strip()
+    return "", t
+
+
+def ensure_video_no_subtitle_first_line(prompt: str) -> str:
+    """t244/t321u: 禁字幕句恰好一次，且是视频提示词的物理第一行（所有后端）。
+
+    旧提示词里的重复版本（三遍「永远不许加任何字幕」、H3 三遍句）和多余副本都清掉；幂等。
+    REFERENCE PICTURES 等元数据留在它后面。"""
+    critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
+    text = strip_video_no_subtitle_lines(prompt)
+    return critical + "\n\n" + text if text else critical
+
+
 def count_h3_no_subtitle_rules(prompt: str) -> int:
-    return (prompt or "").count(H3_NO_SUBTITLE_RULE)
+    """禁字幕句一共出现几次（新句 + 旧重复句）。t321u 起应当恰好 1。"""
+    text = prompt or ""
+    return sum(text.count(p) for p in _LEGACY_VIDEO_NO_SUBTITLE_LINES + (VIDEO_NO_SUBTITLE_CRITICAL_LINE,))
 
 
 def with_h3_no_subtitle_negative(negative: str | None) -> str | None:
@@ -5118,99 +5099,37 @@ def with_h3_no_subtitle_negative(negative: str | None) -> str | None:
     return base.rstrip(", ") + ", " + H3_NO_SUBTITLE_NEGATIVE
 
 
-def ensure_h3_no_subtitle_rules(prompt: str) -> str:
-    """保证禁字幕句出现恰好 3 次：多模态描述开头、对话附近、多模态描述末尾。
-
-    用于 build_h3_prompt 与 Strata 打磨后；若已有 >=3 次则不改；不足则清掉旧的再按位置重插。
-    t246: 正确处理禁字幕行前缀，不在 REFERENCE PICTURES 前插入三遍规则。
-    """
-    rule = H3_NO_SUBTITLE_RULE
+def strip_repeated_no_subtitle_rules(prompt: str) -> str:
+    """t321u: 不再写三遍。清掉旧的重复禁字幕句；若开头本来就是禁字幕句就保留这一句（仍是第一行）。"""
     text = prompt or ""
-    if text.count(rule) >= 3:
-        return text
-
-    # 去掉已有残缺副本，避免凑不齐或堆在一处
-    cleaned = text.replace(rule, "")
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-
-    # t246: 先剥离禁字幕行前缀（若有），处理完后重新组装
-    critical_prefix, cleaned = _strip_critical_line_prefix(cleaned)
-
-    # 拆 REFERENCE PICTURES 头（若有）
-    head, body = "", cleaned
-    if cleaned.startswith("REFERENCE PICTURES:") and "\n\n" in cleaned:
-        head, body = cleaned.split("\n\n", 1)
-        head = head + "\n\n"
-
-    # 定位 integrated_multimodal_description / overall_soundscape
-    marker = "integrated_multimodal_description:"
-    sound = "\n\noverall_soundscape:"
-    if marker in body:
-        pre, rest = body.split(marker, 1)
-        # rest 以可选空白 + 正文；末尾到 overall_soundscape
-        if sound in rest:
-            mid, post = rest.split(sound, 1)
-            post = sound + post
-        else:
-            mid, post = rest, ""
-        mid = mid.lstrip(" ")
-        # top: 紧跟 [Shot 1] 句号后，或描述最前
-        top_at = 0
-        m = re.search(r"\[Shot 1\][^.\n]*\.", mid)
-        if m:
-            top_at = m.end()
-        # middle: 对话 <d> 前，或 Speaker map / Lip sync 前
-        mid_at = None
-        for key in ("<d>", "Speaker map:", "Lip sync:", "On camera:"):
-            i = mid.find(key)
-            if i >= 0 and (mid_at is None or i < mid_at):
-                mid_at = i
-        if mid_at is None:
-            mid_at = max(top_at, len(mid) // 2)
-        # end: 描述末尾（进 sound 之前）
-        end_at = len(mid.rstrip())
-
-        def _ins(s: str, at: int, chunk: str) -> str:
-            at = max(0, min(at, len(s)))
-            left, right = s[:at].rstrip(), s[at:].lstrip()
-            return (left + " " + chunk + " " + right).strip()
-
-        # 从后往前插，避免偏移
-        pieces = [(end_at, rule), (mid_at, rule), (top_at, rule)]
-        # 去重位置过近
-        used = []
-        for at, chunk in pieces:
-            if any(abs(at - u) < 5 for u in used):
-                at = max(0, at - 8)
-            used.append(at)
-        # sort descending
-        for at, chunk in sorted(zip(used, [rule, rule, rule]), key=lambda x: -x[0]):
-            mid = _ins(mid, at, chunk)
-        # 若仍不足 3（极端短文），末尾补
-        while mid.count(rule) < 3:
-            mid = mid.rstrip() + " " + rule
-        body = pre + marker + " " + mid.lstrip() + post
-    else:
-        # 非标准 H3：头 / 中 / 尾硬插
-        lines = body.splitlines() or [body]
-        if len(lines) == 1:
-            body = f"{rule} {body.strip()} {rule} {rule}"
-        else:
-            mid_i = max(1, len(lines) // 2)
-            lines = [rule, lines[0]] + lines[1:mid_i] + [rule] + lines[mid_i:] + [rule]
-            body = "\n".join(lines)
-        while body.count(rule) < 3:
-            body = body.rstrip() + " " + rule
-
-    out = head + body
-    # 保底
-    while out.count(rule) < 3:
-        out = out.rstrip() + " " + rule
-    # t246: 重新组装禁字幕行前缀
-    return critical_prefix + out
+    had_first = text.strip().split("\n", 1)[0].strip() in (
+        (VIDEO_NO_SUBTITLE_CRITICAL_LINE,) + _LEGACY_VIDEO_NO_SUBTITLE_LINES[:1])
+    body = strip_video_no_subtitle_lines(text)
+    return ensure_video_no_subtitle_first_line(body) if had_first else body
 
 
+ensure_h3_no_subtitle_rules = strip_repeated_no_subtitle_rules  # 旧名字（minimax_dual / ComfyUI 提交时调用）
+
+
+def restore_image_keywords_rule(original: str, polished: str) -> str:
+    """t321u: 原提示词有「Image keywords:」那句时，打磨后改了 / 丢了就换回原句（H3 放在 [Shot 1] 第一句后）。"""
+    rule = VIDEO_IMAGE_KEYWORDS_RULE
+    out = polished or ""
+    if rule not in (original or ""):
+        return out
+    if rule in out:
+        return out
+    i = out.find("Image keywords:")
+    if i >= 0:  # Strata 改写了这句：换回原句
+        j = out.find("\n", i)
+        j = len(out) if j < 0 else j
+        return out[:i] + rule + out[j:]
+    m = re.search(r"\[Shot 1\][^.\n]*\.", out)
+    if m:
+        return out[:m.end()] + " " + rule + out[m.end():]
+    lines = out.split("\n")
+    k = 1 if lines and lines[0].strip() == VIDEO_NO_SUBTITLE_CRITICAL_LINE else 0
+    return "\n".join(lines[:k] + ([""] if k else []) + [rule] + lines[k:]).replace("\n\n\n", "\n\n")
 
 
 def _inject_locked_rule(text: str, rule: str) -> str:
@@ -5294,7 +5213,7 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                     language: str = "", camera: str = "none", audio_mode: str = "none", start_image: str = "",
                     seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "",
                     stage=None, speaker_notes: dict | None = None, portrait_pictures: dict | None = None,
-                    speech_speed: float = 1.0) -> str:
+                    speech_speed: float = 1.0, text: str = "") -> str:
     """t165u: 场景内容 → MiniMax H3 官方格式提示词。t191u: stage = 故事舞台（一句 Story stage:）。
     t150u: speaker_notes = {说话人序号: 括号描述}（Strata 看图写的；没有就用画面描述里讲这个人的小句）；
     portrait_pictures = {说话人序号: <Picture k> 的 k}（参考图工作流）。"""
@@ -5335,6 +5254,8 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         shot.append(f"The scene shown in {pic} stays the same place, preserving its layout, objects and colors.")
     if rows:
         shot += cast_lock_lines([_speaker_identity(r)[0] for r in rows], background_ok=True)  # t182u / t156u
+    if text in IMAGE_TEXT_KEEP_CHOICES:  # t321u: 保留 / 关键字作背景：第二条说明（不是讲话、不是字幕）
+        shot.append(VIDEO_IMAGE_KEYWORDS_RULE)
     _turns0 = h3_speaker_map(sc)[1] if use_speaking else []
     _h3_flags = _h3_turn_flags(_turns0)
     if not _h3_flags["any_mono"] and speaking_has_monologue(scene_speaking_source(sc)):
@@ -5442,7 +5363,6 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     if said and audio_mode == "none" and _pace < 0.999:
         shot.append(h3_speech_pace_line(_pace, seconds))
     if said:
-        shot.append(H3_NO_SUBTITLE_RULE)  # t238u: 对话旁再强调一次（ensure 会凑满三遍）
         shot.append(" ".join(said))
         if audio_mode == "sing":
             shot.append("Lips, breath and body move with the song.")
@@ -5483,14 +5403,12 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         sound = ("Quiet indoor ambience with soft room tone, small movement sounds and the rustle of clothing."
                  if talk or rows else "Natural ambient sound of the place.")
         music = "N/A"
-    # t238u: 禁字幕句写三遍（头 / 对话旁 / 尾）；打磨后 ensure 会再核对
-    # t244/t246: 全局禁字幕行必须是物理第一行（在构建时就注入，不只是发送时）
+    # t321u: 禁字幕只在物理第一行说一次（ensure_video_no_subtitle_first_line），这里不再重复
     raw = (first + "\n\nintegrated_multimodal_description: " + " ".join(shot)
            + "\n\noverall_soundscape: " + sound + "\n\nnon_diegetic_music: " + music)
     _has_mono = any(len(tr) > 4 and tr[4] for tr in turns) or speaking_has_monologue(scene_speaking_source(sc))
-    result = ensure_h3_no_subtitle_rules(raw)
     result = ensure_speaker_semantics_rules(
-        result, has_speaking=bool(said or _has_mono), has_monologue=_has_mono, single_inner=_single_inner,
+        raw, has_speaking=bool(said or _has_mono), has_monologue=_has_mono, single_inner=_single_inner,
     )
     result = ensure_spoken_transcript_block(result, scs)
     return ensure_video_no_subtitle_first_line(result)  # t244: 第一行必须是全局禁字幕规则
@@ -5510,7 +5428,11 @@ def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruc
     parts["Instructions"] = "\n".join(f"- {line}" for line in instruction if line)
     if lang_label:
         parts["Audio"] = f"- Spoken language: {lang_label}. Every spoken word is delivered in {lang_label}."
-    parts["Story_Scene_Content"] = _plain_payload(payload)  # t163u: 纯文字，不用 JSON 引号
+    content = _plain_payload(payload)  # t163u: 纯文字，不用 JSON 引号
+    if any(isinstance(p, dict) and any(k in p for k in ("speaking", "dialogue", "narration")) for p in payload or []):
+        content = SPOKEN_AUDIO_ONLY_LABEL.replace("speaking lines below", "speaking / dialogue / narration below") \
+            + "\n" + content  # t321u
+    parts["Story_Scene_Content"] = content
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 

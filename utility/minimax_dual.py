@@ -93,10 +93,9 @@ def pick_dual_server(status=None) -> str:
 
 def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, status=None, server_key=None) -> str:
     """t190u: 原来 llm_api 里的 MiniMax 分支（单场提交和双机全集共用）。返回 mp4 路径。"""
-    try:  # t238u / t244: 提交前保证禁字幕句：全局第一行 + H3 三遍
-        from config_prompt import ensure_h3_no_subtitle_rules, ensure_h3_monologue_no_lipsync_rules, ensure_video_no_subtitle_first_line
-        prompt = ensure_video_no_subtitle_first_line(prompt)  # t244: 最重要的禁字幕行必须是第一行
-        prompt = ensure_h3_no_subtitle_rules(prompt)
+    try:  # t244 / t321u: 提交前保证禁字幕句只有一句，且在第一行（旧的重复句清掉）
+        from config_prompt import ensure_h3_monologue_no_lipsync_rules, ensure_video_no_subtitle_first_line
+        prompt = ensure_video_no_subtitle_first_line(prompt)
         prompt = ensure_h3_monologue_no_lipsync_rules(
             prompt, has_monologue=("Self-talk:" in (prompt or "") or "Entire-scene self-talk:" in (prompt or "")))
     except Exception as _e:  # noqa: BLE001

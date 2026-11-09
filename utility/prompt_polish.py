@@ -11,16 +11,17 @@ POLISH_TIMEOUT_S = 60.0
 _SYS_GENERAL = """You are an expert prompt editor for AI video generation (Grok Imagine / Google Veo).
 Rewrite the user's video prompt into ONE concise, precise video-generation prompt in English.
 Keep ALL hard facts:
-- CRITICAL (t244): If the prompt begins with a line containing "MOST IMPORTANT / CRITICAL REQUIREMENT:" and "永远不许加任何字幕", you MUST keep that ENTIRE first line VERBATIM as the very first line of your output. NEVER delete, paraphrase, shorten, translate, move, or reorder this line. It is a non-negotiable system requirement that must survive all polishing.
-- The OUTPUT FORMAT line(s) at the very top (after the critical requirement line if present), copied verbatim as the first lines.
+- FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:", copy that whole line verbatim as the very first line of your output, once. It defines subtitles / captions as the speaking content (heard as voice only, never written on screen); it is not about text already in the image. Do not repeat it anywhere else and do not add any other wording about subtitles, captions or on-screen text.
+- Image keywords (t321u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. Those words are the few scene keywords already drawn in the start picture, kept in the background as they are; never turn the speaking content into those words or into any text on screen.
+- The OUTPUT FORMAT line(s) at the very top (right after the NO SUBTITLES line if present), copied verbatim.
 - Every dialogue line verbatim (same words and punctuation, same order), each with its speaker's name and that speaker's voice (gender, age, voice name).
 - Who is in the clip and the cast lock (exactly these people, nobody else), their look and age.
 - Lighting / time of day and the real-time continuity of the moment.
 - Camera, visual style, setting region and era, and the sound rule (natural sound of the place, no music).
-- The sentence "Clean film image: only the scene fills the frame." copied verbatim near the top AND again as the last line.
+- The sentence "Clean film image: only the scene fills the frame." copied verbatim once, near the top.
 - People's names exactly as written (do not romanize or translate names).
 - Speaker identity: <N> and <Ns> are the IDENTICAL actor N (any digits, e.g. <12>=<12s>); the letter s is a speech mode (self-talk / inner thought), not another person, portrait, costume, or voice. Copy any sentence starting "Speaker marks:" verbatim.
-- Spoken transcript: copy the block from BEGIN_SPOKEN_TRANSCRIPT through END_SPOKEN_TRANSCRIPT verbatim. Only those lines are spoken. Visual, caption, actor, reference, FYI and direction text are silent and must never be read, summarized, or turned into narration. Copy any sentence starting "Spoken words:" verbatim.
+- Spoken transcript: copy the block from BEGIN_SPOKEN_TRANSCRIPT through END_SPOKEN_TRANSCRIPT verbatim. Only those lines are spoken. Visual, scene title, actor, reference, FYI and direction text are silent and must never be read, summarized, or turned into narration. Copy any sentence starting "Spoken words:" verbatim.
 - Self-talk: copy sentences starting "Self-talk:", "Entire-scene self-talk:", "Audible voices:", "Single audible voice:", and "Speak once:" verbatim. A scene with exactly one speaking turn marked <Ns> is that same actor delivering the exact supplied speaking text off-mouth (lips closed, no lip sync), audible not mute — not narration of actions or setting, not another narrator. Interactive <N> lines still have lip sync. Cast count is not speaker count: unmarked visible people stay silent and never repeat the line.
 - Directions inside the scene: when something is turned, shown or handed to a person, name that person as the target and say it turns sideways toward them inside the scene, never toward the camera or viewer. People never address the camera.
 - Cast lock: keep the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. A change of pose or place is the same person moving there (for example "小偉 himself walks over and sits down on the chair"), never a second copy.
@@ -30,8 +31,9 @@ Output only the final prompt text: no preface, no notes, no markdown fences."""
 
 _SYS_H3 = """You are an expert prompt editor for the MiniMax H3 audio-video model.
 The user gives a prompt already in the official H3 format. Return an improved prompt in EXACTLY the same structure:
-CRITICAL (t244): If the prompt begins with a line containing "MOST IMPORTANT / CRITICAL REQUIREMENT:" and "永远不许加任何字幕", you MUST keep that ENTIRE first line VERBATIM as the very first line of your output. NEVER delete, paraphrase, shorten, translate, move, or reorder this line. It is a non-negotiable system requirement that must survive all polishing.
-1. The first line (the critical requirement or the H3 mode line) copied verbatim, then one blank line.
+FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:", copy that whole line verbatim as the very first line of your output, once. It defines subtitles / captions as the speaking content (heard as voice only, never written on screen); it is not about text already in the image. Do not repeat it anywhere else and do not add any other wording about subtitles, captions or on-screen text.
+Image keywords (t321u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. Those words are the few scene keywords already drawn in the start picture, kept in the background as they are; never turn the speaking content into those words or into any text on screen.
+1. The first line (the NO SUBTITLES line, or the H3 mode line when there is none) copied verbatim, then one blank line; when the NO SUBTITLES line is first, the H3 mode line follows it unchanged.
 2. Then exactly these three fields, each starting on its own line, in this order:
 integrated_multimodal_description: [Shot 1] ...
 overall_soundscape: ...
@@ -49,7 +51,6 @@ Rules:
 - Self-talk (t241/t250/t283/t284/t285/t286): if the prompt contains the sentence starting "Self-talk:" or "Entire-scene self-talk:" or "Speaker marks:" or "Spoken words:" or "Audible voices:" or "Single audible voice:" or "Speak once:", copy each verbatim. Copy BEGIN_SPOKEN_TRANSCRIPT ... END_SPOKEN_TRANSCRIPT verbatim. Never drop them. <N> and <Ns> are the identical actor N (lowercase s is speech mode, not another person). Self-talk lines marked <Ns> have NO lip sync (mouth closed) and are that actor's exact speaking text, not picture narration; only interactive dialogue has lip sync. Visual / "Silent picture direction" text is never spoken. Cast count is not speaker count: a visible person with no speaking turn never speaks or repeats the line. If the same words appear in a <d> tag and in the transcript, speak them once only.
 - Actor-is-truth for positioning (t223): each speaker's left/right/seat comes ONLY from the Speaker map brackets (which come from the actor parenthesis). If "What happens while they talk" (or any action sentence) puts a named person on the opposite side or in the other person's seat, ignore that positioning — do not rewrite, swap, or merge seats from the action text; keep the Speaker map seats. You may keep story actions, gestures and props from the action text.
 - Copy the sentence starting "On camera:" verbatim. If that sentence describes closed-mouth / off-mouth delivery of the exact speaking text, keep that meaning: do not rewrite it as visible lip movement and do not invent picture narration. If it describes interactive spoken dialogue, a person who speaks is seen speaking on camera with moving lips, never as a different narrator: never describe an interactive speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is interactive dialogue, write the actions as happening while they talk and add no silence or quiet wording.
-- Keep EVERY copy of this exact sentence verbatim (there are three): "NEVER add any subtitles, captions or on-screen text of the dialogue!" Do not drop, paraphrase, or merge them.
 Output only the final prompt: no preface, no notes, no markdown fences."""
 
 
@@ -94,9 +95,18 @@ def restore_h3_dialogue(original: str, polished: str) -> str:
 
 
 def _added_text_words(original: str, polished: str) -> str:
-    lo, lp = original.lower(), polished.lower()
+    """t321u: 禁字幕第一行和「Image keywords:」那句不算；Strata 多写了字幕 / 文字类的词（比原文多）就不通过。"""
+    try:
+        from config_prompt import VIDEO_IMAGE_KEYWORDS_RULE, strip_video_no_subtitle_lines
+
+        def _body(s: str) -> str:
+            return strip_video_no_subtitle_lines(s).replace(VIDEO_IMAGE_KEYWORDS_RULE, " ").lower()
+    except Exception:  # noqa: BLE001
+        def _body(s: str) -> str:
+            return (s or "").lower()
+    lo, lp = _body(original), _body(polished)
     for w in _TEXT_WORDS:
-        if w in lp and w not in lo:
+        if lp.count(w) > lo.count(w):
             return w
     return ""
 
@@ -258,6 +268,16 @@ def validate(original: str, polished: str, backend: str) -> str:
     return ""
 
 
+def _fix_no_subtitle_line(original: str, out: str) -> str:
+    """t321u: 原文以禁字幕句开头 → 结果里它恰好一次且在第一行；原文没有（参考图正文另算）→ 结果里一句也不留。"""
+    from config_prompt import VIDEO_NO_SUBTITLE_CRITICAL_LINE, ensure_video_no_subtitle_first_line, strip_video_no_subtitle_lines
+
+    first = (original or "").strip().split("\n", 1)[0].strip()
+    if first == VIDEO_NO_SUBTITLE_CRITICAL_LINE:
+        return ensure_video_no_subtitle_first_line(out)
+    return strip_video_no_subtitle_lines(out)
+
+
 def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIMEOUT_S) -> tuple:
     """(结果, 说明)。失败时结果是原提示词。"""
     ref_head, body = split_reference_block(prompt) if str(backend or "").startswith("minimax") else ("", prompt)
@@ -292,29 +312,28 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         print(f"[Strata 精简] {why}")
         return prompt, why
     secs = time.monotonic() - started
-    # t244: 打磨后立即恢复禁字幕第一行（Strata可能删除或重排序它）
+    # t244/t321u: 禁字幕句只说一次：原文第一行有就放回第一行，没有（参考图正文）就清掉 Strata 加的
     try:
-        from config_prompt import ensure_video_no_subtitle_first_line
-        out = ensure_video_no_subtitle_first_line(out)
+        out = _fix_no_subtitle_line(prompt, out)
     except Exception as _e:  # noqa: BLE001
         print(f"[Strata 精简] 禁字幕第一行恢复跳过：{_e}")
     out = restore_direction_lines(prompt, out)  # t181u
     out = restore_h3_locked_lines(prompt, out)  # t150u / t283u: locked speaker/lip-sync/identity sentences
-    from config_prompt import (  # t238u / t241u / t283u / t284u
-        ensure_h3_no_subtitle_rules,
+    from config_prompt import (  # t241u / t283u / t284u / t321u
         ensure_h3_monologue_no_lipsync_rules,
         ensure_speaker_semantics_rules,
+        restore_image_keywords_rule,
         restore_spoken_transcript,
     )
 
     out = restore_spoken_transcript(prompt, out)
+    out = restore_image_keywords_rule(prompt, out)  # t321u
     _has_mono = ("Self-talk:" in (prompt or "") or bool(re.search(r"[<＜]\s*\d+\s*s\s*[>＞]", prompt or "")))
     _single_inner = ("Entire-scene self-talk:" in (prompt or "") or "Entire-scene inner monologue:" in (prompt or ""))
     _has_speaking = _has_mono or _single_inner or "Speaker marks:" in (prompt or "") or "BEGIN_SPOKEN_TRANSCRIPT" in (prompt or "")
     if str(backend or "").startswith("minimax"):
         out = restore_h3_dialogue(prompt, out)  # t172u: 对话部分一律用原文
         out = restore_h3_locked_lines(prompt, out)  # after dialogue restore
-        out = ensure_h3_no_subtitle_rules(out)  # 禁字幕句必须仍有三遍
         out = ensure_h3_monologue_no_lipsync_rules(out, has_monologue=_has_mono)  # t241u
         out = ensure_speaker_semantics_rules(
             out, has_speaking=_has_speaking, has_monologue=_has_mono, single_inner=_single_inner,
@@ -332,7 +351,6 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         print(f"[Strata 精简] {why}")
         return prompt, why
     if str(backend or "").startswith("minimax"):
-        out = ensure_h3_no_subtitle_rules(out)  # t238u: 最终再核对三遍
         _has_mono2 = ("Self-talk:" in (prompt or "") or bool(re.search(r"[<＜]\s*\d+\s*s\s*[>＞]", prompt or "")))
         _single_inner2 = ("Entire-scene self-talk:" in (prompt or "") or "Entire-scene inner monologue:" in (prompt or ""))
         out = ensure_h3_monologue_no_lipsync_rules(out, has_monologue=_has_mono2)  # t241u
@@ -343,10 +361,9 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         out = ensure_speaker_semantics_rules(
             out, has_speaking=_has_speaking, has_monologue=_has_mono, single_inner=_single_inner,
         )
-    # t244: 最终再次确保禁字幕第一行存在（在所有其他恢复步骤之后）
+    # t244/t321u: 最后再核对一次：禁字幕句恰好一次（原文有时在第一行）
     try:
-        from config_prompt import ensure_video_no_subtitle_first_line
-        out = ensure_video_no_subtitle_first_line(out)
+        out = _fix_no_subtitle_line(prompt, out)
     except Exception as _e:  # noqa: BLE001
         print(f"[Strata 精简] 最终禁字幕第一行确保跳过：{_e}")
     out = restore_spoken_transcript(prompt, out)
