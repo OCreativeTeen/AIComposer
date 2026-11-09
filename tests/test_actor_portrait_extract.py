@@ -1,7 +1,12 @@
-"""t316u: Grok extract + Strata verify for actor portraits (offline, no live providers)."""
+"""t316u / t319u / t329u: Grok portrait extraction reviewed by a human in the actor window (offline).
+
+No Strata: every portrait is shown in the actor review window; ``review`` here is a stub that
+answers what the human clicked (ok / deleted / stop)."""
 from __future__ import annotations
 
+import ast
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -11,24 +16,29 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from utility.actor_portrait_extract import (
+from utility.actor_portrait_extract import (  # noqa: E402
     DEFAULT_IMAGE_SLOT,
+    REVIEW_DELETED,
+    REVIEW_OK,
+    REVIEW_STOP,
+    STATUS_CONFIRMED,
+    STATUS_DELETED,
+    STATUS_EXISTING,
     STATUS_FAILED,
     STATUS_OK,
-    STATUS_REJECTED,
     STATUS_SKIPPED,
-    actors_from_scene,
-    build_portrait_extract_prompt,
-    extract_actor_portraits,
-    format_actor_result_line,
-    parse_verify_json,
-    scan_scenes_for_portraits,
+    STATUS_STOPPED,
     actor_identity,
+    actors_from_scene,
+    all_actors_confirmed,
+    build_portrait_extract_prompt,
     clip_image_is_cover_copy,
-    extract_portraits_for_scene,
+    confirm_key,
+    format_actor_result_line,
+    review_portraits_for_scene,
+    scan_scenes_for_portraits,
     scene_clip_image_source,
     status_label,
-    verdict_accepts,
 )
 
 
@@ -42,343 +52,339 @@ def _rgb_image(path: str, color=(220, 30, 30), size=(80, 80)):
 def _actor(body, label="人物1", note=""):
     bits = [p for p in body.split("/") if p]
     return {
-        "role": "person",
-        "body": body,
-        "label": label,
-        "note": note,
-        "gender": bits[0] if bits else "",
-        "age": bits[1] if len(bits) > 1 else "",
-        "nationality": bits[2] if len(bits) > 2 else "",
-        "name": bits[-1] if bits else body,
+        "role": "person", "body": body, "label": label, "note": note,
+        "gender": bits[0] if bits else "", "age": bits[1] if len(bits) > 1 else "",
+        "nationality": bits[2] if len(bits) > 2 else "", "name": bits[-1] if bits else body,
         "key": f"person:{body}",
     }
 
 
-class ActorPortraitExtractTest(unittest.TestCase):
+class ActorPortraitReviewTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="portrait_x_")
         self.avatar = os.path.join(self.tmp, "avatar")
         os.makedirs(self.avatar, exist_ok=True)
-        self.scene_img = os.path.join(self.tmp, "scene.png")
-        _rgb_image(self.scene_img, (40, 40, 40), (200, 120))
+        self.scene_img = _rgb_image(os.path.join(self.tmp, "scene.png"), (40, 40, 40), (200, 120))
         self.woman = _actor("woman/mature/chinese/林氏", "人物1", note="青衫，低头，发髻")
         self.man = _actor("man/youth/chinese/贾雨村", "人物2", note="蓝衣，神情严肃")
+        self.gen_calls = []
+        self.reviews = []
 
     def tearDown(self):
-        import shutil
-
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    # --- stubs ---------------------------------------------------------------------------------
     @staticmethod
     def _dest(role, name, avatar_dir="", style=None):
-        return os.path.join(avatar_dir, name.replace("/", "_") + ".png")
+        return os.path.join(avatar_dir, actor_identity(name).replace("/", "_") + ".png")
 
-    def _path_lookup(self, existing):
-        def portrait_path(role, name, avatar_dir="", style=None):
-            return existing.get(name, "")
+    def _path(self, role, name, avatar_dir="", style=None):
+        p = self._dest(role, name, avatar_dir)
+        return p if os.path.isfile(p) else ""
 
-        return portrait_path
-
-    def _gen(self, color, calls=None):
+    def _gen(self, fail_for=()):
         def generate(image, actor, prompt):
-            if calls is not None:
-                calls.append((os.path.basename(image), actor["body"], prompt))
-            path = os.path.join(self.tmp, f"got_{len(calls or [])}_{actor['name']}.png")
-            _rgb_image(path, color)
+            self.gen_calls.append((os.path.basename(image), actor["body"]))
+            if (os.path.basename(image), actor["body"]) in fail_for or actor["body"] in fail_for:
+                return ""
+            path = os.path.join(self.tmp, f"actor_portrait_{len(self.gen_calls)}.png")
+            _rgb_image(path, (10 * len(self.gen_calls), 90, 90))
             return path
-
         return generate
 
-    def test_mode_list_contains_extract_portrait(self):
-        src = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
-        self.assertIn('("modify", "修改图片"', src)
-        self.assertIn('("cover", "从封面提取"', src)
-        self.assertIn('("cast", "补全/修正人物"', src)
-        self.assertIn('("portrait", "提取人物肖像"', src)
-        self.assertIn('title="提取人物肖像（Grok）"', src)
-        self.assertIn('fixed_backend="grok"', src)
-        self.assertEqual(DEFAULT_IMAGE_SLOT, "clip_image")
+    def _review(self, answers):
+        """answers: {(body, kind): [answer, ...]} — default ok."""
+        def review(actor, path, kind):
+            self.assertTrue(os.path.isfile(path), "review shows an associated file")
+            self.assertEqual(os.path.abspath(path), os.path.abspath(self._dest("person", actor["body"], self.avatar)))
+            self.reviews.append((actor["body"], kind))
+            queue = answers.get((actor["body"], kind)) or []
+            return queue.pop(0) if queue else REVIEW_OK
+        return review
 
-    def test_prompt_includes_description_attributes(self):
-        prompt = build_portrait_extract_prompt(self.woman)
-        self.assertIn("Gender: woman", prompt)
-        self.assertIn("Age: mature", prompt)
-        self.assertIn("Nationality/ethnicity: chinese", prompt)
-        self.assertIn("林氏", prompt)
-        self.assertIn("青衫，低头，发髻", prompt)
-        self.assertIn("clearly present", prompt)
-        self.assertIn("Do not invent", prompt)
-        self.assertIn("neutral background", prompt)
-        src = Path(ROOT, "utility/actor_portrait_extract.py").read_text(encoding="utf-8")
-        self.assertNotIn("def crop_portrait", src)
-        self.assertNotIn("def locate_actors_in_image", src)
-        self.assertIn("generate_portrait_with_grok", src)
-        self.assertIn("verify_portrait_with_strata", src)
-        self.assertIn("MIN_VERIFY_CONFIDENCE = 0.7", src)
-
-    def test_skip_existing_portrait_does_not_overwrite(self):
-        existing_file = os.path.join(self.avatar, "woman_mature_chinese_林氏.png")
-        with open(existing_file, "wb") as fh:
-            fh.write(b"OLD-PORTRAIT")
-        existing = {self.woman["body"]: existing_file}
-        calls = []
-        rows = extract_actor_portraits(
-            self.scene_img, [self.woman], self.avatar,
-            generate=self._gen((9, 9, 9), calls),
-            verify=lambda *a: {"match": True, "confidence": 0.99, "reason": "ok"},
-            portrait_path=self._path_lookup(existing),
-            portrait_dest=self._dest,
+    def _run(self, scene, answers=None, confirmed=None, **kw):
+        return review_portraits_for_scene(
+            scene, self.avatar, generate=self._gen(kw.pop("fail_for", ())), review=self._review(answers or {}),
+            confirmed=confirmed if confirmed is not None else set(),
+            portrait_path=self._path, portrait_dest=self._dest, **kw,
         )
-        self.assertEqual(calls, [])
-        self.assertEqual(rows[0]["status"], STATUS_SKIPPED)
-        self.assertEqual(status_label(rows[0]["status"]), "已有肖像跳过")
-        with open(existing_file, "rb") as fh:
-            self.assertEqual(fh.read(), b"OLD-PORTRAIT")
 
-    def test_strata_reject_does_not_associate(self):
-        calls = []
-        rows = extract_actor_portraits(
-            self.scene_img, [self.woman], self.avatar,
-            generate=self._gen((200, 20, 20), calls),
-            verify=lambda *a: {"match": False, "confidence": 0.95, "reason": "not her"},
-            portrait_path=self._path_lookup({}),
-            portrait_dest=self._dest,
+    def _seed_existing(self, actor, data=b"OLD-PORTRAIT"):
+        path = self._dest("person", actor["body"], self.avatar)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def _scenes(self, n, actors):
+        out = []
+        for i in range(1, n + 1):
+            img = _rgb_image(os.path.join(self.tmp, f"s{i}.png"), (20 * i, 20, 20), (160, 100))
+            out.append({"clip_image": img, "actor_refs": [dict(a) for a in actors]})
+        return out
+
+    # --- the six decisions -------------------------------------------------------------------
+    def test_existing_ok_no_grok_and_confirmed(self):
+        path = self._seed_existing(self.woman)
+        confirmed = set()
+        out = self._run({"clip_image": self.scene_img, "actor_refs": [self.woman]}, confirmed=confirmed)
+        self.assertEqual(self.gen_calls, [])
+        self.assertEqual(self.reviews, [(self.woman["body"], "existing")])
+        self.assertEqual(out["results"][0]["status"], STATUS_CONFIRMED)
+        self.assertIn(confirm_key(self.woman), confirmed)
+        self.assertEqual(Path(path).read_bytes(), b"OLD-PORTRAIT")
+
+    def test_existing_delete_regenerates_from_this_scene(self):
+        old = self._seed_existing(self.woman)
+        confirmed = set()
+        out = self._run({"clip_image": self.scene_img, "actor_refs": [self.woman]},
+                        answers={(self.woman["body"], "existing"): [REVIEW_DELETED]}, confirmed=confirmed)
+        self.assertEqual(self.gen_calls, [("scene.png", self.woman["body"])])
+        self.assertEqual(self.reviews, [(self.woman["body"], "existing"), (self.woman["body"], "new")])
+        self.assertEqual(out["results"][0]["status"], STATUS_OK)
+        self.assertIn(confirm_key(self.woman), confirmed)
+        self.assertNotEqual(Path(old).read_bytes(), b"OLD-PORTRAIT")  # new portrait at the same paste path
+        bak = os.path.join(self.avatar, "woman_mature_chinese_林氏.bak1.png")
+        self.assertEqual(Path(bak).read_bytes(), b"OLD-PORTRAIT")  # deleted = renamed, recoverable
+
+    def test_existing_delete_then_regenerated_delete_skips_scene(self):
+        self._seed_existing(self.woman)
+        confirmed = set()
+        out = self._run({"clip_image": self.scene_img, "actor_refs": [self.woman]}, confirmed=confirmed,
+                        answers={(self.woman["body"], "existing"): [REVIEW_DELETED],
+                                 (self.woman["body"], "new"): [REVIEW_DELETED]})
+        self.assertEqual(len(self.gen_calls), 1)  # one Grok call per attempt
+        self.assertEqual(out["results"][0]["status"], STATUS_DELETED)
+        self.assertEqual(self._path("person", self.woman["body"], self.avatar), "")
+        self.assertNotIn(confirm_key(self.woman), confirmed)
+
+    def test_missing_ok_associates_and_confirms(self):
+        confirmed = set()
+        out = self._run({"clip_image": self.scene_img, "actor_refs": [self.woman]}, confirmed=confirmed)
+        self.assertEqual(self.gen_calls, [("scene.png", self.woman["body"])])
+        self.assertEqual(self.reviews, [(self.woman["body"], "new")])
+        row = out["results"][0]
+        self.assertEqual(row["status"], STATUS_OK)
+        self.assertEqual(os.path.abspath(row["dest"]), os.path.abspath(self._dest("person", self.woman["body"], self.avatar)))
+        self.assertIn("成功", format_actor_result_line(row))
+        self.assertIn(confirm_key(self.woman), confirmed)
+        self.assertFalse([f for f in os.listdir(self.tmp) if f.startswith("actor_portrait_")], "temp file cleaned")
+
+    def test_missing_delete_skips_scene_and_next_scene_tries_again(self):
+        scenes = self._scenes(3, [self.woman])
+        answers = {(self.woman["body"], "new"): [REVIEW_DELETED, REVIEW_OK]}
+        report = scan_scenes_for_portraits(
+            scenes, self.avatar, generate=self._gen(), review=self._review(answers),
+            portrait_path=self._path, portrait_dest=self._dest,
         )
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(rows[0]["status"], STATUS_REJECTED)
-        self.assertEqual(status_label(rows[0]["status"]), "未通过审核")
-        dest = self._dest("person", self.woman["body"], self.avatar)
-        self.assertFalse(os.path.isfile(dest))
-        self.assertEqual(os.listdir(self.avatar), [])
+        self.assertEqual([c[0] for c in self.gen_calls], ["s1.png", "s2.png"])
+        self.assertEqual([r["status"] for r in report["results"]], [STATUS_DELETED, STATUS_OK])
+        self.assertEqual(status_label(STATUS_DELETED), "已删除，这一场跳过")
+        self.assertIn(confirm_key(self.woman), report["confirmed"])
+        self.assertTrue(os.path.isfile(self._dest("person", self.woman["body"], self.avatar)))
 
-    def test_unparseable_verdict_is_failure(self):
-        rows = extract_actor_portraits(
-            self.scene_img, [self.woman], self.avatar,
-            generate=self._gen((10, 200, 10), []),
-            verify=lambda *a: "not-json at all",
-            portrait_path=self._path_lookup({}),
-            portrait_dest=self._dest,
+    def test_confirmed_skipped_later_and_scan_stops_when_all_confirmed(self):
+        scenes = self._scenes(4, [self.woman, self.man])
+        scenes[0]["actor_refs"] = [dict(self.woman)]  # scene 1: only the woman
+        answers = {(self.man["body"], "new"): [REVIEW_DELETED, REVIEW_OK]}
+        report = scan_scenes_for_portraits(
+            scenes, self.avatar, generate=self._gen(), review=self._review(answers),
+            portrait_path=self._path, portrait_dest=self._dest,
         )
-        self.assertEqual(rows[0]["status"], STATUS_FAILED)
-        self.assertEqual(status_label(rows[0]["status"]), "提取失败")
-        self.assertEqual(os.listdir(self.avatar), [])
-        self.assertIsNone(parse_verify_json("hello"))
-        self.assertFalse(verdict_accepts({"match": True, "confidence": 0.5}))
-        self.assertTrue(verdict_accepts({"match": True, "confidence": 0.7}))
+        # s1 woman ok; s2 woman skipped (confirmed), man deleted; s3 man ok; s4 never touched
+        self.assertEqual(self.gen_calls, [("s1.png", self.woman["body"]), ("s2.png", self.man["body"]),
+                                          ("s3.png", self.man["body"])])
+        self.assertEqual(self.reviews.count((self.woman["body"], "new")), 1)
+        self.assertNotIn("s4.png", [c[0] for c in self.gen_calls])
+        statuses = [(r["body"], r["status"]) for r in report["results"]]
+        self.assertIn((self.woman["body"], STATUS_SKIPPED), statuses)
+        self.assertTrue(all_actors_confirmed(scenes, report["confirmed"]))
+        # 已确认的人（例如从项目配置读回来的）：已有肖像也不再给人看、不调 Grok
+        self.gen_calls.clear()
+        self.reviews.clear()
+        out = self._run(scenes[3], confirmed=set(report["confirmed"]))
+        self.assertEqual((self.gen_calls, self.reviews), ([], []))
+        self.assertEqual(out["reason"], "all_confirmed")
 
-    def test_strata_pass_associates_independent_file(self):
-        rows = extract_actor_portraits(
-            self.scene_img, [self.woman], self.avatar,
-            generate=self._gen((20, 20, 200), []),
-            verify=lambda *a: {"match": True, "confidence": 0.88, "reason": "matches"},
-            portrait_path=self._path_lookup({}),
-            portrait_dest=self._dest,
+    def test_grok_failure_no_window_skip_rest_of_scene(self):
+        scenes = self._scenes(2, [self.woman, self.man])
+        report = scan_scenes_for_portraits(
+            scenes, self.avatar, generate=self._gen(fail_for={("s1.png", self.woman["body"])}),
+            review=self._review({}), portrait_path=self._path, portrait_dest=self._dest,
         )
-        self.assertEqual(rows[0]["status"], STATUS_OK)
-        self.assertEqual(status_label(rows[0]["status"]), "成功")
-        dest = self._dest("person", self.woman["body"], self.avatar)
-        self.assertEqual(os.path.abspath(rows[0]["dest"]), os.path.abspath(dest))
-        self.assertTrue(os.path.isfile(dest))
-        self.assertIn("成功", format_actor_result_line(rows[0]))
-        src = Path(ROOT, "utility/content_pdf.py").read_text(encoding="utf-8")
-        self.assertIn("def actor_portrait_dest(", src)
+        # s1: woman fails → no review window, the man in s1 is not tried; s2 tries both
+        self.assertEqual(self.gen_calls, [("s1.png", self.woman["body"]), ("s2.png", self.woman["body"]),
+                                          ("s2.png", self.man["body"])])
+        self.assertEqual(self.reviews, [(self.woman["body"], "new"), (self.man["body"], "new")])
+        self.assertEqual(report["results"][0]["status"], STATUS_FAILED)
+        self.assertEqual(status_label(STATUS_FAILED), "提取失败")
+        self.assertEqual(sorted(os.listdir(self.avatar)), ["man_youth_chinese_贾雨村.png", "woman_mature_chinese_林氏.png"])
 
-    def test_scan_reject_then_continue_next_scene_and_early_stop(self):
-        gen_calls = []
-        ver_calls = []
+    # --- stop / manual mode / safety -------------------------------------------------------
+    def test_stop_ends_the_whole_scan(self):
+        scenes = self._scenes(3, [self.woman, self.man])
+        report = scan_scenes_for_portraits(
+            scenes, self.avatar, generate=self._gen(),
+            review=self._review({(self.woman["body"], "new"): [REVIEW_STOP]}),
+            portrait_path=self._path, portrait_dest=self._dest,
+        )
+        self.assertTrue(report["stopped"])
+        self.assertEqual(self.gen_calls, [("s1.png", self.woman["body"])])
+        self.assertEqual(report["results"][-1]["status"], STATUS_STOPPED)
+        self.assertNotIn(confirm_key(self.woman), report["confirmed"])
+        # stop never deletes: the portrait stays associated (only Delete removes)
+        self.assertTrue(os.path.isfile(self._dest("person", self.woman["body"], self.avatar)))
+
+    def test_manual_mode_only_missing_and_failure_continues(self):
+        self._seed_existing(self.woman)
+        third = _actor("woman/youth/chinese/香菱", "人物3")
+        out = self._run({"clip_image": self.scene_img, "actor_refs": [self.woman, self.man, third]},
+                        existing="skip", stop_on_failure=False, fail_for={self.man["body"]})
+        self.assertEqual([r["status"] for r in out["results"]], [STATUS_EXISTING, STATUS_FAILED, STATUS_OK])
+        self.assertEqual([c[1] for c in self.gen_calls], [self.man["body"], third["body"]])
+        self.assertEqual(self.reviews, [(third["body"], "new")])  # existing not shown, failure no window
+        self.assertEqual(Path(self._dest("person", self.woman["body"], self.avatar)).read_bytes(), b"OLD-PORTRAIT")
+
+    def test_paste_during_grok_is_not_overwritten_and_recheck_before_call(self):
+        pasted = self._dest("person", self.man["body"], self.avatar)
 
         def generate(image, actor, prompt):
-            gen_calls.append((os.path.basename(image), actor["body"]))
-            path = os.path.join(self.tmp, f"{os.path.basename(image)}_{actor['name']}.png")
-            _rgb_image(path, (180, 80, 80) if actor is self.woman or actor["body"] == self.woman["body"] else (80, 80, 180))
-            return path
+            self.gen_calls.append(actor["body"])
+            with open(pasted, "wb") as fh:  # user pastes the man while Grok works on the woman
+                fh.write(b"USER-PASTE")
+            if actor["body"] == self.woman["body"]:
+                with open(self._dest("person", actor["body"], self.avatar), "wb") as fh:
+                    fh.write(b"USER-PASTE-W")
+            return _rgb_image(os.path.join(self.tmp, f"actor_portrait_g{len(self.gen_calls)}.png"))
 
-        def verify(portrait, actor, scene_image):
-            ver_calls.append((os.path.basename(scene_image), actor["body"]))
-            name = os.path.basename(scene_image)
-            if name == "s1.png" and actor["body"] == self.woman["body"]:
-                return {"match": False, "confidence": 0.9, "reason": "not in scene 1"}
-            return {"match": True, "confidence": 0.91, "reason": "ok"}
-
-        s1 = os.path.join(self.tmp, "s1.png")
-        s2 = os.path.join(self.tmp, "s2.png")
-        s3 = os.path.join(self.tmp, "s3.png")
-        _rgb_image(s1, (30, 30, 30), (160, 100))
-        _rgb_image(s2, (50, 50, 50), (160, 100))
-        _rgb_image(s3, (70, 70, 70), (160, 100))
-        scenes = [
-            {"clip_image": s1, "actor_refs": [self.woman, self.man]},
-            {"clip_image": s2, "actor_refs": [self.woman, self.man]},
-            {"clip_image": s3, "actor_refs": [self.woman, self.man]},
-        ]
-        report = scan_scenes_for_portraits(
-            scenes, self.avatar, generate=generate, verify=verify,
-            portrait_path=self._path_lookup({}),
-            portrait_dest=self._dest,
+        out = review_portraits_for_scene(
+            {"clip_image": self.scene_img, "actor_refs": [self.woman, self.man]}, self.avatar,
+            generate=generate, review=self._review({}), portrait_path=self._path, portrait_dest=self._dest,
+            existing="skip",
         )
-        self.assertEqual(report["grok_calls"], 3)
-        self.assertEqual(report["strata_calls"], 3)
-        self.assertEqual([c[0] for c in gen_calls], ["s1.png", "s1.png", "s2.png"])
-        self.assertEqual(gen_calls[0][1], self.woman["body"])
-        self.assertEqual(gen_calls[1][1], self.man["body"])
-        self.assertEqual(gen_calls[2], ("s2.png", self.woman["body"]))
-        self.assertNotIn("s3.png", [c[0] for c in gen_calls])
-        have = set(os.listdir(self.avatar))
-        self.assertIn("woman_mature_chinese_林氏.png", have)
-        self.assertIn("man_youth_chinese_贾雨村.png", have)
-        statuses = {(r["body"], r["status"]) for r in report["results"]}
-        self.assertIn((self.woman["body"], STATUS_REJECTED), statuses)
-        self.assertIn((self.woman["body"], STATUS_OK), statuses)
-        self.assertIn((self.man["body"], STATUS_OK), statuses)
+        self.assertEqual(self.gen_calls, [self.woman["body"]])
+        self.assertEqual([r["status"] for r in out["results"]], [STATUS_EXISTING, STATUS_EXISTING])
+        self.assertEqual(Path(pasted).read_bytes(), b"USER-PASTE")
+        self.assertEqual(Path(self._dest("person", self.woman["body"], self.avatar)).read_bytes(), b"USER-PASTE-W")
 
-    def test_scene_image_untouched(self):
-        before = Path(self.scene_img).read_bytes()
-        mtime = os.path.getmtime(self.scene_img)
-        extract_actor_portraits(
-            self.scene_img, [self.woman], self.avatar,
-            generate=self._gen((90, 90, 200), []),
-            verify=lambda *a: {"match": True, "confidence": 0.8, "reason": "ok"},
-            portrait_path=self._path_lookup({}),
-            portrait_dest=self._dest,
-        )
+    def test_parenthesis_ignored_and_scene_image_untouched(self):
+        self.assertEqual(actor_identity("woman/mature/chinese/林氏（低头，青衫）"), "woman/mature/chinese/林氏")
+        self.assertEqual(actor_identity("man/youth/chinese/贾雨村(走向门口)"), "man/youth/chinese/贾雨村")
+        before, mtime = Path(self.scene_img).read_bytes(), os.path.getmtime(self.scene_img)
+        twins = [dict(self.man, body="man/youth/chinese/贾雨村（坐）"), dict(self.man, body="man/youth/chinese/贾雨村（站）")]
+        out = self._run({"clip_image": self.scene_img, "actor_refs": twins})
+        self.assertEqual(len(self.gen_calls), 1)
+        self.assertEqual(len(out["results"]), 1)
+        self.assertEqual(confirm_key(twins[0]), confirm_key(twins[1]))
         self.assertEqual(Path(self.scene_img).read_bytes(), before)
         self.assertEqual(os.path.getmtime(self.scene_img), mtime)
+        preset = actors_from_scene({"actor_refs": [dict(self.woman, body="woman/mature/chinese/林氏（低头）")]})
+        self.assertEqual(preset[0]["body"], "woman/mature/chinese/林氏")
 
-    def test_default_slot_and_auto_hooks(self):
-        scene = {"clip_image": self.scene_img}
-        self.assertEqual(scene_clip_image_source(scene), os.path.abspath(self.scene_img))
-        src = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
-        self.assertNotIn("_maybe_auto_extract_actor_portraits", src)
-        self.assertIn("portraits=True", src)
-        self.assertIn("def portrait_step(scene, label)", src)
-        self.assertIn("written_evt.wait(", src)
-        self.assertIn("extract_portraits_for_scene(", src)
-        self.assertIn("self._portrait_style()", src)
-        dlg = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
-        run = dlg[dlg.index("def _run_portrait_extract"):dlg.index("def on_submit")]
-        self.assertIn("scene_clip_image_source(scene, covers)", run)
-        self.assertNotIn("chosen_image()", run)
+    def test_host_is_not_reviewed_or_extracted(self):
+        host = dict(_actor("man/elder/chinese/讲员甲", "讲员"), role="host", key="host:man/elder/chinese/讲员甲")
+        out = self._run({"clip_image": self.scene_img, "actor_refs": [host]})
+        self.assertEqual((self.gen_calls, self.reviews), ([], []))
+        self.assertEqual(out["reason"], "no_actors")
+        self.assertTrue(all_actors_confirmed([{"actor_refs": [host]}], set()))
 
     def test_no_cover_fallback_uses_only_scene_clip_image(self):
-        cover = os.path.join(self.tmp, "cover.png")
-        _rgb_image(cover, (1, 2, 3), (200, 120))
+        cover = _rgb_image(os.path.join(self.tmp, "cover.png"), (1, 2, 3), (200, 120))
         seeded_clip = os.path.join(self.tmp, "clip_seed.png")
         frozen = os.path.join(self.tmp, "zero_last.png")
-        import shutil
-
         shutil.copy2(cover, seeded_clip)
         shutil.copy2(cover, frozen)
-        # 播种后还没提取：clip_image 是封面拷贝 → 不用，也不退到 clip_image_last / zero / 封面
         seeded = {"cover_origin": "cover", "clip_image": seeded_clip, "clip_image_last": self.scene_img,
                   "zero_image_last": frozen, "actor_refs": [self.woman]}
         self.assertTrue(clip_image_is_cover_copy(seeded))
         self.assertEqual(scene_clip_image_source(seeded), "")
-        calls = []
-        out = extract_portraits_for_scene(
-            seeded, self.avatar, covers=[cover], generate=self._gen((5, 5, 5), calls),
-            verify=lambda *a: {"match": True, "confidence": 0.99},
-            portrait_path=self._path_lookup({}), portrait_dest=self._dest,
-        )
-        self.assertEqual(calls, [])
+        out = self._run(seeded, covers=[cover])
+        self.assertEqual((self.gen_calls, self.reviews), ([], []))
         self.assertEqual(out["reason"], "no_scene_clip_image")
-        # 没有 clip_image：也不用 clip_image_last
         self.assertEqual(scene_clip_image_source({"clip_image_last": self.scene_img}), "")
-        # 和项目封面同内容（无 cover_origin 标记）也算封面拷贝
         self.assertEqual(scene_clip_image_source({"clip_image": seeded_clip}, covers=[cover]), "")
-        # 提取后：clip_image 是这一场自己的图 → 用它
-        extracted = dict(seeded, clip_image=self.scene_img)
-        out = extract_portraits_for_scene(
-            extracted, self.avatar, covers=[cover], generate=self._gen((7, 7, 7), calls),
-            verify=lambda *a: {"match": True, "confidence": 0.9},
-            portrait_path=self._path_lookup({}), portrait_dest=self._dest,
-        )
+        out = self._run(dict(seeded, clip_image=self.scene_img), covers=[cover])
         self.assertEqual(out["source"], os.path.abspath(self.scene_img))
-        self.assertEqual([c[0] for c in calls], ["scene.png"])
+        self.assertEqual([c[0] for c in self.gen_calls], ["scene.png"])
 
-    def test_existing_portrait_skipped_when_only_parenthesis_differs(self):
-        self.assertEqual(actor_identity("woman/mature/chinese/林氏（低头，青衫）"), "woman/mature/chinese/林氏")
-        self.assertEqual(actor_identity("man/youth/chinese/贾雨村(走向门口)"), "man/youth/chinese/贾雨村")
-        existing_file = self._dest("person", "woman/mature/chinese/林氏", self.avatar)
-        with open(existing_file, "wb") as fh:
-            fh.write(b"PASTED")
-        calls = []
+    # --- wiring (source checks; the GUI can't be imported offline) ---------------------------
+    def test_prompt_and_no_strata_anywhere(self):
+        prompt = build_portrait_extract_prompt(self.woman)
+        for bit in ("Gender: woman", "Age: mature", "Nationality/ethnicity: chinese", "林氏", "青衫，低头，发髻",
+                    "clearly present", "Do not invent", "neutral background"):
+            self.assertIn(bit, prompt)
+        mod = Path(ROOT, "utility/actor_portrait_extract.py").read_text(encoding="utf-8")
+        for gone in ("verify_portrait_with_strata", "VERIFY_SYSTEM", "MIN_VERIFY_CONFIDENCE", "parse_verify_json",
+                     "verdict_accepts", "visual_remix", "STATUS_REJECTED", "def extract_actor_portraits"):
+            self.assertNotIn(gone, mod)
+        dlg = Path(ROOT, "gui/picture_prompt_dialog.py").read_text(encoding="utf-8")
+        run = dlg[dlg.index("def _run_portrait_extract"):dlg.index("def on_submit")]
+        self.assertNotIn("verify", run)
+        self.assertIn("scene_clip_image_source(scene, covers)", run)
+        self.assertNotIn("chosen_image()", run)
+        self.assertIn('existing="skip"', run)
+        self.assertIn("stop_on_failure=False", run)
+        self.assertIn("threading.Thread(target=work", run)
+        self.assertIn('("portrait", "提取人物肖像"', dlg)
+        self.assertIn('fixed_backend="grok"', dlg)
+        self.assertEqual(DEFAULT_IMAGE_SLOT, "clip_image")
 
-        def portrait_path(role, name, avatar_dir="", style=None):
-            p = self._dest(role, name, avatar_dir)
-            return p if os.path.isfile(p) else ""
+    def test_auto_flow_wiring(self):
+        src = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
+        step = src[src.index("def portrait_step(scene, label)"):src.index("def scene_status(head)")]
+        self.assertIn("review_portraits_for_scene(", step)
+        self.assertIn("self._portrait_review_from_worker(act, kind)", step)
+        self.assertIn('confirmed=portrait_ctx["confirmed"]', step)
+        self.assertIn('portrait_ctx["stopped"] = True', step)
+        self.assertIn("all_actors_confirmed(", step)
+        self.assertNotIn("extract_portraits_for_scene", src)
+        self.assertIn("written_evt.wait(", src)
+        self.assertIn("review_portrait=self._portrait_review_from_worker", src)
+        self.assertIn('"actor_portrait_confirmed"', src)
+        worker = src[src.index("def _portrait_review_from_worker"):]
+        self.assertIn("self.root.after(0, run)", worker)
+        self.assertIn("done.wait()", worker)
 
-        variant = dict(self.woman, body="woman/mature/chinese/林氏（另一场：站在门口，红衣）")
-        rows = extract_actor_portraits(
-            self.scene_img, [variant], self.avatar, generate=self._gen((3, 3, 3), calls),
-            verify=lambda *a: {"match": True, "confidence": 0.99},
-            portrait_path=portrait_path, portrait_dest=self._dest,
-        )
-        self.assertEqual(calls, [])
-        self.assertEqual(rows[0]["status"], STATUS_SKIPPED)
-        self.assertEqual(Path(existing_file).read_bytes(), b"PASTED")
-        # 同一场里两个只差括号的同一人：只提取一次
-        rows = extract_actor_portraits(
-            self.scene_img,
-            [dict(self.man, body="man/youth/chinese/贾雨村（坐）"), dict(self.man, body="man/youth/chinese/贾雨村（站）")],
-            self.avatar, generate=self._gen((4, 4, 4), calls),
-            verify=lambda *a: {"match": True, "confidence": 0.9},
-            portrait_path=portrait_path, portrait_dest=self._dest,
-        )
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(len(rows), 1)
-        preset = actors_from_scene({"actor_refs": [dict(self.woman, body="woman/mature/chinese/林氏（低头）")]})
-        self.assertEqual(preset[0]["body"], "woman/mature/chinese/林氏")
+    def test_review_window_delete_button_key_and_outcome(self):
+        src = Path(ROOT, "gui/workflow/wf_actors.py").read_text(encoding="utf-8")
+        dlg = src[src.index("    def _open_portrait_dialog("):src.index("    def _scene_actor_rows(")]
+        self.assertIn('text="删除肖像", command=delete_portrait', dlg)
+        self.assertIn('dlg.bind("<Delete>", delete_portrait)', dlg)
+        self.assertIn('return holder["result"]', dlg)
+        self.assertIn('dlg.protocol("WM_DELETE_WINDOW", close_window)', dlg)
+        self.assertIn('holder["result"] = "stop" if review', dlg)
+        self.assertIn("isinstance(focus, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text))", dlg)
+        rev = src[src.index("    def _review_actor_portrait("):src.index("    def _paste_portrait_file(")]
+        self.assertIn("actor_entry=None", rev)  # auto review never edits the scene's actor list
+        self.assertIn("review=True", rev)
 
-    def test_recheck_right_before_each_grok_call(self):
-        """前一个人物/场景或用户刚粘贴的肖像：下一次调用前要重新查，不再提取。"""
-        calls = []
-        state = {}
+    def test_dialog_remove_renames_every_lookup_level(self):
+        """_remove_portrait_files (ast-extracted): backs up each file path_for finds until none is left."""
+        src = Path(ROOT, "gui/workflow/wf_actors.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        segs = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in ("_remove_portrait_files", "_backup_portrait"):
+                segs[node.name] = ast.get_source_segment(src, node)
+        ns = {"os": os}
+        exec("class M:\n" + "\n".join("    " + line for line in (
+            "@staticmethod\n" + segs["_backup_portrait"] + "\n" + segs["_remove_portrait_files"]).splitlines()), ns)
+        story = os.path.join(self.tmp, "story")
+        os.makedirs(story)
+        a = self._seed_existing(self.woman, b"A")
+        b = os.path.join(story, os.path.basename(a))
+        Path(b).write_bytes(b"B")
 
-        def portrait_path(role, name, avatar_dir="", style=None):
-            return state.get(name, "")
+        def path_for(name):
+            for p in (a, b):
+                if os.path.isfile(p):
+                    return p
+            return ""
 
-        def generate(image, actor, prompt):
-            calls.append(actor["body"])
-            # Grok 处理第一个人时，用户在人物窗粘贴了第二个人的肖像
-            pasted = self._dest("person", self.man["body"], self.avatar)
-            _rgb_image(pasted, (9, 9, 9))
-            state[self.man["body"]] = pasted
-            path = os.path.join(self.tmp, f"g_{len(calls)}.png")
-            _rgb_image(path, (100, 100, 100))
-            return path
-
-        rows = extract_actor_portraits(
-            self.scene_img, [self.woman, self.man], self.avatar, generate=generate,
-            verify=lambda *a: {"match": True, "confidence": 0.9},
-            portrait_path=portrait_path, portrait_dest=self._dest,
-        )
-        self.assertEqual(calls, [self.woman["body"]])
-        self.assertEqual([r["status"] for r in rows], [STATUS_OK, STATUS_SKIPPED])
-
-    def test_paste_during_review_is_not_overwritten(self):
-        state = {}
-        pasted = self._dest("person", self.woman["body"], self.avatar)
-
-        def portrait_path(role, name, avatar_dir="", style=None):
-            return state.get(name, "")
-
-        def verify(portrait, actor, scene_image):
-            with open(pasted, "wb") as fh:
-                fh.write(b"USER-PASTE")
-            state[self.woman["body"]] = pasted
-            return {"match": True, "confidence": 0.95}
-
-        rows = extract_actor_portraits(
-            self.scene_img, [self.woman], self.avatar, generate=self._gen((6, 6, 6), []),
-            verify=verify, portrait_path=portrait_path, portrait_dest=self._dest,
-        )
-        self.assertEqual(rows[0]["status"], STATUS_SKIPPED)
-        self.assertEqual(Path(pasted).read_bytes(), b"USER-PASTE")
-
-    def test_preset_actor_refs_used_without_project_manager(self):
-        scene = {"actor_refs": [self.woman]}
-        found = actors_from_scene(scene)
-        self.assertEqual(found[0]["body"], self.woman["body"])
+        removed = ns["M"]()._remove_portrait_files(self.woman["body"], path_for)
+        self.assertEqual(removed, [a, b])
+        self.assertEqual(path_for(self.woman["body"]), "")
+        self.assertEqual(Path(os.path.splitext(a)[0] + ".bak1.png").read_bytes(), b"A")
+        self.assertEqual(ns["M"]()._remove_portrait_files(self.woman["body"], path_for), [])
 
 
 if __name__ == "__main__":

@@ -1,56 +1,50 @@
-"""从场景图提取人物肖像，并按粘贴肖像的同一路径关联到 actor。
+"""从场景图提取人物肖像，并按粘贴肖像的同一路径关联到 actor；由人在人物窗里看一眼确认。
 
-t316u：用 Grok Image（和「修改图片 / 补全人物」相同的图生图路径）按人物描述
-提取头部/肩部肖像；再用 Strata 看图审核。只有审核通过才关联。不改场景图。
-已有肖像的人物跳过，绝不覆盖。
-
+t316u：用 Grok Image（和「修改图片 / 补全人物」相同的图生图路径）按人物描述提取头部/肩部肖像。
 t319u：来源只用这一场自己的 clip_image。新项目播种时 clip_image 是封面的拷贝，
 这种还没从封面提取出来的图（与冻结的封面原图 / 项目封面内容相同）一律不用，
 也不退到 clip_image_last、zero 图或封面。人物身份 = 性别/年龄/国别/名字，括号不算。
+t329u：去掉 Strata 审核。每一位人物（一位一位来）在人物窗（双击人物那个窗口）里给人看：
+确认 = 留下并记为已确认（后面的场景不再问）；删除肖像 = 不要这张；取消 / Esc = 停止这次自动提取。
+已有肖像：先给人看，不调 Grok；删掉了才用这一场的图重新提取一次。绝不在没有人按删除时覆盖肖像。
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import shutil
 import tempfile
 
-STATUS_OK = "ok"
-STATUS_REJECTED = "rejected"
-STATUS_FAILED = "failed"
-STATUS_SKIPPED = "skipped"
+# review(actor, portrait_path, kind) 的返回值（kind = "existing" / "new"）
+REVIEW_OK = "ok"  # 确认 / 关窗：留下
+REVIEW_DELETED = "deleted"  # 删除肖像
+REVIEW_STOP = "stop"  # 取消 / Esc：停止这次自动提取
+
+STATUS_OK = "ok"  # 新提取的肖像，人确认了
+STATUS_CONFIRMED = "confirmed"  # 已有肖像，人确认了（没调 Grok）
+STATUS_DELETED = "deleted"  # 新提取的被人删了：这一场跳过这一位
+STATUS_FAILED = "failed"  # Grok 没给图 / 保存失败
+STATUS_SKIPPED = "skipped"  # 以前已确认：不再问
+STATUS_EXISTING = "existing"  # 已有肖像（手动模式只做没有肖像的人）
+STATUS_STOPPED = "stopped"  # 人按了取消 / Esc
 
 STATUS_LABEL = {
-    STATUS_OK: "成功",
-    STATUS_REJECTED: "未通过审核",
+    STATUS_OK: "成功（已确认）",
+    STATUS_CONFIRMED: "已有肖像，已确认",
+    STATUS_DELETED: "已删除，这一场跳过",
     STATUS_FAILED: "提取失败",
-    STATUS_SKIPPED: "已有肖像跳过",
+    STATUS_SKIPPED: "已确认过，跳过",
+    STATUS_EXISTING: "已有肖像跳过",
+    STATUS_STOPPED: "已停止",
 }
 
 DEFAULT_IMAGE_SLOT = "clip_image"
-MIN_VERIFY_CONFIDENCE = 0.7
 
 EXTRACT_PROMPT_INTRO = (
     "Extract a head-and-shoulders portrait of ONLY the person described below "
     "from Image 1 (the scene picture), and only if that person is clearly present."
 )
-
-VERIFY_SYSTEM = """You review a candidate character portrait against a written description and the original scene picture.
-Return JSON only (no markdown, no extra text):
-{"match":true,"reason":"short reason","confidence":0.86}
-
-Set match=true ONLY if every point below is true:
-- The portrait shows exactly one real-looking person (not empty, not several people, not a collage).
-- Gender, age band, and nationality/ethnicity all match the description.
-- Appearance notes (the text in parentheses: clothing, hair, face, distinctive features) are consistent when they describe how the person looks.
-- The same person plausibly appears in the source scene image (face, hair and clothing correspond). If the scene has no such person, match MUST be false.
-- The portrait was extracted from the scene, not invented to fit the text alone.
-
-If anything is uncertain, or the portrait looks hallucinated, match MUST be false.
-confidence is how sure you are of this verdict, from 0 to 1.
-"""
 
 
 def status_label(status: str) -> str:
@@ -208,68 +202,6 @@ def build_portrait_extract_prompt(actor: dict) -> str:
     ])
 
 
-def parse_verify_json(text: str) -> dict | None:
-    raw = (text or "").strip()
-    if not raw:
-        return None
-    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S)
-    blob = fence.group(1) if fence else raw
-    match = re.search(r"\{.*\}", blob, re.S)
-    try:
-        data = json.loads(match.group(0) if match else blob)
-    except ValueError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    if "match" not in data:
-        return None
-    flag = data.get("match")
-    if isinstance(flag, str):
-        flag = flag.strip().lower() in ("1", "true", "yes", "y")
-    else:
-        flag = bool(flag)
-    try:
-        conf = float(data.get("confidence")) if data.get("confidence") is not None else None
-    except (TypeError, ValueError):
-        conf = None
-    return {
-        "match": flag,
-        "reason": str(data.get("reason") or "").strip(),
-        "confidence": conf,
-    }
-
-
-def verdict_accepts(verdict) -> bool:
-    if not isinstance(verdict, dict):
-        return False
-    try:
-        conf = float(verdict.get("confidence"))
-    except (TypeError, ValueError):
-        return False
-    return bool(verdict.get("match")) and conf >= MIN_VERIFY_CONFIDENCE
-
-
-def verify_portrait_with_strata(portrait_path: str, actor: dict, scene_image: str = "") -> dict | None:
-    """Strata vision review of a Grok-returned portrait (optionally with the source scene)."""
-    from utility.visual_remix import _chat, _image_data_url
-
-    if not portrait_path or not os.path.isfile(portrait_path):
-        return None
-    parts = [
-        {"type": "text", "text": (
-            "Decide whether this portrait is the described person.\n"
-            + actor_description_text(actor)
-            + "\nImage 1 = the candidate portrait."
-            + (" Image 2 = the source scene picture.\n" if scene_image and os.path.isfile(scene_image) else "\n")
-        )},
-        {"type": "image_url", "image_url": {"url": _image_data_url(portrait_path)}},
-    ]
-    if scene_image and os.path.isfile(scene_image) and os.path.normcase(scene_image) != os.path.normcase(portrait_path):
-        parts.append({"type": "image_url", "image_url": {"url": _image_data_url(scene_image)}})
-    out = _chat([{"role": "system", "content": VERIFY_SYSTEM}, {"role": "user", "content": parts}])
-    return parse_verify_json(out)
-
-
 def generate_portrait_with_grok(image_path: str, actor: dict, prompt: str, *, account: str = "") -> str:
     """Grok Image edit: scene image + extract prompt → temporary PNG path (or "")."""
     from utility import chrome_account
@@ -367,153 +299,200 @@ def _save_independent(src: str, dest: str) -> str:
     return os.path.abspath(dest)
 
 
-def extract_actor_portraits(
-    image_path: str,
-    actors: list,
-    avatar_dir: str = "",
-    *,
-    style: str = "",
-    generate=None,
-    verify=None,
-    account: str = "",
-    portrait_path=None,
-    portrait_dest=None,
-) -> list:
-    """For each actor without a portrait: Grok extract, then Strata verify, then associate.
+def confirm_key(actor: dict) -> str:
+    """已确认表里的键：角色 + 身份（性别/年龄/国别/名字，括号不算）。"""
+    actor = actor or {}
+    return f"{actor.get('role') or 'person'}:{actor_identity(actor.get('body') or '')}"
 
-    ``generate(image_path, actor, prompt)`` returns a file path or PIL image.
-    ``verify(portrait_path, actor, scene_image)`` returns a verdict dict or raw JSON string.
-    """
+
+def remove_portrait_files(actor, avatar_dir="", style="", portrait_path=None, portrait_dest=None, limit: int = 8) -> list:
+    """删掉这一位关联的肖像（人物窗看到的那张、粘贴写的那张）：改名成 <名>.bakN.<扩展名>，可找回。
+
+    一层一层删，直到同一查找再也找不到（最多 ``limit`` 张）。返回改过名的原路径。"""
     portrait_path = portrait_path or _default_portrait_path
     portrait_dest = portrait_dest or _default_portrait_dest
-    generate = generate or (lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account))
-    verify = verify or verify_portrait_with_strata
-    results = []
-    seen_ids = set()
+    removed = []
+    for _ in range(max(1, int(limit))):
+        found = _has_portrait(actor, avatar_dir, style, portrait_path, portrait_dest)
+        if not found or found in removed:
+            break
+        backup_portrait_file(found)
+        removed.append(found)
+    return removed
+
+
+def backup_portrait_file(path: str) -> str:
+    """同人物窗粘贴前的备份：<名>.bakN.<扩展名>。返回备份路径（没有文件就返回 ""）。"""
+    if not path or not os.path.isfile(path):
+        return ""
+    folder, base = os.path.split(path)
+    stem, ext = os.path.splitext(base)
+    n = 1
+    while True:
+        bak = os.path.join(folder, f"{stem}.bak{n}{ext}")
+        if not os.path.exists(bak):
+            os.replace(path, bak)
+            return bak
+        n += 1
+
+
+# 只审项目人物：讲员的肖像在共用的讲员头像库（固定名单），不在这里提取、也不在这里删。
+REVIEW_ROLES = ("person",)
+
+
+def _dedupe_actors(actors, roles=REVIEW_ROLES) -> list:
+    out, seen = [], set()
     for actor in actors or []:
         if not isinstance(actor, dict) or not actor.get("body"):
             continue
+        if roles and (actor.get("role") or "person") not in roles:
+            continue
         row = dict(actor)
         row["body"] = actor_identity(row.get("body") or "")
-        ident = (row.get("role") or "person", row["body"])
-        if not row["body"] or ident in seen_ids:
+        key = confirm_key(row)
+        if not row["body"] or key in seen:
             continue
-        seen_ids.add(ident)
-        # 每次调 Grok 之前都重新检查（前面的场景或用户粘贴可能刚刚有了肖像）。
-        existing = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
-        if existing:
-            row["status"] = STATUS_SKIPPED
-            row["dest"] = existing
-            results.append(row)
-            continue
-        dest = ""
-        try:
-            dest = portrait_dest(row.get("role") or "person", row.get("body") or "", avatar_dir, style) or ""
-        except Exception:
-            dest = ""
-        if dest and os.path.isfile(dest):
-            row["status"] = STATUS_SKIPPED
-            row["dest"] = os.path.abspath(dest)
-            results.append(row)
-            continue
-        if not image_path or not os.path.isfile(image_path):
-            row["status"] = STATUS_FAILED
-            row["dest"] = ""
-            results.append(row)
-            continue
-        prompt = build_portrait_extract_prompt(row)
-        raw_path = ""
-        try:
-            raw_path = _as_image_path(generate(image_path, row, prompt))
-        except Exception:
-            raw_path = ""
-        if not raw_path:
-            row["status"] = STATUS_FAILED
-            row["dest"] = ""
-            results.append(row)
-            continue
-        try:
-            verdict = verify(raw_path, row, image_path)
-        except Exception:
-            _discard_temp(raw_path, image_path, dest)
-            row["status"] = STATUS_FAILED
-            row["dest"] = ""
-            results.append(row)
-            continue
-        if isinstance(verdict, str):
-            verdict = parse_verify_json(verdict)
-        if not isinstance(verdict, dict) or "match" not in verdict:
-            _discard_temp(raw_path, image_path, dest)
-            row["status"] = STATUS_FAILED
-            row["dest"] = ""
-            results.append(row)
-            continue
-        if not verdict_accepts(verdict):
-            _discard_temp(raw_path, image_path, dest)
-            row["status"] = STATUS_REJECTED
-            row["dest"] = ""
-            row["reason"] = (verdict or {}).get("reason") or ""
-            results.append(row)
-            continue
-        concurrent = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
-        if concurrent:  # 审核期间有人粘贴了肖像：不覆盖
-            _discard_temp(raw_path, image_path, dest)
-            row["status"] = STATUS_SKIPPED
-            row["dest"] = concurrent
-            results.append(row)
-            continue
-        try:
-            saved = _save_independent(raw_path, dest)
-        except FileExistsError:
-            _discard_temp(raw_path, image_path, dest)
-            row["status"] = STATUS_SKIPPED
-            row["dest"] = os.path.abspath(dest)
-            results.append(row)
-            continue
-        except Exception:
-            _discard_temp(raw_path, image_path, dest)
-            row["status"] = STATUS_FAILED
-            row["dest"] = ""
-            results.append(row)
-            continue
-        _discard_temp(raw_path, image_path, saved)
-        row["status"] = STATUS_OK
-        row["dest"] = saved
-        results.append(row)
-    return results
+        seen.add(key)
+        row["key"] = key
+        out.append(row)
+    return out
 
 
-def extract_portraits_for_scene(
+def all_actors_confirmed(scenes, confirmed) -> bool:
+    """这些场景里出现的每一位人物都确认过了。没有人物也算。"""
+    confirmed = confirmed if confirmed is not None else set()
+    for scene in scenes or []:
+        for actor in _dedupe_actors(actors_from_scene(scene)):
+            if actor["key"] not in confirmed:
+                return False
+    return True
+
+
+def review_portraits_for_scene(
     scene,
     avatar_dir: str = "",
     *,
     covers=(),
     style: str = "",
     generate=None,
-    verify=None,
+    review=None,
+    remove=None,
+    confirmed=None,
+    existing: str = "review",
+    stop_on_failure: bool = True,
     account: str = "",
     portrait_path=None,
     portrait_dest=None,
 ) -> dict:
-    """这一场：只用它自己的 clip_image，为还没有肖像的人物提取。
+    """这一场的人物一位一位来（只用这一场自己的 clip_image，不用封面）。
 
-    返回 {"source", "results", "reason"}；没有可用的 clip_image（含封面拷贝）时 results 为空。
+    - 已确认过（``confirmed`` 里有）：跳过。
+    - 已有肖像：``existing="review"`` 时不调 Grok，先 ``review(actor, path, "existing")``；
+      确认 → 记为已确认；删除 → 删掉后用这一场的图调一次 Grok，再给人看；取消 → 停止。
+      ``existing="skip"``（手动模式）：已有肖像的人不动。
+    - 没有肖像：调一次 Grok；拿到图就按粘贴的路径关联，再 ``review(actor, path, "new")``：
+      确认 → 留下并记为已确认；删除 → 删掉，这一场跳过这一位；取消 → 留下（不记确认）并停止。
+    - Grok 失败 / 没给图：不开窗；``stop_on_failure`` 时这一场剩下的人也跳过（下一场再试）。
+
+    ``review`` 返回 REVIEW_OK / REVIEW_DELETED / REVIEW_STOP（None 当作 OK）。
+    返回 {"source", "results", "reason", "stopped", "grok_calls"}。
     """
     portrait_path = portrait_path or _default_portrait_path
     portrait_dest = portrait_dest or _default_portrait_dest
-    actors = actors_from_scene(scene)
-    missing = [a for a in actors if not _has_portrait(a, avatar_dir, style, portrait_path, portrait_dest)]
-    if not missing:
-        return {"source": "", "results": [], "reason": "all_have_portraits" if actors else "no_actors"}
+    generate = generate or (lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account))
+    review = review or (lambda actor, path, kind: REVIEW_OK)
+    confirmed = confirmed if confirmed is not None else set()
+
+    def _remove(actor):
+        if remove is not None:
+            remove(actor)
+        if _has_portrait(actor, avatar_dir, style, portrait_path, portrait_dest):
+            remove_portrait_files(actor, avatar_dir, style, portrait_path, portrait_dest)
+
+    actors = _dedupe_actors(actors_from_scene(scene))
+    out = {"source": "", "results": [], "reason": "", "stopped": False, "grok_calls": 0}
+    if not actors:
+        out["reason"] = "no_actors"
+        return out
+    todo = [a for a in actors if a["key"] not in confirmed]
+    if not todo:
+        out["reason"] = "all_confirmed"
+        out["results"] = [dict(a, status=STATUS_SKIPPED, dest="") for a in actors]
+        return out
     image = scene_clip_image_source(scene, covers)
     if not image:
-        return {"source": "", "results": [], "reason": "no_scene_clip_image"}
-    rows = extract_actor_portraits(
-        image, missing, avatar_dir, style=style,
-        generate=generate, verify=verify, account=account,
-        portrait_path=portrait_path, portrait_dest=portrait_dest,
-    )
-    return {"source": image, "results": rows, "reason": ""}
+        out["reason"] = "no_scene_clip_image"
+        return out
+    out["source"] = image
+    results = out["results"]
+    for row in actors:
+        if row["key"] in confirmed:
+            results.append(dict(row, status=STATUS_SKIPPED, dest=""))
+            continue
+        found = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
+        if found:
+            if existing == "skip":
+                results.append(dict(row, status=STATUS_EXISTING, dest=found))
+                continue
+            answer = review(row, found, "existing") or REVIEW_OK
+            if answer == REVIEW_STOP:
+                results.append(dict(row, status=STATUS_STOPPED, dest=found))
+                out["stopped"] = True
+                break
+            if answer != REVIEW_DELETED:
+                confirmed.add(row["key"])
+                results.append(dict(row, status=STATUS_CONFIRMED, dest=found))
+                continue
+            _remove(row)
+            if _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest):
+                results.append(dict(row, status=STATUS_FAILED, dest="", reason="没删掉"))
+                continue
+        # 调 Grok 之前再查一次：刚刚有人粘贴了就不调、不覆盖。
+        again = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
+        if again:
+            results.append(dict(row, status=STATUS_EXISTING, dest=again))
+            continue
+        try:
+            dest = portrait_dest(row.get("role") or "person", row.get("body") or "", avatar_dir, style) or ""
+        except Exception:
+            dest = ""
+        out["grok_calls"] += 1
+        raw_path = ""
+        try:
+            raw_path = _as_image_path(generate(image, row, build_portrait_extract_prompt(row)))
+        except Exception:
+            raw_path = ""
+        if not raw_path or not dest:
+            _discard_temp(raw_path, image, dest)
+            results.append(dict(row, status=STATUS_FAILED, dest=""))
+            if stop_on_failure:
+                break
+            continue
+        if _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest):  # Grok 期间有人粘贴了：不覆盖
+            _discard_temp(raw_path, image, dest)
+            results.append(dict(row, status=STATUS_EXISTING, dest=_has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)))
+            continue
+        try:
+            saved = _save_independent(raw_path, dest)
+        except Exception:
+            _discard_temp(raw_path, image, dest)
+            results.append(dict(row, status=STATUS_FAILED, dest=""))
+            if stop_on_failure:
+                break
+            continue
+        _discard_temp(raw_path, image, saved)
+        answer = review(row, saved, "new") or REVIEW_OK
+        if answer == REVIEW_DELETED:
+            _remove(row)
+            results.append(dict(row, status=STATUS_DELETED, dest=""))
+            continue
+        if answer == REVIEW_STOP:
+            results.append(dict(row, status=STATUS_STOPPED, dest=saved))
+            out["stopped"] = True
+            break
+        confirmed.add(row["key"])
+        results.append(dict(row, status=STATUS_OK, dest=saved))
+    return out
 
 
 def scan_scenes_for_portraits(
@@ -523,51 +502,27 @@ def scan_scenes_for_portraits(
     covers=(),
     style: str = "",
     generate=None,
-    verify=None,
+    review=None,
+    remove=None,
+    confirmed=None,
     account: str = "",
     portrait_path=None,
     portrait_dest=None,
 ) -> dict:
-    """按场景顺序逐场调用 extract_portraits_for_scene；所有已知人物都有肖像就停。"""
-    portrait_path = portrait_path or _default_portrait_path
-    portrait_dest = portrait_dest or _default_portrait_dest
+    """按场景顺序逐场 review_portraits_for_scene；人按了停止、或所有人物都确认了就停。"""
     scenes = [s for s in (scenes or []) if isinstance(s, dict)]
-    known = []
-    seen = set()
+    confirmed = confirmed if confirmed is not None else set()
+    reports, calls, stopped = [], 0, False
     for scene in scenes:
-        for actor in actors_from_scene(scene):
-            key = actor.get("key") or ""
-            if key and key not in seen:
-                seen.add(key)
-                known.append(actor)
-    reports = []
-    calls = {"grok": 0, "strata": 0}
-    gen_fn = generate or (lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account))
-    ver_fn = verify or verify_portrait_with_strata
-
-    def counted_generate(image, actor, prompt):
-        calls["grok"] += 1
-        return gen_fn(image, actor, prompt)
-
-    def counted_verify(portrait, actor, scene_image):
-        calls["strata"] += 1
-        return ver_fn(portrait, actor, scene_image)
-
-    def all_done() -> bool:
-        return not any(not _has_portrait(a, avatar_dir, style, portrait_path, portrait_dest) for a in known)
-
-    for scene in scenes:
-        if all_done():
+        if all_actors_confirmed(scenes, confirmed):
             break
-        out = extract_portraits_for_scene(
-            scene, avatar_dir, covers=covers, style=style,
-            generate=counted_generate, verify=counted_verify, account=account,
-            portrait_path=portrait_path, portrait_dest=portrait_dest,
+        out = review_portraits_for_scene(
+            scene, avatar_dir, covers=covers, style=style, generate=generate, review=review, remove=remove,
+            confirmed=confirmed, account=account, portrait_path=portrait_path, portrait_dest=portrait_dest,
         )
         reports.extend(out["results"])
-    return {
-        "results": reports,
-        "grok_calls": calls["grok"],
-        "strata_calls": calls["strata"],
-        "actors": known,
-    }
+        calls += out["grok_calls"]
+        if out["stopped"]:
+            stopped = True
+            break
+    return {"results": reports, "grok_calls": calls, "stopped": stopped, "confirmed": confirmed}

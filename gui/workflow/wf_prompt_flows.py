@@ -169,6 +169,7 @@ class PromptFlowsMixin:
             saved_choice=(project_manager.PROJECT_CONFIG or {}).get("picture_prompt"),
             save_choice=save_choice,
             actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
+            review_portrait=self._portrait_review_from_worker,
         )
 
     def _auto_import_scene_video(self, scene: dict, path: str, on_done) -> None:
@@ -550,20 +551,28 @@ class PromptFlowsMixin:
         portrait_lines: list = []
 
         def portrait_step(scene, label):
-            """t319u: 工人线程：这一场的图刚写好 → 只从这一场的 clip_image 提取还没有肖像的人物。失败静默。"""
-            if not portrait_ctx:
+            """t319u / t329u: 工人线程：这一场的图刚写好 → 只用这一场的 clip_image，人物一位一位给人看。
+
+            已有肖像先给人看（不调 Grok）；没有就 Grok 提取一次再给人看。确认过的人以后的场景不再问；
+            人按了「停止提取」就整批不再提取肖像；所有人都确认了也不再提取。Grok 失败：不开窗，下一场再试。"""
+            if not portrait_ctx or portrait_ctx.get("stopped") or stop["flag"]:
                 return
             from utility.actor_portrait_extract import (
-                extract_portraits_for_scene,
+                all_actors_confirmed,
                 format_actor_result_line,
                 generate_portrait_with_grok,
+                review_portraits_for_scene,
             )
 
-            ui(lambda h=f"{label}：提取人物肖像 …": var.set(h))
+            if all_actors_confirmed([j[0] for j in jobs], portrait_ctx["confirmed"]):
+                return
+            ui(lambda h=f"{label}：提取人物肖像（等你看一眼）…": var.set(h))
             try:
-                out = extract_portraits_for_scene(
+                out = review_portraits_for_scene(
                     scene, portrait_ctx["avatar_dir"], covers=portrait_ctx["covers"], style=portrait_ctx["style"],
                     generate=lambda img, act, pr: generate_portrait_with_grok(img, act, pr, account=account),
+                    review=lambda act, path, kind: self._portrait_review_from_worker(act, kind),
+                    confirmed=portrait_ctx["confirmed"],
                     account=account,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -571,6 +580,9 @@ class PromptFlowsMixin:
                 return
             for row in out.get("results") or []:
                 portrait_lines.append(f"{label} {format_actor_result_line(row)}")
+            if out.get("stopped"):
+                portrait_ctx["stopped"] = True
+                portrait_lines.append(f"{label} 你按了停止提取：后面的场景不再提取肖像")
             if out.get("reason") == "no_scene_clip_image":
                 print(f"ℹ️ 自动提取人物肖像：{label} 没有自己的 clip_image（或还是封面拷贝），跳过")
 
@@ -850,7 +862,80 @@ class PromptFlowsMixin:
             )
         except Exception:  # noqa: BLE001
             covers = []
-        return {"avatar_dir": avatar_dir, "style": style, "covers": list(covers)}
+        return {
+            "avatar_dir": avatar_dir, "style": style, "covers": list(covers),
+            "confirmed": self._portrait_confirmed_set(), "stopped": False,
+        }
+
+    @staticmethod
+    def _portrait_confirmed_set() -> set:
+        """t329u: 本项目已经确认过肖像的人物（角色:身份），存在项目配置 actor_portrait_confirmed。"""
+        raw = (project_manager.PROJECT_CONFIG or {}).get("actor_portrait_confirmed") or []
+        return {str(x) for x in raw if isinstance(x, str) and x}
+
+    def _remember_portrait_confirmed(self, key: str) -> None:
+        """UI 线程：把确认过的人物记进项目配置并保存。"""
+        if not key or not isinstance(project_manager.PROJECT_CONFIG, dict):
+            return
+        have = list(project_manager.PROJECT_CONFIG.get("actor_portrait_confirmed") or [])
+        if key in have:
+            return
+        have.append(key)
+        project_manager.PROJECT_CONFIG["actor_portrait_confirmed"] = have
+        try:
+            project_manager.save_project_config()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 已确认肖像没有存进项目配置：{exc}")
+
+    def _forget_portrait_confirmed(self, body: str) -> None:
+        """t329u: 在人物窗里手动删了肖像 → 这一位不再算已确认（下次自动提取会再问）。"""
+        from utility.actor_portrait_extract import confirm_key
+
+        key = confirm_key({"role": "person", "body": body})
+        have = list((project_manager.PROJECT_CONFIG or {}).get("actor_portrait_confirmed") or [])
+        if key not in have:
+            return
+        project_manager.PROJECT_CONFIG["actor_portrait_confirmed"] = [k for k in have if k != key]
+        try:
+            project_manager.save_project_config()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 已确认肖像没有存进项目配置：{exc}")
+
+    def _portrait_review_on_ui(self, actor: dict, kind: str, parent=None) -> str:
+        """t329u: UI 线程：在人物窗里审这一位；确认就记进项目配置。返回 ok / deleted / stop。"""
+        from utility.actor_portrait_extract import REVIEW_DELETED, REVIEW_OK, REVIEW_STOP, confirm_key
+
+        try:
+            answer = self._review_actor_portrait(actor.get("body") or "", kind=kind, parent=parent)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 审核肖像窗口出错：{exc}")
+            return REVIEW_STOP
+        if answer not in (REVIEW_DELETED, REVIEW_STOP):
+            answer = REVIEW_OK
+            self._remember_portrait_confirmed(confirm_key(actor))
+        return answer
+
+    def _portrait_review_from_worker(self, actor: dict, kind: str, parent=None) -> str:
+        """工人线程调用：把审核窗排到 Tk 主线程，等人看完再返回（Grok 在工人线程跑，界面不卡）。"""
+        import threading
+
+        if threading.current_thread() is threading.main_thread():
+            return self._portrait_review_on_ui(actor, kind, parent)
+        box = {"answer": "stop"}
+        done = threading.Event()
+
+        def run():
+            try:
+                box["answer"] = self._portrait_review_on_ui(actor, kind, parent)
+            finally:
+                done.set()
+
+        try:
+            self.root.after(0, run)
+        except Exception:  # noqa: BLE001 — 主窗口没了：停止
+            return "stop"
+        done.wait()
+        return box["answer"]
 
     def _stale_still_clip_scenes(self, scenes: list) -> list:
         """clip 视频比 clip_image 旧（或没有 clip 视频）、且有 clip 音频的场景：需要用新图重做静态视频。"""

@@ -213,7 +213,7 @@ class ActorsMixin:
         return "break"
 
     def _delete_actor_from_chip(self, entry: dict, *, ask=None) -> str:
-        """人物栏按 Delete：问「本集所有场景同名都删？」是 = 本集每一场；否 = 只这一场；取消 = 不动。
+        """人物栏按 Delete：t327u 是 = 只这一场；否 = 本集所有场景里同名的都删；取消 = 不动。
 
         ``ask`` 只给测试用（返回 True / False / None）。返回 "episode" / "scene" / "cancel" / "none"。
         """
@@ -224,13 +224,13 @@ class ActorsMixin:
         parent = self.root
         if ask is None:
             answer = messagebox.askyesnocancel(
-                "删除", f"删除「{name}」：\n是 = 本集所有场景里同名的都删\n否 = 只删这一场\n取消 = 不删", parent=parent
+                "删除", f"删除「{name}」：\n是 = 只删这一场\n否 = 本集所有场景里同名的都删\n取消 = 不删", parent=parent
             )
         else:
             answer = ask(name)
         if answer is None:
             return "cancel"
-        if not answer:
+        if answer:  # t327u: 是 = 只删这一场
             rows = self._scene_actor_rows()
             if len(rows) <= 1:
                 messagebox.showinfo("删除", "这一场至少要留下一个讲员或人物。", parent=parent)
@@ -582,6 +582,45 @@ class ActorsMixin:
                 return
             n += 1
 
+    def _remove_portrait_files(self, name: str, path_for, limit: int = 8) -> list:
+        """t329u: 删掉 name 关联的肖像：path_for 找到的那张改名 .bakN 备份，一层层删到再也找不到。"""
+        removed = []
+        for _ in range(limit):
+            path = path_for(name) if name else ""
+            if not path or not os.path.isfile(path) or path in removed:
+                break
+            self._backup_portrait(path)
+            removed.append(path)
+        return removed
+
+    def _review_actor_portrait(self, body: str, kind: str = "new", parent=None) -> str:
+        """t329u: 自动提取肖像时给人看这一位（双击人物的同一个窗口），不改这一场的人物栏。
+
+        返回 "ok"（确认 / 关窗）、"deleted"（删除肖像 / Delete 键）、"stop"（停止提取 / Esc）。"""
+        body, _motion = project_manager.split_actor_motion((body or "").strip())
+        if not body:
+            return "ok"
+        what = "已有肖像" if kind == "existing" else "Grok 刚从这一场提取的肖像"
+        hint = (
+            f"{what}：是这个人吗？确认（或关窗）= 用这张，后面的场景不再问；"
+            "删除肖像（Delete 键）= 不要这张"
+            + ("，用这一场的图重新提取一次" if kind == "existing" else "，这一场跳过这位")
+            + "；停止提取（Esc）= 停止这次自动提取肖像。"
+        )
+        return self._open_portrait_dialog(
+            title="人物 · 审核肖像",
+            names=[body],
+            current=body,
+            dest_for=self._person_portrait_dest,
+            path_for=self._person_portrait_path,
+            hint=hint,
+            allow_empty=False,
+            ask_motion=False,
+            actor_entry=None,
+            parent=parent,
+            review=True,
+        ) or "ok"
+
     def _paste_portrait_file(self, dest: str, parent) -> bool:
         """把剪贴板里的图存成 dest。原来有文件就先改名备份。"""
         from PIL import ImageGrab
@@ -695,7 +734,7 @@ class ActorsMixin:
         names = self._project_person_names()
         if body not in names:
             names.append(body)
-        self._open_portrait_dialog(
+        result = self._open_portrait_dialog(
             title="人物",
             names=names,
             current=body,
@@ -706,6 +745,8 @@ class ActorsMixin:
             ask_motion=False,
             actor_entry={"role": "person", "label": "人物", "body": body},
         )
+        if result == "deleted" and callable(getattr(self, "_forget_portrait_confirmed", None)):
+            self._forget_portrait_confirmed(body)  # t329u: 删了肖像就不再算已确认
 
     def _open_portrait_dialog(
         self,
@@ -722,10 +763,16 @@ class ActorsMixin:
         actor_entry: dict | None = None,
         parent=None,
         host_only: bool = False,
-    ) -> None:
-        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。拷贝图案。"""
+        review: bool = False,
+    ) -> str:
+        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。拷贝图案。
+
+        t329u：「删除肖像」按钮 / Delete 键删掉当前这一位关联的那张（就是显示的、粘贴写的那张），
+        改名成 .bakN 备份。返回 "ok"（确认 / 拷贝图案 / 关窗）、"deleted"（删过肖像）、
+        "cancel"（取消 / Esc）；``review=True``（自动提取肖像时的审核）：只看这一位，
+        删除后直接关窗返回 "deleted"，取消 / Esc 返回 "stop"（停止这次自动提取）。"""
         if not names:
-            return
+            return ""
         win = parent or self.root
         current = (current or "").strip()
         try:
@@ -784,6 +831,8 @@ class ActorsMixin:
             "mode": "host" if ask_motion else "person",
             "override_name": "",
             "voice_ready": False,
+            "result": "ok",  # t329u: 关窗 = 留下
+            "deleted": False,
         }
         host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。场景里写了讲员就出镜，没写就是画外旁白。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。全改讲员把选定范围内每一场的讲员换成当前这一位，讲稿收成只在开头标〈1〉。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
         person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时不拷贝。Ctrl+V 可以贴上形象。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。"
@@ -959,7 +1008,7 @@ class ActorsMixin:
 
         def shift(step: int) -> None:
             names_now = holder["names"]
-            if len(names_now) < 2:
+            if review or len(names_now) < 2:
                 return
             nxt = max(0, min(holder["index"] + step, len(names_now) - 1))
             show_at(nxt)
@@ -1047,6 +1096,40 @@ class ActorsMixin:
             elif name and not project_manager.actor_is_absent(name):
                 show_auto_close_popup(self.root, "剪贴板", f"{name} 没有参考图，没有拷贝", duration_ms=1000)
             apply_choice(name, motion)
+            holder["result"] = "ok"
+            dlg.destroy()
+
+        def delete_portrait(_event=None):
+            """t329u: 删掉当前这一位关联的肖像（改名 .bakN 备份），之后显示「没有头像」。"""
+            if _event is not None:
+                try:
+                    focus = dlg.focus_get()
+                except (KeyError, tk.TclError):
+                    focus = None
+                if isinstance(focus, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text)):
+                    return None  # 在名字框里按 Delete 是删字
+            names_now = holder["names"]
+            name = (names_now[holder["index"]] if names_now else "") or ""
+            if not name or project_manager.actor_is_absent(name):
+                return "break"
+            removed = self._remove_portrait_files(name, holder["path_for"])
+            if not removed and not review:
+                show_auto_close_popup(self.root, title, f"{name} 没有肖像可删", duration_ms=1000)
+                return "break"
+            holder["deleted"] = True
+            if review:
+                holder["result"] = "deleted"
+                dlg.destroy()
+                return "break"
+            show_at(holder["index"])
+            return "break"
+
+        def cancel() -> None:
+            holder["result"] = "stop" if review else ("deleted" if holder["deleted"] else "cancel")
+            dlg.destroy()
+
+        def close_window() -> None:
+            holder["result"] = "deleted" if (holder["deleted"] and not review) else "ok"
             dlg.destroy()
 
         def confirm() -> None:
@@ -1065,6 +1148,7 @@ class ActorsMixin:
             if holder.get("override_name") and holder.get("mode") == "person":
                 _commit_edited_person(name)
             apply_choice(name, kept_motion)
+            holder["result"] = "ok"
             dlg.destroy()
 
         def _commit_edited_person(new_body: str) -> None:
@@ -1174,15 +1258,21 @@ class ActorsMixin:
         btns.pack(pady=(0, 12))
         ttk.Button(btns, text="拷贝图案", command=finish).pack(side=tk.LEFT, padx=6)
         switch_btn = ttk.Button(btns, text="切换成人物", command=toggle_domain)
-        if not host_only:
+        if not host_only and not review:
             switch_btn.pack(side=tk.LEFT, padx=6)
         force_btn = ttk.Button(btns, text="全改讲员", command=ask_force_host_speaking)
         add_btn = ttk.Button(btns, text="增加人物", command=add_person)
+        delete_btn = ttk.Button(btns, text="删除肖像", command=delete_portrait)
+        delete_btn.pack(side=tk.LEFT, padx=6)
         confirm_btn = ttk.Button(btns, text="确认", command=confirm)
         confirm_btn.pack(side=tk.LEFT, padx=6)
-        cancel_btn = ttk.Button(btns, text="取消", command=dlg.destroy)
+        cancel_btn = ttk.Button(btns, text="停止提取" if review else "取消", command=cancel)
         cancel_btn.pack(side=tk.LEFT, padx=6)
         apply_domain_chrome()
+        if review:
+            add_btn.pack_forget()
+            force_btn.pack_forget()
+            hint_var.set(hint)
 
         voice_box.bind("<<ComboboxSelected>>", on_voice_picked)
         image_label.bind("<Button-1>", lambda _e: shift(1))
@@ -1191,8 +1281,9 @@ class ActorsMixin:
         dlg.bind("<Right>", lambda _e: shift(1))
         dlg.bind("<Control-v>", paste)
         dlg.bind("<Return>", lambda _e: finish(False))
-        dlg.bind("<Escape>", lambda _e: dlg.destroy())
-        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.bind("<Escape>", lambda _e: cancel())
+        dlg.bind("<Delete>", delete_portrait)
+        dlg.protocol("WM_DELETE_WINDOW", close_window)
         show_at(index)
         dlg.update_idletasks()
         x = win.winfo_rootx() + max(0, (win.winfo_width() - dlg.winfo_reqwidth()) // 2)
@@ -1200,6 +1291,7 @@ class ActorsMixin:
         dlg.geometry(f"+{x}+{y}")
         dlg.focus_set()
         dlg.wait_window()
+        return holder["result"]
 
     def _scene_actor_rows(self) -> list:
         return project_manager.actor_entries(self._actor_text)

@@ -563,12 +563,49 @@ class PdfEpisodeMixin:
         )
 
     def _after_clip_image_changed(self, scene: dict, summary: str) -> None:
-        """起始图换了以后，问要不要用新图加这一场的音频重做 clip 视频（没有音频就不问）。"""
+        """起始图换了以后，用新图重做这一场的 clip 视频：有 clip 音频就用新图加音频（同生场视频·静态）；
+        t328u: 还没有 clip 音频时，用新图重做静音静态预览（同拆场后的预览，长度按讲话估算），
+        不再留着用旧图做的预览视频。"""
         audio = get_file_path(scene, "clip_audio") if isinstance(scene, dict) else ""
         if not audio or not os.path.isfile(audio):
-            show_auto_close_popup(self.root, "放入", summary)
+            image = (get_file_path(scene, "clip_image") or scene.get("clip_image") or "") if isinstance(scene, dict) else ""
+            if not image or not os.path.isfile(image):
+                show_auto_close_popup(self.root, "放入", summary)
+                return
+            show_auto_close_popup(
+                self.root, "重新生成 clip 视频",
+                f"{summary}\n\n这一场还没有 clip 音频：正在用新的 clip 图片重做静音预览视频（替换原来的）。",
+            )
+            self.root.after(200, lambda: self._rebuild_silent_still_clip(scene))
             return
         self.root.after(200, lambda: self._offer_still_videos_after_pdf([scene], summary))
+
+    def _rebuild_silent_still_clip(self, scene: dict) -> None:
+        """t328u: 后台用 clip_image 重做静音静态预览（_rebuild_monologue_preview_clips），做完保存并刷新预览。"""
+        import threading
+
+        root = self.root
+
+        def work():
+            err = ""
+            try:
+                self._rebuild_monologue_preview_clips(scene)
+            except Exception as exc:  # noqa: BLE001
+                err = str(exc)
+                print(f"⚠️ 静音预览视频没有重做（id={scene.get('id')}）：{exc}")
+
+            def finish():
+                try:
+                    self.workflow.save_scenes_to_json()
+                    self.refresh_gui_scenes()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 预览视频刷新失败：{exc}")
+                if err:
+                    show_auto_close_popup(root, "生场视频", f"静音预览视频没有重做：{err}", duration_ms=4000)
+
+            root.after(0, finish)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _offer_still_videos_after_pdf(self, scenes: list, summary: str) -> None:
         """页图写进 clip_image 之后，直接用新图加音频重做这些场景的 clip 视频（不再询问）。"""

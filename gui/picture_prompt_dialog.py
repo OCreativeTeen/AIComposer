@@ -231,6 +231,7 @@ def open_picture_prompt_dialog(
     get_project_cover=None,
     get_project_covers=None,
     mode=None,
+    review_portrait=None,
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
 
@@ -850,13 +851,19 @@ def open_picture_prompt_dialog(
                 open_manual(prompt, images)
 
     def _run_portrait_extract(account: str = "") -> None:
+        """t319u / t329u: 只用这一场的 clip_image，为还没有肖像的人物各调一次 Grok；
+        每拿到一张就关联，并在人物窗里给人看（确认 = 留下，删除肖像 = 删掉）。不用 Strata。
+        在后台线程跑，界面不卡；审核窗由 ``review_portrait(actor, kind)`` 排到主线程。"""
+        import threading
+
         from utility.actor_portrait_extract import (
+            REVIEW_OK,
+            STATUS_EXISTING,
             actors_from_scene,
-            extract_actor_portraits,
             format_actor_result_line,
             generate_portrait_with_grok,
+            review_portraits_for_scene,
             scene_clip_image_source,
-            verify_portrait_with_strata,
         )
 
         scene = get_scene() if get_scene is not None else None
@@ -894,19 +901,38 @@ def open_picture_prompt_dialog(
         def generate(image_path, actor, prompt):
             return generate_portrait_with_grok(image_path, actor, prompt, account=account)
 
-        try:
-            rows = extract_actor_portraits(
-                image, actors, actor_avatar_dir or "", style=style,
-                generate=generate, verify=verify_portrait_with_strata, account=account,
-            )
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showwarning("图片修改", f"提取人物肖像失败：{exc}", parent=dlg)
-            return
+        def review(actor, _path, kind):
+            if not callable(review_portrait):
+                return REVIEW_OK
+            return review_portrait(actor, kind)
+
         remember()
         dlg.destroy()
-        lines = [format_actor_result_line(row) for row in rows]
-        print("提取人物肖像（" + os.path.basename(image) + "）：\n" + "\n".join(lines))
-        messagebox.showinfo("提取人物肖像", "\n".join(lines) if lines else "没有可处理的人物。", parent=parent)
+        avatar_dir = actor_avatar_dir or ""
+
+        def show_summary(lines, error=""):
+            if error:
+                messagebox.showwarning("提取人物肖像", f"提取人物肖像失败：{error}", parent=parent)
+                return
+            print("提取人物肖像（" + os.path.basename(image) + "）：\n" + "\n".join(lines))
+            messagebox.showinfo("提取人物肖像", "\n".join(lines) if lines else "没有可处理的人物。", parent=parent)
+
+        def work():
+            try:
+                out = review_portraits_for_scene(
+                    scene, avatar_dir, covers=covers, style=style, generate=generate, review=review,
+                    confirmed=set(), existing="skip", stop_on_failure=False, account=account,
+                )
+            except Exception as exc:  # noqa: BLE001
+                parent.after(0, lambda e=str(exc): show_summary([], e))
+                return
+            rows = out.get("results") or []
+            lines = [format_actor_result_line(row) for row in rows]
+            if rows and all(r.get("status") == STATUS_EXISTING for r in rows):
+                lines.append("这一场的人物都已经有肖像了，没有调 Grok。")
+            parent.after(0, lambda: show_summary(lines))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def on_submit() -> None:
         """t129u / t229u: 「提交」先问后端（Grok / Gemini / MOSS / QN）和 Chrome 账户；MOSS/QN 本机 ComfyUI，不用账户。"""
