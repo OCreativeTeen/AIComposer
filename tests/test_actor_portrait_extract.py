@@ -321,7 +321,7 @@ class ActorPortraitReviewTest(unittest.TestCase):
         self.assertNotIn("verify", run)
         self.assertIn("scene_clip_image_source(scene, covers)", run)
         self.assertNotIn("chosen_image()", run)
-        self.assertIn('existing="skip"', run)
+        self.assertIn('existing="replace"', run)  # t343u: 手动 = 每位都重新提取
         self.assertIn("stop_on_failure=False", run)
         self.assertIn("threading.Thread(target=work", run)
         self.assertIn('("portrait", "提取人物肖像"', dlg)

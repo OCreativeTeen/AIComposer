@@ -387,16 +387,21 @@ class ClipTailChainTest(unittest.TestCase):
         self.assertEqual(current_z["clip_image_last"], old_z_clip_last)
         self.assertEqual(Path(nxt_z["zero_image_last"]).read_bytes(), b"COVER-BYTES-AAAA")
 
-    def test_enh2_still_writes_next_clip_image_and_chains_zero_last(self):
+    def test_enh2_no_longer_writes_next_clip_image_but_chains_zero_last(self):
+        # t342u: video import never touches clip_image, not even the next scene's (old ENH2 behaviour removed).
         current = self._seed(531)
         current["clip_status"] = "ENH2"
         nxt = self._seed(532)
         old_zero = nxt["zero_image"]
         old_clip = nxt["clip_image"]
+        old_cur_clip = current["clip_image"]
         scanner = self._scanner(nxt)
         scanner.last_image_replacement(current, os.path.join(self.tmp, "clip.mp4"), "clip")
-        self.assertEqual(Path(nxt["clip_image"]).read_bytes(), b"CLIP-TAIL-FRAME")
-        self.assertNotEqual(os.path.abspath(nxt["clip_image"]), os.path.abspath(old_clip))
+        self.assertEqual(nxt["clip_image"], old_clip)
+        self.assertEqual(Path(nxt["clip_image"]).read_bytes(), b"COVER-BYTES-AAAA")
+        self.assertEqual(current["clip_image"], old_cur_clip)
+        self.assertTrue(os.path.isfile(current["clip_image_last"]))
+        self.assertEqual(Path(current["clip_image_last"]).read_bytes(), b"CLIP-TAIL-FRAME")
         self.assertEqual(Path(nxt["zero_image_last"]).read_bytes(), b"CLIP-TAIL-FRAME")
         self.assertEqual(os.path.abspath(nxt["zero_image"]), os.path.abspath(old_zero))
         self.assertEqual(Path(nxt["zero_image"]).read_bytes(), b"COVER-BYTES-AAAA")

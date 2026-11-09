@@ -903,14 +903,14 @@ class PromptFlowsMixin:
 
     def _portrait_review_on_ui(self, actor: dict, kind: str, parent=None) -> str:
         """t329u: UI 线程：在人物窗里审这一位；确认就记进项目配置。返回 ok / deleted / stop。"""
-        from utility.actor_portrait_extract import REVIEW_DELETED, REVIEW_OK, REVIEW_STOP, confirm_key
+        from utility.actor_portrait_extract import REVIEW_DELETED, REVIEW_IGNORED, REVIEW_OK, REVIEW_STOP, confirm_key
 
         try:
             answer = self._review_actor_portrait(actor.get("body") or "", kind=kind, parent=parent)
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ 审核肖像窗口出错：{exc}")
             return REVIEW_STOP
-        if answer not in (REVIEW_DELETED, REVIEW_STOP):
+        if answer not in (REVIEW_DELETED, REVIEW_STOP, REVIEW_IGNORED):
             answer = REVIEW_OK
             self._remember_portrait_confirmed(confirm_key(actor))
         return answer

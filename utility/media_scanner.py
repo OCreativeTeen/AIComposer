@@ -427,8 +427,7 @@ class MediaScanner:
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 下一场 zero_image_last 未写入 clip 末帧衔接：{exc}")
 
-        if current_scene.get(media_type+"_status", "ORIG") == "ENH2":
-            refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
+        # t342u: 导入/生成视频不再改写任何一场的 clip_image（原来 ENH2 会把末帧写成下一场的 clip_image）。
         #elif next_scene:
         #    dialog = messagebox.askyesno("替换下一场景图片", "是否要替换下一场景图片？")
         #    if dialog:

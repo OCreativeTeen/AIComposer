@@ -113,12 +113,10 @@ class SceneStructureMixin:
         if keep_images:
             # 视频是用这一场自己的 clip 图重新生成的，起始图和结束图都不用换。
             return
+        # t342u: 换上视频后起始图 clip_image 一律不动（保留原来的高清图，首帧不用）；只把尾帧写成结束图。
         fp = self.workflow.ffmpeg_processor
         saved = get_file_path(scene, "clip")
-        first = fp.extract_frame(saved, True) if saved else None
         last = fp.extract_frame(saved, False) if saved else None
-        if first and os.path.isfile(first):
-            refresh_scene_media(scene, "clip_image", ".webp", first, True)
         if last and os.path.isfile(last):
             refresh_scene_media(scene, "clip_image_last", ".webp", last, True)
 

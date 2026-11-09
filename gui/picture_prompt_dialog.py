@@ -164,7 +164,7 @@ PICTURE_EDIT_MODES = (
     ("cast", "补全/修正人物",
      "按 视觉、讲话 和人物肖像图，补上缺的人物或改正对不上的人物。不加字，不改画风，不画对话泡泡。"),
     ("portrait", "提取人物肖像",
-     "从当前场景图里，按人物的性别、年龄、国别等描述提取还没有肖像的人物头部。已经有肖像的不改；图里找不到就不关联。"),
+     "从当前场景图里重新提取每个人物的头部肖像，已有肖像也重新提取；满意就确定替换，不满意就忽略，保留原来的肖像。"),
 )
 
 
@@ -517,10 +517,9 @@ def open_picture_prompt_dialog(
         if mode == "portrait":
             hint.config(
                 foreground="",
-                text="提取人物肖像：用 Grok Image 从这一场自己的起始图（clip_image，不用封面）提取还没有肖像的人物头部/肩部。"
-                     "提示词带上性别、年龄、国别和括号里的形象描述；图里不明显存在就不要编造。"
-                     "Grok 返回的图再交给 Strata 对照人物描述和原图审核，通过才关联（和粘贴肖像相同）。"
-                     "已经有肖像的跳过。不改场景图。",
+                text="提取人物肖像：用 Grok Image 从这一场自己的起始图（clip_image，不用封面）为每个人物重新提取头部/肩部，"
+                     "已有肖像的也重新提取。提示词带上性别、年龄、国别和括号里的形象描述；图里不明显存在就不要编造。"
+                     "每一张都给你看：确认 = 换上新的（原来的改名 .bak 备份），忽略 = 原来的肖像保持。不改场景图。",
             )
             return
         if step_mode:
@@ -851,14 +850,13 @@ def open_picture_prompt_dialog(
                 open_manual(prompt, images)
 
     def _run_portrait_extract(account: str = "") -> None:
-        """t319u / t329u: 只用这一场的 clip_image，为还没有肖像的人物各调一次 Grok；
-        每拿到一张就关联，并在人物窗里给人看（确认 = 留下，删除肖像 = 删掉）。不用 Strata。
+        """t319u / t329u / t343u: 只用这一场的 clip_image，为每一位人物（已有肖像也一样）各调一次 Grok；
+        每拿到一张就在人物窗里给人看（确认 = 换上，忽略 = 原来的保持，删除肖像 = 都不要）。不用 Strata。
         在后台线程跑，界面不卡；审核窗由 ``review_portrait(actor, kind)`` 排到主线程。"""
         import threading
 
         from utility.actor_portrait_extract import (
             REVIEW_OK,
-            STATUS_EXISTING,
             actors_from_scene,
             format_actor_result_line,
             generate_portrait_with_grok,
@@ -921,15 +919,13 @@ def open_picture_prompt_dialog(
             try:
                 out = review_portraits_for_scene(
                     scene, avatar_dir, covers=covers, style=style, generate=generate, review=review,
-                    confirmed=set(), existing="skip", stop_on_failure=False, account=account,
+                    confirmed=set(), existing="replace", stop_on_failure=False, account=account,
                 )
             except Exception as exc:  # noqa: BLE001
                 parent.after(0, lambda e=str(exc): show_summary([], e))
                 return
             rows = out.get("results") or []
             lines = [format_actor_result_line(row) for row in rows]
-            if rows and all(r.get("status") == STATUS_EXISTING for r in rows):
-                lines.append("这一场的人物都已经有肖像了，没有调 Grok。")
             parent.after(0, lambda: show_summary(lines))
 
         threading.Thread(target=work, daemon=True).start()

@@ -20,6 +20,7 @@ import tempfile
 REVIEW_OK = "ok"  # 确认 / 关窗：留下
 REVIEW_DELETED = "deleted"  # 删除肖像
 REVIEW_STOP = "stop"  # 取消 / Esc：停止这次自动提取
+REVIEW_IGNORED = "ignored"  # t343u 手动重新提取：忽略新图，原来的肖像（有的话）保持不变
 
 STATUS_OK = "ok"  # 新提取的肖像，人确认了
 STATUS_CONFIRMED = "confirmed"  # 已有肖像，人确认了（没调 Grok）
@@ -28,6 +29,8 @@ STATUS_FAILED = "failed"  # Grok 没给图 / 保存失败
 STATUS_SKIPPED = "skipped"  # 以前已确认：不再问
 STATUS_EXISTING = "existing"  # 已有肖像（手动模式只做没有肖像的人）
 STATUS_STOPPED = "stopped"  # 人按了取消 / Esc
+STATUS_REPLACED = "replaced"  # t343u 手动重新提取：新图换上，原来的改名 .bakN 备份
+STATUS_IGNORED = "ignored"  # t343u 手动重新提取：忽略新图，原来的保持
 
 STATUS_LABEL = {
     STATUS_OK: "成功（已确认）",
@@ -37,6 +40,8 @@ STATUS_LABEL = {
     STATUS_SKIPPED: "已确认过，跳过",
     STATUS_EXISTING: "已有肖像跳过",
     STATUS_STOPPED: "已停止",
+    STATUS_REPLACED: "已换成新提取的肖像（原来的已备份 .bak）",
+    STATUS_IGNORED: "已忽略新提取的，原来的肖像不变",
 }
 
 DEFAULT_IMAGE_SLOT = "clip_image"
@@ -55,7 +60,7 @@ def format_actor_result_line(row: dict) -> str:
     who = ((row.get("label") or "") + " " + (row.get("name") or row.get("body") or "")).strip()
     line = f"{who}：{status_label(row.get('status'))}"
     dest = row.get("dest") or ""
-    if row.get("status") == STATUS_OK and dest:
+    if row.get("status") in (STATUS_OK, STATUS_REPLACED) and dest:
         line += f"（{os.path.basename(dest)}）"
     return line
 
@@ -389,7 +394,8 @@ def review_portraits_for_scene(
     - 已确认过（``confirmed`` 里有）：跳过。
     - 已有肖像：``existing="review"`` 时不调 Grok，先 ``review(actor, path, "existing")``；
       确认 → 记为已确认；删除 → 删掉后用这一场的图调一次 Grok，再给人看；取消 → 停止。
-      ``existing="skip"``（手动模式）：已有肖像的人不动。
+      ``existing="skip"``：已有肖像的人不动。
+    ``existing="replace"``（t343u 手动「提取人物肖像」）：见 ``_reextract_one``——每一位都调 Grok 重新提取。
     - 没有肖像：调一次 Grok；拿到图就按粘贴的路径关联，再 ``review(actor, path, "new")``：
       确认 → 留下并记为已确认；删除 → 删掉，这一场跳过这一位；取消 → 留下（不记确认）并停止。
     - Grok 失败 / 没给图：不开窗；``stop_on_failure`` 时这一场剩下的人也跳过（下一场再试）。
@@ -428,6 +434,16 @@ def review_portraits_for_scene(
     for row in actors:
         if row["key"] in confirmed:
             results.append(dict(row, status=STATUS_SKIPPED, dest=""))
+            continue
+        if existing == "replace":
+            out["grok_calls"] += 1
+            res = _reextract_one(row, image, avatar_dir, style, generate, review, remove, portrait_path, portrait_dest)
+            if res.get("status") in (STATUS_OK, STATUS_REPLACED):
+                confirmed.add(row["key"])
+            results.append(res)
+            if res.get("status") == STATUS_STOPPED:
+                out["stopped"] = True
+                break
             continue
         found = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
         if found:
@@ -493,6 +509,73 @@ def review_portraits_for_scene(
         confirmed.add(row["key"])
         results.append(dict(row, status=STATUS_OK, dest=saved))
     return out
+
+
+def _restore_backups(backups) -> None:
+    """把 .bakN 改回原名（原名已被别人占了就留着备份，不覆盖）。"""
+    for orig, bak in reversed(backups or []):
+        if bak and os.path.isfile(bak) and not os.path.exists(orig):
+            try:
+                os.replace(bak, orig)
+            except OSError:
+                pass
+
+
+def _reextract_one(row, image, avatar_dir, style, generate, review, remove, portrait_path, portrait_dest) -> dict:
+    """t343u 手动「提取人物肖像」：不管有没有肖像，都用这一场的 clip_image 调一次 Grok。
+
+    - Grok 失败：原来的肖像一点不动。
+    - 拿到图：原来显示的那张先改名 .bakN（同删除肖像），新图存到粘贴路径，``review(actor, path, "replace")``：
+      确认 → 新图留下（旧的留在 .bakN）；忽略 → 删掉新图、把旧的改回原名（原来没有就什么都不留）；
+      删除肖像 → 新图也改名 .bakN，这一位没有肖像（两张都在备份里）；停止 → 同忽略，并停止后面的人。
+    """
+    try:
+        dest = portrait_dest(row.get("role") or "person", row.get("body") or "", avatar_dir, style) or ""
+    except Exception:
+        dest = ""
+    raw_path = ""
+    try:
+        raw_path = _as_image_path(generate(image, row, build_portrait_extract_prompt(row)))
+    except Exception:
+        raw_path = ""
+    if not raw_path or not dest:
+        _discard_temp(raw_path, image, dest)
+        return dict(row, status=STATUS_FAILED, dest="")
+    backups = []
+    try:
+        # 只备份显示的那张，以及占着粘贴路径的那张（下层共用的故事肖像不动）
+        found = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
+        if found:
+            backups.append((found, backup_portrait_file(found)))
+        if os.path.isfile(dest):
+            backups.append((os.path.abspath(dest), backup_portrait_file(dest)))
+        saved = _save_independent(raw_path, dest)
+        shown = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
+        if os.path.normcase(shown) != os.path.normcase(os.path.abspath(saved)):
+            os.remove(saved)
+            raise RuntimeError(f"新肖像存了但显示的不是它：{shown}")
+    except Exception:
+        _discard_temp(raw_path, image, dest)
+        _restore_backups(backups)
+        return dict(row, status=STATUS_FAILED, dest="")
+    _discard_temp(raw_path, image, saved)
+    answer = review(row, saved, "replace") or REVIEW_OK
+    if answer in (REVIEW_IGNORED, REVIEW_STOP):
+        try:
+            if os.path.isfile(saved):
+                os.remove(saved)
+        except OSError:
+            pass
+        _restore_backups(backups)
+        kept = _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest)
+        return dict(row, status=STATUS_STOPPED if answer == REVIEW_STOP else STATUS_IGNORED, dest=kept)
+    if answer == REVIEW_DELETED:
+        if remove is not None:
+            remove(row)
+        if _has_portrait(row, avatar_dir, style, portrait_path, portrait_dest):
+            remove_portrait_files(row, avatar_dir, style, portrait_path, portrait_dest)
+        return dict(row, status=STATUS_DELETED, dest="")
+    return dict(row, status=STATUS_REPLACED if backups else STATUS_OK, dest=saved)
 
 
 def scan_scenes_for_portraits(

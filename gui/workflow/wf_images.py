@@ -1055,6 +1055,9 @@ class ImagesMixin:
                 # Frozen original cover: never invent a replacement from the zero video.
                 if is_frozen_zero_last_write(current_scene, image_type):
                     return
+                # t342u: 视频首帧不用：clip_image 只来自原图/图片修改，zero_image 只来自图片修改，不从视频补。
+                if image_type in ("clip_image", "zero_image"):
+                    return
                 # take the first part string from image_type
                 video_type = image_type.split("_")[0]
                 video_path = current_scene.get(video_type)

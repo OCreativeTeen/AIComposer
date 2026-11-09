@@ -596,10 +596,32 @@ class ActorsMixin:
     def _review_actor_portrait(self, body: str, kind: str = "new", parent=None) -> str:
         """t329u: 自动提取肖像时给人看这一位（双击人物的同一个窗口），不改这一场的人物栏。
 
-        返回 "ok"（确认 / 关窗）、"deleted"（删除肖像 / Delete 键）、"stop"（停止提取 / Esc）。"""
+        返回 "ok"（确认 / 关窗）、"deleted"（删除肖像 / Delete 键）、"stop"（停止提取 / Esc）。
+        t343u ``kind="replace"``（手动「提取人物肖像」重新提取）：多一个「忽略」，返回 "ignored"；
+        Esc / 关窗 = 忽略（原来的肖像保持）。"""
         body, _motion = project_manager.split_actor_motion((body or "").strip())
         if not body:
             return "ok"
+        if kind == "replace":
+            hint = (
+                "Grok 刚从这一场重新提取的肖像：确认（Enter）= 换成这张，原来的改名 .bak 备份；"
+                "忽略（Esc / 关窗）= 不要这张，原来的肖像保持不变（原来没有就不留）；"
+                "删除肖像（Delete 键）= 新的旧的都不要（都留 .bak 备份）；停止提取 = 忽略这张并停下后面的人。"
+            )
+            return self._open_portrait_dialog(
+                title="人物 · 审核重新提取的肖像",
+                names=[body],
+                current=body,
+                dest_for=self._person_portrait_dest,
+                path_for=self._person_portrait_path,
+                hint=hint,
+                allow_empty=False,
+                ask_motion=False,
+                actor_entry=None,
+                parent=parent,
+                review=True,
+                ignore=True,
+            ) or "ignored"
         what = "已有肖像" if kind == "existing" else "Grok 刚从这一场提取的肖像"
         hint = (
             f"{what}：是这个人吗？确认（或关窗）= 用这张，后面的场景不再问；"
@@ -764,6 +786,7 @@ class ActorsMixin:
         parent=None,
         host_only: bool = False,
         review: bool = False,
+        ignore: bool = False,
     ) -> str:
         """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。拷贝图案。
 
@@ -1128,7 +1151,15 @@ class ActorsMixin:
             holder["result"] = "stop" if review else ("deleted" if holder["deleted"] else "cancel")
             dlg.destroy()
 
+        def ignore_new() -> None:
+            """t343u: 忽略刚重新提取的这张；原来的肖像由调用方改回原名，这里什么文件都不动。"""
+            holder["result"] = "ignored"
+            dlg.destroy()
+
         def close_window() -> None:
+            if ignore:
+                ignore_new()
+                return
             holder["result"] = "deleted" if (holder["deleted"] and not review) else "ok"
             dlg.destroy()
 
@@ -1266,6 +1297,8 @@ class ActorsMixin:
         delete_btn.pack(side=tk.LEFT, padx=6)
         confirm_btn = ttk.Button(btns, text="确认", command=confirm)
         confirm_btn.pack(side=tk.LEFT, padx=6)
+        if ignore:
+            ttk.Button(btns, text="忽略", command=ignore_new).pack(side=tk.LEFT, padx=6)
         cancel_btn = ttk.Button(btns, text="停止提取" if review else "取消", command=cancel)
         cancel_btn.pack(side=tk.LEFT, padx=6)
         apply_domain_chrome()
@@ -1280,8 +1313,9 @@ class ActorsMixin:
         dlg.bind("<Left>", lambda _e: shift(-1))
         dlg.bind("<Right>", lambda _e: shift(1))
         dlg.bind("<Control-v>", paste)
-        dlg.bind("<Return>", lambda _e: finish(False))
-        dlg.bind("<Escape>", lambda _e: cancel())
+        # t343u: Enter = 确认（原来调 finish 时多传了一个参数，按 Enter 会报错）；Esc = 忽略（重新提取时）/ 停止 / 取消。
+        dlg.bind("<Return>", lambda _e: confirm())
+        dlg.bind("<Escape>", lambda _e: ignore_new() if ignore else cancel())
         dlg.bind("<Delete>", delete_portrait)
         dlg.protocol("WM_DELETE_WINDOW", close_window)
         show_at(index)
