@@ -3854,20 +3854,77 @@ def scene_speaker_portraits(scene: dict, find_portrait) -> list:
     return out
 
 
+# t340u: 场景图 = 整个视频（首帧、唯一场景）；肖像只用来认人，绝不切到 / 显示肖像图
+def portrait_reference_only_rule(scene: str = "<Picture 1>", portrait: str = "portrait picture") -> str:
+    return (
+        f"Single scene shot: the whole video is one continuous shot of the scene in {scene}, its opening frame and its "
+        f"only setting and composition; it never cuts, switches or transitions to a {portrait} and never shows a "
+        f"portrait as a shot. The {portrait}s are identity references only: use each one to find that person in "
+        f"{scene}, so the right person lip-syncs each line. A speaker who is not visible in {scene} walks naturally "
+        f"into this same scene, looking like their portrait."
+    )
+
+
+PORTRAIT_REFERENCE_ONLY_RULE = portrait_reference_only_rule()  # MiniMax H3（<Picture k>）
+PORTRAIT_REFERENCE_ONLY_RULE_GENERIC = portrait_reference_only_rule("reference image 1", "portrait image")  # Grok 等
+_PORTRAIT_RULES = (PORTRAIT_REFERENCE_ONLY_RULE, PORTRAIT_REFERENCE_ONLY_RULE_GENERIC)
+_PORTRAIT_LIST_LINE = re.compile(r"^- (?:<Picture \d+>|Reference image \d+) is [^\n]*$", re.M)
+
+
+def _strip_portrait_rules(text: str) -> str:
+    out = text or ""
+    for rule in _PORTRAIT_RULES:
+        out = out.replace("\n" + rule, "").replace(" " + rule, "").replace(rule, "")
+    return out
+
+
+def _insert_portrait_rule(text: str, rule: str) -> str:
+    """规则放在参考图名单（- <Picture k> is … / - Reference image k is …）最后一行后面；没有名单就放在第一行后面。"""
+    found = list(_PORTRAIT_LIST_LINE.finditer(text))
+    if found:
+        at = found[-1].end()
+        return text[:at] + "\n" + rule + text[at:]
+    head, sep, rest = text.partition("\n")
+    return head + "\n\n" + rule + ("\n\n" + rest.lstrip("\n") if rest.strip() else "")
+
+
+def restore_portrait_reference_rule(original: str, polished: str) -> str:
+    """t340u: Strata 打磨后：原文有「Single scene shot:」→ 原样恰好一句、放回参考图名单后面；原文没有 → 清掉 Strata 加的。"""
+    for rule in _PORTRAIT_RULES:
+        if rule in (original or ""):
+            return _insert_portrait_rule(_strip_portrait_rules(polished), rule)
+    return _strip_portrait_rules(polished)
+
+
+def ensure_portrait_reference_rule(prompt: str) -> str:
+    """t340u: 送出前：提示词里有肖像名单（<Picture 2>… / Reference image 2…）就保证这句恰好一次。幂等。"""
+    text = prompt or ""
+    if re.search(r"^- <Picture (?:[2-9]|\d{2,})> is ", text, re.M):
+        rule = PORTRAIT_REFERENCE_ONLY_RULE
+    elif re.search(r"^- Reference image (?:[2-9]|\d{2,}) is ", text, re.M):
+        rule = PORTRAIT_REFERENCE_ONLY_RULE_GENERIC
+    else:
+        return text
+    if text.count(rule) == 1 and not any(r in text for r in _PORTRAIT_RULES if r != rule):
+        return text
+    return _insert_portrait_rule(_strip_portrait_rules(text), rule)
+
+
 def portrait_reference_block(refs: list) -> str:
     """t123u: 视频提示词：说明第 1 张是场景/首帧，后面是第 N 位说话人的形象图，只用来认人。"""
     if not refs:
         return ""
-    lines = ["REFERENCE IMAGES:", "- Reference image 1 is the scene / first frame of the video."]
+    lines = ["REFERENCE IMAGES:",
+             "- Reference image 1 is the scene: the video itself (opening frame, setting and composition)."]
     for i, (n, name, _path) in enumerate(refs, 2):
-        lines.append(f"- Reference image {i} is the portrait of Speaker {n} {name}.")
+        lines.append(f"- Reference image {i} is the portrait of Speaker {n} {name}: identity reference only, "
+                     "never shown as a shot.")
     lines += [
-        "Use the portraits only to identify which person in reference image 1 is each speaker.",
+        PORTRAIT_REFERENCE_ONLY_RULE_GENERIC,  # t340u
         "Each <N> / <Ns> tag is the same speaker N (the letter s is not another person or portrait). "
         "Interactive lines must be delivered by that exact person: lip movement and voice matching that speaker's "
         "gender, age and voice. Self-talk / inner-monologue lines marked <Ns> use that same person's "
         "voice with no lip movement. Other people stay silent while someone else speaks.",
-        "The portraits are identity references only: the video must start from reference image 1's composition. "
         "Do not add new people, do not insert the portraits as extra characters, and do not change the scene, "
         "background, art style or lighting.",
     ]
@@ -5051,7 +5108,7 @@ def h3_speaker_map_line(rows, notes: dict | None = None, pictures: dict | None =
         note = clean_speaker_note((notes or {}).get(k, ""))
         bit = f"(S{k}) is {name}" + (f", the {ident}" if ident else "") + (f" ({note})" if note else "")
         if (pictures or {}).get(k):
-            bit += f", whose portrait is <Picture {pictures[k]}>"
+            bit += f", identified in <Picture 1> by the portrait <Picture {pictures[k]}>"  # t340u: 只认人，不是镜头
         parts.append(bit)
     ident = ("; <N> and <Ns> map to the identical actor N / (S)N "
              "(the letter s is speech mode, not another person, seat, costume, or portrait)")
@@ -7839,16 +7896,16 @@ def h3_portrait_reference_block(refs: list) -> str:
     """t216u: MiniMax H3 参考图工作流：<Picture 1> 是场景 / 首帧，<Picture 2>.. 是说话人肖像（认脸和衣服）。"""
     if not refs:
         return ""
-    lines = ["REFERENCE PICTURES:", "- <Picture 1> is the scene and the first frame of the video."]
+    lines = ["REFERENCE PICTURES:",
+             "- <Picture 1> is the scene: the video itself (opening frame, setting and composition)."]
     for k, (n, name, _path) in enumerate(refs, 2):
-        lines.append(f"- <Picture {k}> is the portrait of {name} (S{n}): their face, hair and clothing.")
+        lines.append(f"- <Picture {k}> is the portrait of {name} (S{n}): identity reference only (face, hair and "
+                     "clothing), never shown as a shot.")
     lines += [
-        "The portraits are identity and clothing references only. Each speaker looks exactly like their portrait "
-        "(same face, hair and clothes), even if their face is hidden or unclear in <Picture 1>.",
-        "The video starts from <Picture 1>'s composition, place, light and art style. Do not paste a portrait "
-        "into the frame and do not copy a portrait's background or pose.",
-        "A speaker who is not visible in <Picture 1> enters the scene naturally only when the dialogue brings them "
-        "in, and then looks like their portrait. Do not add anyone else.",
+        PORTRAIT_REFERENCE_ONLY_RULE,  # t340u: 一句说清：整个视频就是 <Picture 1>，肖像只认人
+        "Each speaker looks exactly like their portrait (same face, hair and clothes), even if their face is hidden "
+        "or unclear in <Picture 1>. Do not paste a portrait into the frame, do not copy a portrait's background or "
+        "pose, and do not add anyone else.",
         "Each spoken line is delivered by the person marked by its (S1)/(S2)/(S#) id, the same person as in their "
         "portrait: lip movement and voice on that exact person; the others keep their lips closed while someone else speaks.",
     ]

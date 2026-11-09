@@ -1000,6 +1000,8 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         prompt = ensure_video_no_subtitle_first_line(prompt)
         from config_prompt import prepare_h3_spoken_text
         prompt = prepare_h3_spoken_text(prompt)  # t336u: 台词只在 <d> 一处 +「Exact speech:」一句
+        from config_prompt import ensure_portrait_reference_rule
+        prompt = ensure_portrait_reference_rule(prompt)  # t340u: 肖像只认人，不切到肖像
     except Exception as _e:  # noqa: BLE001
         print(f"[ComfyUI H3] 禁字幕第一行注入跳过：{_e}")
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
@@ -1092,6 +1094,8 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
         prompt = ensure_video_no_subtitle_first_line(prompt)  # t321u: 禁字幕只一句、在第一行（不再三遍）
         from config_prompt import prepare_h3_spoken_text
         prompt = prepare_h3_spoken_text(prompt)  # t336u
+        from config_prompt import ensure_portrait_reference_rule
+        prompt = ensure_portrait_reference_rule(prompt)  # t340u: 肖像只认人，不切到肖像
         negative = with_h3_no_subtitle_negative(negative)
     except Exception as _e:  # noqa: BLE001
         print(f"[ComfyUI H3] 禁字幕句核对跳过：{_e}")
