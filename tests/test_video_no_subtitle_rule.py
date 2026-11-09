@@ -84,8 +84,12 @@ class NoSubtitleRuleTest(unittest.TestCase):
 
     def test_spoken_content_labelled_audio_only(self):
         p = _h3("keywords")
-        block = p.split(cp.SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split(cp.SPOKEN_TRANSCRIPT_END, 1)[0]
-        self.assertEqual(block.strip().splitlines()[0], cp.SPOKEN_AUDIO_ONLY_LABEL)
+        # t336u: H3 不再附转写块；「Audio only」紧挨在台词前，后面就是「Exact speech」，各一次
+        self.assertNotIn(cp.SPOKEN_TRANSCRIPT_BEGIN, p)
+        self.assertEqual(p.count(cp.SPOKEN_AUDIO_ONLY_LABEL), 1)
+        self.assertLess(p.index(cp.H3_SPOKEN_LEAD), p.index("<d>"))
+        block = cp.format_spoken_transcript_block([{"speaking": "<1> 你好。", "actor": "woman/young/chinese/小美"}])
+        self.assertEqual(block.splitlines()[1], cp.SPOKEN_AUDIO_ONLY_LABEL)
         self.assertIn("voice track", cp.SPOKEN_AUDIO_ONLY_LABEL)
         flow = _flow("keywords")
         content = flow.split("Story_Scene_Content:\n", 1)[1]

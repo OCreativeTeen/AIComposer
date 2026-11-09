@@ -12,6 +12,7 @@ _SYS_GENERAL = """You are an expert prompt editor for AI video generation (Grok 
 Rewrite the user's video prompt into ONE concise, precise video-generation prompt in English.
 Keep ALL hard facts:
 - FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:", copy that whole line verbatim as the very first line of your output, once. It defines subtitles / captions as the speaking content (heard as voice only, never written on screen); it is not about text already in the image. Do not repeat it anywhere else and do not add any other wording about subtitles, captions or on-screen text.
+- Exact speech (t336u): if the prompt has the sentence starting "Exact speech:", copy it verbatim, once, in the same place (right before the first dialogue line, or inside the spoken transcript). The speaking text itself is never changed: do not repeat, split, merge, reword, translate, shorten or extend any spoken line, add no words to it, and never write a spoken line a second time anywhere else in the prompt.
 - Image keywords (t321u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. Those words are the few scene keywords already drawn in the start picture, kept in the background as they are; never turn the speaking content into those words or into any text on screen.
 - The OUTPUT FORMAT line(s) at the very top (right after the NO SUBTITLES line if present), copied verbatim.
 - Every dialogue line verbatim (same words and punctuation, same order), each with its speaker's name and that speaker's voice (gender, age, voice name).
@@ -32,6 +33,7 @@ Output only the final prompt text: no preface, no notes, no markdown fences."""
 _SYS_H3 = """You are an expert prompt editor for the MiniMax H3 audio-video model.
 The user gives a prompt already in the official H3 format. Return an improved prompt in EXACTLY the same structure:
 FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:", copy that whole line verbatim as the very first line of your output, once. It defines subtitles / captions as the speaking content (heard as voice only, never written on screen); it is not about text already in the image. Do not repeat it anywhere else and do not add any other wording about subtitles, captions or on-screen text.
+Exact speech (t336u): if the prompt has the sentence starting "Exact speech:", copy it verbatim, once, in the same place (right before the first dialogue line, or inside the spoken transcript). The speaking text itself is never changed: do not repeat, split, merge, reword, translate, shorten or extend any spoken line, add no words to it, and never write a spoken line a second time anywhere else in the prompt.
 Image keywords (t321u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. Those words are the few scene keywords already drawn in the start picture, kept in the background as they are; never turn the speaking content into those words or into any text on screen.
 1. The first line (the NO SUBTITLES line, or the H3 mode line when there is none) copied verbatim, then one blank line; when the NO SUBTITLES line is first, the H3 mode line follows it unchanged.
 2. Then exactly these three fields, each starting on its own line, in this order:
@@ -50,7 +52,7 @@ Rules:
 - Lip sync and speaker mapping are the most important facts of this prompt. Copy the sentence starting "Speaker map:" and the sentence starting "Lip sync:" verbatim, with every bracketed person description. Never drop, shorten, swap or soften the lip-sync emphasis, who speaks, who stays silent with closed lips, the switch of the moving mouth when the speaker changes, or each speaker's seat/side (left/right) and clothing in the brackets. Every (S1)/(S2) id always means the same person as in the Speaker map; never move a speaker to the other person's seat or outfit.
 - Self-talk (t241/t250/t283/t284/t285/t286): if the prompt contains the sentence starting "Self-talk:" or "Entire-scene self-talk:" or "Speaker marks:" or "Spoken words:" or "Audible voices:" or "Single audible voice:" or "Speak once:", copy each verbatim. Copy BEGIN_SPOKEN_TRANSCRIPT ... END_SPOKEN_TRANSCRIPT verbatim. Never drop them. <N> and <Ns> are the identical actor N (lowercase s is speech mode, not another person). Self-talk lines marked <Ns> have NO lip sync (mouth closed) and are that actor's exact speaking text, not picture narration; only interactive dialogue has lip sync. Visual / "Silent picture direction" text is never spoken. Cast count is not speaker count: a visible person with no speaking turn never speaks or repeats the line. If the same words appear in a <d> tag and in the transcript, speak them once only.
 - Actor-is-truth for positioning (t223): each speaker's left/right/seat comes ONLY from the Speaker map brackets (which come from the actor parenthesis). If "What happens while they talk" (or any action sentence) puts a named person on the opposite side or in the other person's seat, ignore that positioning — do not rewrite, swap, or merge seats from the action text; keep the Speaker map seats. You may keep story actions, gestures and props from the action text.
-- Copy the sentence starting "On camera:" verbatim. If that sentence describes closed-mouth / off-mouth delivery of the exact speaking text, keep that meaning: do not rewrite it as visible lip movement and do not invent picture narration. If it describes interactive spoken dialogue, a person who speaks is seen speaking on camera with moving lips, never as a different narrator: never describe an interactive speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is interactive dialogue, write the actions as happening while they talk and add no silence or quiet wording.
+- Copy the sentence starting "On camera:" verbatim. If that sentence describes closed-mouth / off-mouth delivery of the exact speaking text, keep that meaning: do not rewrite it as visible lip movement and do not invent picture narration. If it describes interactive spoken dialogue, a person who speaks is seen speaking on camera with moving lips, never as a different narrator: never describe an interactive speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is interactive dialogue, write the actions as happening while they say their lines and add no silence or quiet wording; this never means more speech: no spoken words are added, repeated or continued.
 Output only the final prompt: no preface, no notes, no markdown fences."""
 
 
@@ -92,6 +94,15 @@ def restore_h3_dialogue(original: str, polished: str) -> str:
     if not a or not b:
         return polished
     return polished[:b[0]] + original[a[0]:a[1]] + polished[b[1]:]
+
+
+def _repeated_spoken_line(original: str, polished: str) -> str:
+    """t336u: Strata 把某句台词（<d> 里的原文）多写了一遍 → 返回那句；没有就 ""。"""
+    for m in re.finditer(r"<d>(.*?)</d>", original or "", re.S):
+        line = re.sub(r"^\s*\[[^\]]*\]\s*", "", m.group(1)).strip()
+        if len(line) >= 2 and (polished or "").count(line) > (original or "").count(line):
+            return line
+    return ""
 
 
 def _added_text_words(original: str, polished: str) -> str:
@@ -322,12 +333,14 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
     from config_prompt import (  # t241u / t283u / t284u / t321u
         ensure_h3_monologue_no_lipsync_rules,
         ensure_speaker_semantics_rules,
+        restore_exact_speech_rule,
         restore_image_keywords_rule,
         restore_spoken_transcript,
     )
 
     out = restore_spoken_transcript(prompt, out)
     out = restore_image_keywords_rule(prompt, out)  # t321u
+    out = restore_exact_speech_rule(prompt, out)  # t336u
     _has_mono = ("Self-talk:" in (prompt or "") or bool(re.search(r"[<＜]\s*\d+\s*s\s*[>＞]", prompt or "")))
     _single_inner = ("Entire-scene self-talk:" in (prompt or "") or "Entire-scene inner monologue:" in (prompt or ""))
     _has_speaking = _has_mono or _single_inner or "Speaker marks:" in (prompt or "") or "BEGIN_SPOKEN_TRANSCRIPT" in (prompt or "")
@@ -346,6 +359,10 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
             else:
                 out = "\n".join([_first] + _lines[1:])  # 固定第一行也用原文
     bad = validate(prompt, out, backend)
+    if not bad:
+        _rep = _repeated_spoken_line(prompt, out)  # t336u: 台词多写一遍 = 视频里会说两遍
+        if _rep:
+            bad = f"Strata 把台词「{_rep[:20]}」多写了一遍"
     if bad:
         why = f"{bad}，用原提示词（{secs:.1f} 秒）"
         print(f"[Strata 精简] {why}")
@@ -367,6 +384,7 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
     except Exception as _e:  # noqa: BLE001
         print(f"[Strata 精简] 最终禁字幕第一行确保跳过：{_e}")
     out = restore_spoken_transcript(prompt, out)
+    out = restore_exact_speech_rule(prompt, out)  # t336u: 恰好一句、原位置
     why = f"Strata 精简完成：{len(prompt)} → {len(out)} 字（{secs:.1f} 秒）"
     print(f"[Strata 精简] {why}")
     return out, why

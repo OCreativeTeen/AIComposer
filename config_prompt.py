@@ -3613,11 +3613,18 @@ SPOKEN_TRANSCRIPT_END = "END_SPOKEN_TRANSCRIPT"
 SILENT_VISUAL_PREFIX = "Silent picture direction (never speak this text): "
 # t321u: 讲话内容只是声音（音轨），标清楚；不再在这里提字幕（禁字幕只在第一行说一次）
 SPOKEN_AUDIO_ONLY_LABEL = "Audio only: the speaking lines below are the voice track, heard and not shown."
+# t336u: 讲话内容 = speaking 原文，一字不多一字不少；不重复、不添加（MiniMax 会重说一句 / 中间加话）
+SPOKEN_EXACT_TEXT_RULE = (
+    "Exact speech: the voice says exactly the speaking text below, word for word and in order, "
+    "not one word more or less; each sentence is spoken once and never repeated, nothing is added before, "
+    "between or after the lines, and nobody speaks after the last line."
+)
 
 
 def format_spoken_transcript_block(scenes) -> str:
     """Authoritative spoken lines for this prompt only (never visual / caption / FYI)."""
-    rows_out = [SPOKEN_TRANSCRIPT_BEGIN, SPOKEN_AUDIO_ONLY_LABEL, SPOKEN_SOURCE_RULE, SPEAK_LINE_ONCE_RULE]
+    rows_out = [SPOKEN_TRANSCRIPT_BEGIN, SPOKEN_AUDIO_ONLY_LABEL, SPOKEN_EXACT_TEXT_RULE, SPOKEN_SOURCE_RULE,
+                SPEAK_LINE_ONCE_RULE]
     any_line = False
     for sc in scenes or []:
         if not isinstance(sc, dict):
@@ -3631,7 +3638,7 @@ def format_spoken_transcript_block(scenes) -> str:
             continue
         any_line = True
         rows_out.extend(script)
-    if not any_line and len(rows_out) == 4:
+    if not any_line and len(rows_out) == 5:
         rows_out.append(
             "This scene has no speaking; speak nothing. Do not narrate visual, scene title, actor, FYI, or story_content."
         )
@@ -3669,6 +3676,76 @@ def ensure_spoken_transcript_block(prompt: str, scenes) -> str:
     if SPOKEN_TRANSCRIPT_BEGIN in text:
         return restore_spoken_transcript(block, text)
     return text.rstrip() + "\n\n" + block
+
+
+def strip_spoken_transcript_block(prompt: str) -> str:
+    """t336u: 去掉 BEGIN_SPOKEN_TRANSCRIPT … END_SPOKEN_TRANSCRIPT（H3 里台词已经在 <d> 里，再写一遍会被说两遍）。"""
+    text = prompt or ""
+    while True:
+        span = _spoken_transcript_span(text)
+        if not span:
+            break
+        text = text[:span[0]].rstrip() + ("\n\n" + text[span[1]:].lstrip() if text[span[1]:].strip() else "")
+    return re.sub(r"\n{3,}", "\n\n", text).rstrip() + ("\n" if (prompt or "").endswith("\n") else "")
+
+
+def _h3_dialogue_start(text: str) -> int:
+    """H3 第一句带 <d> 的台词句子开头（同 prompt_polish._dialogue_span）；没有 <d> 就 -1。"""
+    first = (text or "").find("<d>")
+    if first < 0:
+        return -1
+    head = text[:first]
+    start = 0
+    for m in re.finditer(r"[.!?。！？](?=\s)|\[Shot \d+\]", head):
+        start = m.end()
+    while start < first and head[start:start + 1].isspace():
+        start += 1
+    return start
+
+
+def strip_exact_speech_rule(prompt: str, *, with_label: bool = False) -> str:
+    text = prompt or ""
+    for piece in ((SPOKEN_AUDIO_ONLY_LABEL, SPOKEN_EXACT_TEXT_RULE) if with_label else (SPOKEN_EXACT_TEXT_RULE,)):
+        text = text.replace(" " + piece, "").replace(piece + "\n", "").replace(piece, "")
+    return text
+
+
+# t336u: H3 没有转写块：「Audio only」+「Exact speech」两句放在第一句台词前，各一次
+H3_SPOKEN_LEAD = SPOKEN_AUDIO_ONLY_LABEL + " " + SPOKEN_EXACT_TEXT_RULE
+
+
+def ensure_h3_exact_speech_rule(prompt: str) -> str:
+    """t336u: H3（台词在 <d> 里）：「Audio only:」「Exact speech:」各恰好一句，紧挨在第一句台词前面。没有 <d> 就原样。"""
+    text = prompt or ""
+    if "<d>" not in text:
+        return text
+    text = strip_exact_speech_rule(text, with_label=True)
+    at = _h3_dialogue_start(text)
+    return text[:at] + H3_SPOKEN_LEAD + " " + text[at:]
+
+
+def prepare_h3_spoken_text(prompt: str) -> str:
+    """t336u: 送 MiniMax 前：台词只留 <d> 一处（去掉旧提示词里的整段转写），「Exact speech:」恰好一句。
+
+    没有 <d> 的提示词（台词只在转写里）不动。幂等。"""
+    text = prompt or ""
+    if "<d>" not in text:
+        return text
+    return ensure_h3_exact_speech_rule(strip_spoken_transcript_block(text))
+
+
+def restore_exact_speech_rule(original: str, polished: str) -> str:
+    """t336u: Strata 打磨后：原文有「Exact speech:」→ 恰好一句、原位置（H3 在台词前；转写块里由
+    restore_spoken_transcript 整块换回，块外的副本删掉）；原文没有 → 清掉 Strata 加的。"""
+    out = polished or ""
+    if SPOKEN_EXACT_TEXT_RULE not in (original or ""):
+        return strip_exact_speech_rule(out)
+    if "<d>" in out and SPOKEN_TRANSCRIPT_BEGIN not in (original or ""):
+        return ensure_h3_exact_speech_rule(out)
+    span = _spoken_transcript_span(out)
+    if span:
+        return strip_exact_speech_rule(out[:span[0]]) + out[span[0]:span[1]] + strip_exact_speech_rule(out[span[1]:])
+    return out
 
 
 
@@ -4390,6 +4467,8 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
                     )
                 else:
                     said.append(f"{lead}{name}" + (f" (the {ident})" if ident else "") + f" says aloud: {text}")
+            if said:
+                lines.append(SPOKEN_EXACT_TEXT_RULE)  # t336u
             if single_inner:
                 lines.append(
                     "This is a single self-talk turn: that same actor's off-mouth delivery of the exact speaking text"
@@ -4429,7 +4508,8 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
     raw = ensure_speaker_semantics_rules(
         raw, has_speaking=talk, has_monologue=has_mono, single_inner=bool(talk) and single_inner,
     )
-    raw = ensure_spoken_transcript_block(raw, scs)
+    if not (talk and not with_audio and turns):  # t336u: 台词已经写在正文里就不再附一遍转写
+        raw = ensure_spoken_transcript_block(raw, scs)
     return ensure_video_no_subtitle_first_line(raw)
 
 
@@ -4875,7 +4955,7 @@ def h3_on_camera_line(names: list, *, inner_vo: bool = False, mixed_mono: bool =
             "faces the camera or the person they talk to, and keeps the mouth clearly visible and uncovered, with no hand, "
             "phone, cup or hair in front of it; " + names[0] + " is already inside the frame at 0.0 s with the face and mouth "
             "visible (no walking in, no turning around first), and any hand, cup or phone near a speaker's mouth in "
-            "<Picture 1> drops away in the first instant; the actions in the description happen while they keep talking.")
+            "<Picture 1> drops away in the first instant; the actions in the description happen while they say their lines.")
 
 
 def h3_speech_pace_line(speed: float, seconds: float) -> str:
@@ -5363,6 +5443,7 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     if said and audio_mode == "none" and _pace < 0.999:
         shot.append(h3_speech_pace_line(_pace, seconds))
     if said:
+        shot.append(H3_SPOKEN_LEAD)  # t336u: 讲话 = 音轨 + 一字不多不少，一次，紧挨在台词前
         shot.append(" ".join(said))
         if audio_mode == "sing":
             shot.append("Lips, breath and body move with the song.")
@@ -5410,7 +5491,8 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     result = ensure_speaker_semantics_rules(
         raw, has_speaking=bool(said or _has_mono), has_monologue=_has_mono, single_inner=_single_inner,
     )
-    result = ensure_spoken_transcript_block(result, scs)
+    # t336u: 不再在末尾附整段 BEGIN_SPOKEN_TRANSCRIPT：台词已经（带说话人和时间）在 <d> 里，
+    # 再写一遍 MiniMax 会把一句话说两遍。没有台词时上面已经写了「Nobody speaks」。
     return ensure_video_no_subtitle_first_line(result)  # t244: 第一行必须是全局禁字幕规则
 
 

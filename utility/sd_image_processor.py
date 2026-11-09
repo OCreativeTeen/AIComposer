@@ -998,6 +998,8 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
     try:  # t244: 最重要的禁字幕行必须是第一行（发送前最后一道保障）
         from config_prompt import ensure_video_no_subtitle_first_line
         prompt = ensure_video_no_subtitle_first_line(prompt)
+        from config_prompt import prepare_h3_spoken_text
+        prompt = prepare_h3_spoken_text(prompt)  # t336u: 台词只在 <d> 一处 +「Exact speech:」一句
     except Exception as _e:  # noqa: BLE001
         print(f"[ComfyUI H3] 禁字幕第一行注入跳过：{_e}")
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
@@ -1088,6 +1090,8 @@ def generate_video_comfy(image_path: str, prompt: str, seconds: float, width: in
     try:
         from config_prompt import ensure_video_no_subtitle_first_line, with_h3_no_subtitle_negative
         prompt = ensure_video_no_subtitle_first_line(prompt)  # t321u: 禁字幕只一句、在第一行（不再三遍）
+        from config_prompt import prepare_h3_spoken_text
+        prompt = prepare_h3_spoken_text(prompt)  # t336u
         negative = with_h3_no_subtitle_negative(negative)
     except Exception as _e:  # noqa: BLE001
         print(f"[ComfyUI H3] 禁字幕句核对跳过：{_e}")

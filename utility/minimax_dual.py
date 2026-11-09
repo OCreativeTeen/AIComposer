@@ -96,6 +96,8 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     try:  # t244 / t321u: 提交前保证禁字幕句只有一句，且在第一行（旧的重复句清掉）
         from config_prompt import ensure_h3_monologue_no_lipsync_rules, ensure_video_no_subtitle_first_line
         prompt = ensure_video_no_subtitle_first_line(prompt)
+        from config_prompt import prepare_h3_spoken_text
+        prompt = prepare_h3_spoken_text(prompt)  # t336u: 台词只在 <d> 一处 +「Exact speech:」一句
         prompt = ensure_h3_monologue_no_lipsync_rules(
             prompt, has_monologue=("Self-talk:" in (prompt or "") or "Entire-scene self-talk:" in (prompt or "")))
     except Exception as _e:  # noqa: BLE001

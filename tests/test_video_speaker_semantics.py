@@ -415,9 +415,10 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         self.assertNotIn("[自言自语]", transcript)
         self.assertNotIn("（自言自语）", transcript)
 
-        h3_t = h3.split(SPOKEN_TRANSCRIPT_BEGIN, 1)[1].split("END_SPOKEN_TRANSCRIPT", 1)[0]
-        self.assertIn("才寫了三行，怎麼就像跑完一場馬拉松。", h3_t)
-        self.assertNotIn("[自言自语]", h3_t)
+        # t336u: H3 的台词只在 <d> 里一次（不再在末尾附整段转写，免得说两遍）
+        self.assertNotIn(SPOKEN_TRANSCRIPT_BEGIN, h3)
+        self.assertEqual(h3.count("才寫了三行，怎麼就像跑完一場馬拉松。"), 1)
+        self.assertNotIn("[自言自语]", h3)
 
         guarded = ensure_speaker_semantics_rules(
             "Some rewritten clip.", has_speaking=True, has_monologue=True, single_inner=True,
