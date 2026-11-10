@@ -1773,8 +1773,9 @@ def in_scene_direction_lines(visual: str, names) -> list:
     lines = []
     for nm in facing_targets(visual, names):
         lines.append(
-            f"Whatever is turned, shown or handed to {nm} turns sideways inside the scene toward {nm}, the other person "
-            f"in the scene, {IN_SCENE_FACING_MARK}: its screen or front faces {nm} and turns away from the viewer."
+            f"Whatever is turned or shown to {nm} stays in the same hands and only turns sideways inside the scene "
+            f"toward {nm}, the other person in the scene, {IN_SCENE_FACING_MARK}: its screen or front faces {nm} and "
+            f"turns away from the viewer."  # t388u: 不写 handed（东西不换手）
         )
     if names:
         lines.append(NO_FOURTH_WALL_LINE)
@@ -3232,10 +3233,11 @@ def build_video_fyi_only_prompt(
         ]
     lines += [
         "Keep the place, the people, their faces and clothes, and the objects of the picture. "
-        "Only what the main action asks for moves or changes.",
+        "Only what the main action asks for moves; the objects stay as they are.",  # t388u
         "Do not add people. Do not remove anyone unless the main action says so.",
     ]
     lines.append(video_one_shot_rule("picture 1"))  # t382u
+    lines.append(video_props_lock_rule("picture 1"))  # t388u
     if evolve == "keep":
         lines.append(f"Keep the visual style of picture 1 for the whole clip. Do not restyle it toward {style}.")
         lines.append(video_art_style_lock_rule(style, pic="picture 1"))  # t369u
@@ -4481,6 +4483,7 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
              + (f", set in {place}" if place else "") + "."]
     lines.append(video_art_style_lock_rule(st, pic="the first frame"))
     lines.append(video_one_shot_rule("the first frame"))  # t382u
+    lines.append(video_props_lock_rule("the first frame"))  # t388u: 物品不变
     lines.append("The video starts from the first frame and ends on the last frame." if two_frames else
                  "The video continues directly from the first frame: same place, same camera angle, same people.")
     visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip()
@@ -5281,6 +5284,28 @@ def restore_one_shot_rule(original: str, polished: str) -> str:
     return _restore_rule(original, polished, VIDEO_ONE_SHOT_PREFIX)
 
 
+# t388u: 视频里手上拿的东西、桌上的东西经常变（平板变手机、东西凭空消失 / 多出来）。整段视频里起始图的所有物品都不变：
+# 种类、形状、颜色、数量、位置都一样；拿着的手一直拿着同一件，空手一直空手。Grok / Gemini / MiniMax 都写；
+# Strata 精简后原样补回（restore_video_locked_rules），丢了 validate 不通过。
+VIDEO_PROPS_LOCK_PREFIX = "Objects lock:"
+
+
+def video_props_lock_rule(pic: str = "the start picture") -> str:
+    return (f"{VIDEO_PROPS_LOCK_PREFIX} every object in {pic} stays exactly as it is from the first frame to the last: "
+            f"what each person holds in the hands, what lies on the table, and every other prop keep the same kind, "
+            f"shape, colour, size, count and place. A tablet stays a tablet and a cup stays a cup; nothing turns into a "
+            f"different object, nothing new appears in anyone's hands or on the table, and nothing that is in {pic} "
+            f"disappears, is put away or is dropped. A hand that holds something keeps holding that same thing; an "
+            f"empty hand stays empty. （物品锁定：起始画面里的所有东西整段都不变——手里拿的、桌上放的、其他道具，"
+            f"种类、形状、颜色、数量、位置都一样；平板不会变成手机，不凭空多出东西，也不会消失或被拿走；"
+            f"拿着东西的手一直拿着同一件，空手一直空手。）")
+
+
+def restore_props_lock_rule(original: str, polished: str) -> str:
+    """t388u: 「Objects lock:」那句 Strata 改了 / 丢了就换回原句，恰好一次。"""
+    return _restore_rule(original, polished, VIDEO_PROPS_LOCK_PREFIX)
+
+
 
 # ---------------------------------------------------------------------------
 # t373u: 所有图片处理（图片修改的每一种：仅修改 / 保持画风 / 转成项目风格 / 从封面提取 / 补全人物 / 人物提取 /
@@ -5368,7 +5393,8 @@ def _rule_span(text: str, prefix: str):
         return None
     line_end = text.find("\n", i)
     line_end = len(text) if line_end < 0 else line_end
-    for other in (VIDEO_IMAGE_KEYWORDS_PREFIX, ART_STYLE_LOCK_PREFIX, VIDEO_ONE_SHOT_PREFIX):  # 不跨到下一条锁定句
+    for other in (VIDEO_IMAGE_KEYWORDS_PREFIX, ART_STYLE_LOCK_PREFIX, VIDEO_ONE_SHOT_PREFIX,
+                  VIDEO_PROPS_LOCK_PREFIX):  # 不跨到下一条锁定句
         o = text.find(other, i + len(prefix), line_end)
         if o >= 0:
             line_end = o
@@ -5421,6 +5447,7 @@ def restore_video_locked_rules(original: str, polished: str) -> str:
     """t369u: 发送前最后核对：关键字句 + 画风锁定句都在（原文有才补）。"""
     out = restore_image_keywords_rule(original, polished)
     out = restore_one_shot_rule(original, out)  # t382u: 基础画面、不切镜头
+    out = restore_props_lock_rule(original, out)  # t388u: 物品不变
     return restore_art_style_rule(original, out)
 
 
@@ -5641,6 +5668,7 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     shot = [f"[Shot 1] {_h3_style(style)}" + (f", set in {place}" if place else "") + "."]
     shot.append(video_art_style_lock_rule(style, pic="<Picture 1>"))  # t369u: 画风锁定
     shot.append(video_one_shot_rule("<Picture 1>"))  # t382u: 基础画面里对话，不切到肖像
+    shot.append(video_props_lock_rule("<Picture 1>"))  # t388u: 手里 / 桌上的东西不变
     try:
         from utility import story_stage as _ss
 
@@ -5988,6 +6016,7 @@ def build_video_flow_prompt(
     if evolve == "keep":  # t369u: 画风锁定（演进到目标风格时不锁）
         instruction.append(video_art_style_lock_rule(style, pic="picture 1"))
     instruction.append(video_one_shot_rule("picture 1"))  # t382u: 基础画面里对话，不切到肖像
+    instruction.append(video_props_lock_rule("picture 1"))  # t388u: 手里 / 桌上的东西不变
     if use_visual:
         instruction.append(
             "``visual`` describes the place, the action, and the angle; act it out inside picture 1. "
