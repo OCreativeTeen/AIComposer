@@ -21,7 +21,7 @@ import argparse, copy, json, os, random, sys, time, uuid
 import requests
 
 CONFIG = {
-    "server": "http://192.168.1.x:8188",
+    "server": "http://192.168.1.227:8188",
     "workflow_api_path": "qwen_edit_3ref_api.json",
 
     "base_image_node": "8",

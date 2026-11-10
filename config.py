@@ -938,8 +938,8 @@ STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.30:8080/v1")
 VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://127.0.0.1:17493")  # t195u: Voicebox 装在本机
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
 COMFYUI_URL = _env("COMFYUI_URL", "http://192.168.1.36:8188")  # dead placeholder
-# t229u / t230u: MOSS 图片编辑 ComfyUI 在 asus2060（192.168.1.x:8188），不是本机 127.0.0.1
-COMFYUI_MOSS_URL = _env("COMFYUI_MOSS_URL", "http://192.168.1.x:8188")
+# t229u / t230u: MOSS / QN 图片编辑 ComfyUI 在 192.168.1.227:8188（t364u），不是本机 127.0.0.1
+COMFYUI_MOSS_URL = _env("COMFYUI_MOSS_URL", "http://192.168.1.227:8188")
 # t234u: Qwen(QN) 图片编辑与 MOSS 同机 ComfyUI；可用 COMFYUI_QN_URL 覆盖，默认同 MOSS
 COMFYUI_QN_URL = _env("COMFYUI_QN_URL", COMFYUI_MOSS_URL)
 SD_WEBUI_URL = _env("SD_WEBUI_URL", "http://10.0.0.x:7860")  # dead placeholder

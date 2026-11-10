@@ -43,4 +43,4 @@ API 格式：`qwen_edit_3ref_api.json`（扁平图，无 subgraph、无 ComfySwi
 python qwen_edit_api_client.py --base scene.png --refs person_a.png person_b.png --prompt "Place the person from Picture 2 and the person from Picture 3 into the living room of Picture 1. Keep each person's face, hair, ethnicity and clothing exactly as in their reference. Keep Picture 1's room, lighting and composition unchanged." --out D:\AI_MEDIA\working\qwen_edit_result.png --seed 42
 ```
 
-1 张底图即可；参考图 0–2 张。默认服务器 `http://192.168.1.x:8188`。默认 Lightning：4 步 / CFG 1.0。
+1 张底图即可；参考图 0–2 张。默认服务器 `http://192.168.1.227:8188`。默认 Lightning：4 步 / CFG 1.0。
