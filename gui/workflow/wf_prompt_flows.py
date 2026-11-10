@@ -110,6 +110,7 @@ class PromptFlowsMixin:
                 extra["image_backend"] = "qn"
             if account and b not in ("moss", "qn"):
                 extra["chrome_account"] = account
+            prompt = config_prompt.style_lock_first(prompt)  # t373u: 画风锁定永远是第一行
             if isinstance(comfy, dict) and comfy.get("comfy") and b in ("moss", "qn"):
                 # t356u: ComfyUI 专用提示已经写好：带上反向提示词和输出画布，送出时不再改写
                 extra["comfy_backend"] = b
@@ -486,6 +487,8 @@ class PromptFlowsMixin:
         if not jobs:
             messagebox.showinfo("图片修改", "本集没有可处理的场景。\n" + "\n".join(skipped[:20]), parent=self.root)
             return
+        # t373u: 每一场的提示词送出前把画风锁定挪到第一行（比例行 / FYI / 背景条件都在它后面）
+        jobs = [(j[0], config_prompt.style_lock_first(j[1]), *j[2:]) if len(j) > 1 else j for j in jobs]
         b = str(backend or "").strip().lower()
         use_gemini = b == "gemini"
         use_moss = b == "moss"
@@ -544,8 +547,6 @@ class PromptFlowsMixin:
             visual = scene.get("visual") or ""
             if not (visual.strip() and image and os.path.isfile(image)):
                 print(f"ℹ️ 调整视觉：{label} 没有视觉文字或没有图，跳过")
-                # Image already written; remix will not run — split on this final state.
-                self._finish_monologue_split_after_image(scene)
                 return
             lang = getattr(self.workflow, "language", None) or "tw"
             remix_q.put((scene, label, visual, image, scene.get("actor") or "", lang, scene.get("speaking") or ""))  # t161u: 整个 actor
@@ -587,10 +588,8 @@ class PromptFlowsMixin:
                     self.workflow.save_scenes_to_json()
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 调整视觉：{label} 写回界面 / 保存失败 {exc}")
-            finally:
-                # Remix settled (applied or kept). Split now so both halves share
-                # the same final authored visual/actor from this single remix.
-                self._finish_monologue_split_after_image(scene)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 调整视觉：{label} 写回失败 {exc}")
 
         def remix_worker():
             """t198u / t223u new-project cover-analysis path: same remix_scene_full as visual Remix —
@@ -614,7 +613,6 @@ class PromptFlowsMixin:
                     except Exception as exc:  # noqa: BLE001
                         failed.append(f"{label}：调整视觉失败，保留原文（{exc}）")
                         print(f"⚠️ 调整视觉：{label} 看图失败，保留原文：{exc}")
-                        ui(lambda s=scene: self._finish_monologue_split_after_image(s))
                         continue
                     ui(lambda s=scene, l=label, o=old, n=out, a=notes: apply_visual(s, l, o, n, a))
             finally:
@@ -636,7 +634,6 @@ class PromptFlowsMixin:
                     img = fit_to_size(img, up)
                 self._replace_current_clip_image_from_pil(
                     img, scene=scene, defer_video=True,
-                    defer_monologue_split=bool(remix_visual),
                     exact_size=up,
                 )
                 done[0] += 1
@@ -648,17 +645,7 @@ class PromptFlowsMixin:
                 evt = written_events.pop(id(scene), None)
                 if evt is not None:
                     evt.set()  # t319u: 工人线程等这一场的 clip_image 写好再提取肖像
-            from utility.speaking_marks import scene_monologue_split_done, split_speaking_pair
-
-            # Do not rebuild a still clip from the unsplit full speech: that
-            # media is dropped on a valid split, and a late worker must not
-            # write it back onto a half.
-            pending_split = (
-                remix_visual
-                and not scene_monologue_split_done(scene)
-                and split_speaking_pair(scene.get("speaking") or "") is not None
-            )
-            if not pending_split and self._stale_still_clip_scenes([scene]):
+            if self._stale_still_clip_scenes([scene]):
                 clip_q.put((scene, label))
             if remix_visual:
                 queue_remix(scene, label)
@@ -675,13 +662,6 @@ class PromptFlowsMixin:
                         break
                     scene, label = item
                     try:
-                        from utility.file_util import get_file_path
-                        from utility.speaking_marks import scene_monologue_split_done
-
-                        audio = get_file_path(scene, "clip_audio")
-                        if scene_monologue_split_done(scene) and not (audio and os.path.isfile(audio)):
-                            # Split already dropped full-speech audio; skip stale rebuild.
-                            continue
                         out = self._make_still_clip_video(scene)
                     except Exception as exc:  # noqa: BLE001
                         out = f"error {exc}"
@@ -906,7 +886,7 @@ class PromptFlowsMixin:
                 else:
                     parts.append("No cast is listed for this scene: do not put any of the portraits into it.")
                 parts += ["Output exactly one image.", "", job[1]]
-                return "\n".join(parts), base + attach
+                return config_prompt.style_lock_first("\n".join(parts)), base + attach  # t373u
 
             try:
                 with gemini_cdp.GeminiSession(status=scene_status("开新的 Gemini 对话")) as gs:

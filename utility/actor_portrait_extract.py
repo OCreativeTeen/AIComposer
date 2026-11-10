@@ -49,8 +49,9 @@ STATUS_LABEL = {
 DEFAULT_IMAGE_SLOT = "clip_image"
 
 EXTRACT_PROMPT_INTRO = (
-    "Extract a head-and-shoulders portrait of ONLY the person described below "
-    "from Image 1 (the scene picture), and only if that person is clearly present."
+    "Extract a head-and-shoulders character portrait of ONLY the person described below "
+    "from Image 1 (the scene picture), and only if that person is clearly present. "
+    "Draw it in exactly the same art style as Image 1."
 )
 
 
@@ -231,9 +232,16 @@ def actor_description_text(actor: dict) -> str:
     return "\n".join(lines)
 
 
-def build_portrait_extract_prompt(actor: dict) -> str:
-    """Prompt for Grok Image: extract head/shoulders only if the person is clearly in the scene."""
+def build_portrait_extract_prompt(actor: dict, style: str = "") -> str:
+    """Prompt for Grok Image: extract head/shoulders only if the person is clearly in the scene.
+
+    t373u: 第一条 = 项目画风锁定（``style`` = 项目画面风格，例「三维卡通 (Pixar-Art-Cartoon)」）。
+    以前这里一个字没提画风，还写了 "real face" / "plain, neutral background"，三维卡通的人被画成了真人照片。"""
+    from config_prompt import image_art_style_lock_rule
+
     return "\n".join([
+        image_art_style_lock_rule(style, "Image 1"),
+        "",
         EXTRACT_PROMPT_INTRO,
         "",
         actor_description_text(actor),
@@ -241,8 +249,9 @@ def build_portrait_extract_prompt(actor: dict) -> str:
         "Rules:",
         "- Extract only if this exact person is clearly present in Image 1.",
         "- Do not invent a face, do not substitute another person, and do not guess from the text alone.",
-        "- Show the head and shoulders. Keep the real face, hair, age, gender presentation, and clothing from the scene.",
-        "- Use a plain, neutral background. No extra people, scenery, props, or text.",
+        "- Show the head and shoulders. Keep the same face, hair, age, gender presentation, and clothing as in the "
+        "scene, drawn the way Image 1 draws them (same art style, same character design).",
+        "- Use a plain, simple background in the same art style. No extra people, scenery, props, or text.",
         "- If the person is not clearly in the picture, do not produce a portrait.",
     ])
 
@@ -518,7 +527,7 @@ def review_portraits_for_scene(
         out["grok_calls"] += 1
         raw_path = ""
         try:
-            raw_path = _as_image_path(generate(image, row, build_portrait_extract_prompt(row)))
+            raw_path = _as_image_path(generate(image, row, build_portrait_extract_prompt(row, style)))
         except Exception:
             raw_path = ""
         if not raw_path or not dest:
@@ -579,7 +588,7 @@ def _reextract_one(row, image, avatar_dir, style, generate, review, remove, port
         dest = ""
     raw_path = ""
     try:
-        raw_path = _as_image_path(generate(image, row, build_portrait_extract_prompt(row)))
+        raw_path = _as_image_path(generate(image, row, build_portrait_extract_prompt(row, style)))
     except Exception:
         raw_path = ""
     if not raw_path or not dest:

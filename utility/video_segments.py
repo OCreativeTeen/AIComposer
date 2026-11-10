@@ -17,15 +17,13 @@ import copy
 import os
 
 from utility.speaking_marks import (
-    MONOLOGUE_SPLIT_DONE,
-    MONOLOGUE_SPLIT_KEY,
     format_segment_turns,
     speaking_segment_turns,
 )
 
 SEGMENT_OF_KEY = "video_segment_of"  # 克隆出来的那一节记下原场景 id
 # 拆节时原场景上要能退回的字段
-_SNAPSHOT_KEYS = ("speaking", "speaking_timing", "clip_audio", "clip", MONOLOGUE_SPLIT_KEY)
+_SNAPSHOT_KEYS = ("speaking", "speaking_timing", "clip_audio", "clip")
 _MISSING = object()
 
 
@@ -237,7 +235,6 @@ def split_first_segment(scenes: list, scene: dict, *, next_id=None, clone_images
         clone["speaking_timing"] = _timing_for(head_turns, spans[:n], 0.0, plan["first"],
                                                cut if audio_cut else None, per_turn)
     clone[SEGMENT_OF_KEY] = scene.get("id")
-    clone[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
 
     scene["speaking"] = plan["rest"]
     if spans:
@@ -248,7 +245,6 @@ def split_first_segment(scenes: list, scene: dict, *, next_id=None, clone_images
     if has_audio and not audio_cut:
         scene.pop("clip_audio", None)  # 整场音频对不上剩下的讲话；拆节失败退回时从 snapshot 还原
     scene.pop("clip", None)  # 整场的旧预览片不对了；调用方重做静态预览
-    scene[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
     scenes.insert(idx, clone)
     return {
         "clone": clone, "scene": scene, "snapshot": snapshot, "cut": cut, "cut_source": source,

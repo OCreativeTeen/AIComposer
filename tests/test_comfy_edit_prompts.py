@@ -129,8 +129,18 @@ def grok_gemini_cases() -> list:
     return out
 
 
-# sha256 of "\n<<>>\n".join(grok_gemini_cases()) computed with the committed (pre-t356u) config_prompt.py.
-GROK_GEMINI_DIGEST = "ba6d90e4d3be804a2cc4deae8aac0f0e307e8a8cdd81fca6ebf5517c64a68ec2"
+# sha256 of "\n<<>>\n".join(grok_gemini_cases()).
+# t373u: intentionally re-taken — every Grok / Gemini image-edit prompt now starts with the
+# "ART STYLE LOCK (rule 1, most important):" line, and the people-extract wording keeps the picture's art style.
+# (Before t373u: ba6d90e4d3be804a2cc4deae8aac0f0e307e8a8cdd81fca6ebf5517c64a68ec2, unchanged since pre-t356u.)
+GROK_GEMINI_DIGEST = "24d15f7b4f36112f4f554b2189cbee219b678e0dcb62ae40301abbe876ed04b8"
+
+
+def _body(prompt: str) -> str:
+    """t373u: the prompt without its leading ART STYLE LOCK line (asserts the lock really is first)."""
+    first, _, rest = prompt.partition("\n")
+    assert first.startswith(cp.IMAGE_STYLE_LOCK_PREFIX), first[:80]
+    return rest.lstrip("\n")
 
 
 class GrokGeminiUnchangedTest(unittest.TestCase):
@@ -201,8 +211,8 @@ class ComfyPromptTest(unittest.TestCase):
                                                  caption="erase", size=(1360, 768), scene_caption="雨夜狂奔")
         q, qn = cp.build_comfy_cover_step_prompt(2, backend="qn", layout="columns", count=4, cropped=True,
                                                  caption="erase", size=(1360, 768), scene_caption="雨夜狂奔")
-        self.assertTrue(m.startswith("image 1 is one panel cut out"))
-        self.assertTrue(q.startswith("Picture 1 is one panel cut out"))
+        self.assertTrue(_body(m).startswith("image 1 is one panel cut out"))
+        self.assertTrue(_body(q).startswith("Picture 1 is one panel cut out"))
         self.assertIn("wide 16:9 landscape", m)
         self.assertIn('title "雨夜狂奔"', m)
         self.assertEqual(mn, qn)
@@ -249,7 +259,7 @@ class ComfyPromptTest(unittest.TestCase):
 
     def test_general_edit_variants(self):
         pos, neg = cp.build_comfy_picture_edit_prompt(backend="moss", task="keep", text="keep", edit_request="把天空改成黄昏")
-        self.assertTrue(pos.startswith("把天空改成黄昏\nChange only what is asked"))
+        self.assertTrue(_body(pos).startswith("把天空改成黄昏\nChange only what is asked"))
         self.assertIn("extra people", neg)
         self.assertNotIn("caption", neg)  # keep text: nothing in the negative fights the picture's own words
         self.assertNotIn("background figures", neg)
@@ -315,7 +325,7 @@ class ComfyWorkflowTest(unittest.TestCase):
         self.assertIn("Remove all writing", pos)
         self.assertIn("collage", neg)
         q, _ = sdp.adapt_prompt_for_qwen_edit(grok, COVER)
-        self.assertTrue(q.startswith("Picture 1 is a story cover"))
+        self.assertTrue(_body(q).startswith("Picture 1 is a story cover"))
         pos2, _ = sdp.adapt_prompt_for_moss_edit(grok)
         self.assertIn("reading order", pos2)
         self.assertEqual(sdp._parse_extract_step_prompt(grok)["size"], (1360, 768))
@@ -323,7 +333,7 @@ class ComfyWorkflowTest(unittest.TestCase):
     def test_fallback_crop_and_passthrough(self):
         grok = cp.build_step_image_clipbody(2, extract_only=True)
         pos, neg, img = sdp._adapt_extract_step(grok, COVER, "moss", crop=True)
-        self.assertTrue(pos.startswith("image 1 is one panel cut out"))
+        self.assertTrue(_body(pos).startswith("image 1 is one panel cut out"))
         self.assertTrue(img.endswith("cover1_panel2of4.png"), img)
         other = "Make the sky orange."
         self.assertEqual(sdp.adapt_prompt_for_moss_edit(other), (other, None))

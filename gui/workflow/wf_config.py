@@ -470,9 +470,9 @@ class ConfigMixin:
         self.setting_region.bind("<<ComboboxSelected>>", self._on_setting_region_selected)
         self.setting_region.bind("<FocusOut>", self._save_project_look)
         
-        # 讲话：仅在此框 — Ctrl+S 拆分克隆；Ctrl+←/→ 移动片段；Ctrl+M 合并下一场景讲话并删下一场景（仅讲话，不碰音视频）
-        self.scene_speaking.bind("<Control-s>", self._on_speaking_ctrl_s_split_clone)
-        self.scene_speaking.bind("<Control-S>", self._on_speaking_ctrl_s_split_clone)
+        # 讲话：仅在此框 — Ctrl+S 在光标处加分节符 <s>（t373u，不再拆场）；Ctrl+←/→ 移动片段；Ctrl+M 合并下一场景讲话并删下一场景（仅讲话，不碰音视频）
+        self.scene_speaking.bind("<Control-s>", self._on_speaking_ctrl_s_insert_segment_mark)
+        self.scene_speaking.bind("<Control-S>", self._on_speaking_ctrl_s_insert_segment_mark)
         self.scene_speaking.bind("<Control-Right>", self._on_speaking_ctrl_right_move_tail_to_next)
         self.scene_speaking.bind("<Control-Left>", self._on_speaking_ctrl_left_move_head_to_prev)
         self.scene_speaking.bind("<Control-m>", self._on_speaking_ctrl_m_merge_next_speaking)
@@ -488,7 +488,7 @@ class ConfigMixin:
         for _w in (self.scene_speaking,):
             _w.bind("<Insert>", self._on_scene_insert_silence_marker)
 
-        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→/M；讲话/旁白 Insert→静音菜单")
+        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S 加 <s> / Ctrl+←/→/M；讲话/旁白 Insert→静音菜单")
 
     def bind_config_change_events(self):
         """绑定配置变化事件"""

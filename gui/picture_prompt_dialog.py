@@ -931,6 +931,8 @@ def open_picture_prompt_dialog(
         from utility.image_upscale import comfy_upscale_canvas, upscale_target_for_image
 
         fyi_up = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
+        # t373u: 项目画风写进第一条（ART STYLE LOCK）
+        style_up = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
 
         def _upscale_job(sc) -> tuple:
             path = sc.get(chosen_image()) if isinstance(sc, dict) else ""
@@ -944,10 +946,10 @@ def open_picture_prompt_dialog(
                 raise ValueError("读不出图的尺寸")
             if comfy:
                 canvas = comfy_upscale_canvas(target)
-                pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend=comfy, fyi=fyi_up)
+                pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend=comfy, fyi=fyi_up, style=style_up)
                 return pos, [path], {"aspect": "", "actors": [], "base": path, "comfy": True, "negative": neg,
                                      "size": canvas, "upscale_size": target}
-            prompt = prepend_fyi(config_prompt.build_upscale_prompt(target), fyi_up, include=bool(fyi_up))
+            prompt = prepend_fyi(config_prompt.build_upscale_prompt(target, style_up), fyi_up, include=bool(fyi_up))
             return prompt, [path], {"aspect": "", "actors": [], "base": path, "upscale_size": target}
 
         scope = "scene"

@@ -2335,9 +2335,8 @@ class ProjectSelectionDialog:
         if not sc:
             messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目", parent=form_parent)
             return
-        # Keep scenes unsplit here so cover extract / 图片修改 runs once on
-        # the original scene. Valid self-talk splits after that image succeeds
-        # (see apply_monologue_split_after_image).
+        # t373u: scenes are never split by <Ns> (here or after the image); <Ns> / <s>
+        # segments are generated one by one at video time (utility/video_segments.py).
         if not sr.get('analyzed_content'):
             sr['analyzed_content'] = ""
         title = getattr(self, "initial_title", "") or title_from_scene_content(sc)

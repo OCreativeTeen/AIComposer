@@ -8,19 +8,13 @@ Lifecycle:
     text, never control syntax and never a self-talk mark.
   - ``<0.5>``-style decimal marks are pauses, never speaker ids.
 
-Self-talk may only occupy a contiguous block at the start or the end of a
-scene's speaking (never the middle, never both ends) — generation prompts
-still require that. A new project keeps the scene unsplit so image
-generation or cover extraction runs once. After that image write succeeds,
-a valid leading/trailing monologue scene is split into two consecutive
-scenes (same authored fields except speaking). Interior / both-ends
-layouts are left unchanged (no error). Already-split scenes and pure
-monologue or dialogue do not split again.
+Self-talk is generation-time only: a scene is never split into two scenes
+because of ``<Ns>`` (t373u removed the old split-after-image path completely). At video time, ``<Ns>`` runs and manual
+``<s>`` marks become segments generated one by one (utility/video_segments.py).
 """
 from __future__ import annotations
 
 import copy
-import os
 import re
 from dataclasses import dataclass
 
@@ -191,6 +185,40 @@ def speaking_segments(text: str) -> list:
     return [format_segment_turns(g) for g in speaking_segment_turns(text)]
 
 
+_SEGMENT_MARK_AT_END_RE = re.compile(r"[<＜]\s*[sS]\s*[>＞]\s*$")
+
+
+def segment_mark_insert(text: str, pos: int) -> tuple:
+    """t373u: 讲话框 Ctrl+S = 在光标处加手工分节符 ``<s>``（不再把场景拆成两场）。
+
+    ``pos`` = 光标前的字数。可以加：返回 ``(新文本, 加完后的光标位置, "")``；不能加：``(None, None, 原因)``。
+    规则：
+    - 光标后面紧跟一个说话人标记 ``<n>`` / ``<ns>``（例 ``<2>``、``<12>``、``<1s>``）；中间只隔空格 / 换行也算。
+    - 不能在最开头（光标前面没有讲话）也不能在最末尾（这个标记后面没有讲话）。
+    - 这里已经有 ``<s>``（光标前紧挨着或光标后紧跟）就不再加。
+    加的是 ``<s>``；光标正好贴着 ``<n>`` 时加 ``<s> ``（留一个空格）。
+    """
+    text = str(text or "")
+    try:
+        pos = max(0, min(int(pos), len(text)))
+    except (TypeError, ValueError):
+        return None, None, "读不出光标位置。"
+    before, after = text[:pos], text[pos:]
+    lead = len(after) - len(after.lstrip())
+    if SEGMENT_MARK_RE.match(after, lead) or _SEGMENT_MARK_AT_END_RE.search(before):
+        return None, None, "这里已经有分节符 <s>，不用再加。"
+    mark = SPEAKER_TOKEN_RE.match(after, lead)
+    if not mark:
+        return None, None, ("分节符 <s> 只能加在某个说话人标记（例如 <1>、<2>、<1s>）的前面。\n"
+                            "请把光标放在那个 <n> 的前面再按 Ctrl+S。")
+    if not strip_speaker_marks(SEGMENT_MARK_RE.sub(" ", before)).strip():
+        return None, None, "最开头不能加分节符 <s>：前面还没有讲话。"
+    if not strip_speaker_marks(SEGMENT_MARK_RE.sub(" ", after[mark.end():])).strip():
+        return None, None, "最末尾不能加分节符 <s>：这个说话人标记后面没有讲话。"
+    piece = "<s>" if lead else "<s> "
+    return before + piece + after, pos + len(piece), ""
+
+
 def speaking_segment_count(text: str) -> int:
     return len(speaking_segment_turns(text))
 
@@ -198,57 +226,6 @@ def speaking_segment_count(text: str) -> int:
 def split_speaking_turns(text: str) -> list:
     """Compatibility helper: ``[(speaker, spoken_text), ...]`` with marks stripped."""
     return [(t.speaker, t.text) for t in parse_speaking_turns(text) if t.text]
-
-
-def classify_monologue_layout(turns) -> str:
-    """``none`` / ``all`` / ``prefix`` / ``suffix`` / ``invalid``."""
-    flags = [bool(getattr(t, "monologue", False)) for t in (turns or []) if str(getattr(t, "text", "") or "").strip()]
-    if not flags:
-        return "none"
-    if not any(flags):
-        return "none"
-    if all(flags):
-        return "all"
-    i = 0
-    while i < len(flags) and flags[i]:
-        i += 1
-    j = len(flags) - 1
-    while j >= 0 and flags[j]:
-        j -= 1
-    if i > 0 and not any(flags[i:]):
-        return "prefix"
-    if j < len(flags) - 1 and not any(flags[: j + 1]):
-        return "suffix"
-    return "invalid"
-
-
-def split_speaking_pair(speaking: str):
-    """If speaking should become two scenes, return (first, second, kind).
-
-    kind is ``prefix`` (monologue first) or ``suffix`` (monologue second).
-    Pure monologue, no monologue, or an unsplitable layout (interior,
-    both ends, blank side) returns None so the caller keeps the original
-    speaking string unchanged.
-    """
-    turns = parse_speaking_turns(speaking)
-    kind = classify_monologue_layout(turns)
-    if kind in ("none", "all", "invalid"):
-        return None
-    if kind == "prefix":
-        i = 0
-        while i < len(turns) and turns[i].monologue:
-            i += 1
-        mono, dialogue = turns[:i], turns[i:]
-        first, second = format_speaking_turns(mono), format_speaking_turns(dialogue)
-    else:
-        j = len(turns) - 1
-        while j >= 0 and turns[j].monologue:
-            j -= 1
-        dialogue, mono = turns[: j + 1], turns[j + 1 :]
-        first, second = format_speaking_turns(dialogue), format_speaking_turns(mono)
-    if not (first or "").strip() or not (second or "").strip():
-        return None
-    return first, second, kind
 
 
 def speaking_turns_nonempty(speaking: str) -> list:
@@ -311,14 +288,6 @@ def scenes_speaking_is_single_inner_monologue(scenes) -> bool:
     return found
 
 
-MONOLOGUE_SPLIT_KEY = "monologue_split"
-MONOLOGUE_SPLIT_DONE = "done"
-
-
-def scene_monologue_split_done(scene) -> bool:
-    return isinstance(scene, dict) and scene.get(MONOLOGUE_SPLIT_KEY) == MONOLOGUE_SPLIT_DONE
-
-
 COVER_STEP_KEY = "cover_step"
 
 
@@ -334,10 +303,6 @@ def scene_cover_step(scene) -> int | None:
     return step if step >= 1 else None
 
 
-def _norm_speaking(text: str) -> str:
-    return format_speaking_turns(parse_speaking_turns(text or ""))
-
-
 def authored_fields_match(left, right) -> bool:
     if not (isinstance(left, dict) and isinstance(right, dict)):
         return False
@@ -347,71 +312,26 @@ def authored_fields_match(left, right) -> bool:
     return True
 
 
-def look_like_split_pair(first, second) -> bool:
-    """True when two consecutive scenes unambiguously reconstruct one split."""
-    if not (scene_monologue_split_done(first) and scene_monologue_split_done(second)):
-        return False
-    combo = ((_norm_speaking(first.get("speaking")) + " " + _norm_speaking(second.get("speaking"))).strip())
-    pair = split_speaking_pair(combo)
-    if not pair:
-        pair = split_speaking_pair(((first.get("speaking") or "") + " " + (second.get("speaking") or "")).strip())
-    if not pair:
-        return False
-    left, right, _kind = pair
-    return _norm_speaking(first.get("speaking")) == _norm_speaking(left) and _norm_speaking(
-        second.get("speaking")
-    ) == _norm_speaking(right)
-
-
-def _cover_groups(scenes):
-    items = [s for s in (scenes or []) if isinstance(s, dict)]
-    groups = []
-    i = 0
-    while i < len(items):
-        nxt = items[i + 1] if i + 1 < len(items) else None
-        if nxt is not None and look_like_split_pair(items[i], nxt):
-            groups.append([items[i], nxt])
-            i += 2
-        else:
-            groups.append([items[i]])
-            i += 1
-    return groups
-
-
 def ensure_cover_steps(scenes) -> bool:
-    """Persist original cover-step numbers. Returns True if any scene changed.
+    """Persist original cover-step numbers (one per scene, in order). Returns True if any scene changed.
 
-    Safe recovery for older projects: consecutive ``monologue_split=done``
-    scenes whose speaking reconstructs a prefix/suffix pair share one step.
-    Already-stamped values are kept. Does not invent a mapping when a lone
-    marked scene cannot be paired.
+    Already-stamped values are kept; unstamped scenes get the next unused step.
     """
     if not isinstance(scenes, list):
         return False
-    groups = _cover_groups(scenes)
+    items = [s for s in scenes if isinstance(s, dict)]
+    used = {scene_cover_step(s) for s in items if scene_cover_step(s)}
     changed = False
     next_step = 1
-    used = [scene_cover_step(s) for g in groups for s in g]
-    stamped = [v for v in used if v]
-    if stamped and all(scene_cover_step(s) for g in groups for s in g):
-        return False
-    for group in groups:
-        existing = [scene_cover_step(s) for s in group]
-        have = [v for v in existing if v]
-        if have and len(set(have)) == 1:
-            step = have[0]
-        elif have:
-            # Conflicting stamps inside an unambiguous pair: do not invent.
+    for scene in items:
+        if scene_cover_step(scene):
             continue
-        else:
-            while next_step in have or next_step in [scene_cover_step(s) for g in groups for s in g if scene_cover_step(s)]:
-                next_step += 1
-            step = next_step
+        while next_step in used:
             next_step += 1
-        for scene in group:
-            if scene_cover_step(scene) != step:
-                scene[COVER_STEP_KEY] = step
-                changed = True
+        scene[COVER_STEP_KEY] = next_step
+        used.add(next_step)
+        next_step += 1
+        changed = True
     return changed
 
 
@@ -436,17 +356,15 @@ def should_share_cover_extract(primary, other) -> bool:
     step_a, step_b = scene_cover_step(primary), scene_cover_step(other)
     if not step_a or step_a != step_b:
         return False
-    if authored_fields_match(primary, other):
-        return True
-    return look_like_split_pair(primary, other) or look_like_split_pair(other, primary)
+    return authored_fields_match(primary, other)
 
 
 def iter_cover_extract_targets(scenes):
     """Yield ``(scene, step)`` once per original cover panel when siblings match.
 
-    Later halves that only differ in speaking (same cover step, same authored
-    caption/visual/actor or an unambiguous split pair) are skipped so batch
-    extract does not spend a second image request on the same panel.
+    Later scenes that only differ in speaking (same cover step and the same
+    authored caption/visual/actor, e.g. t370u video-segment clones) are skipped
+    so batch extract does not spend a second image request on the same panel.
     """
     ensure_cover_steps(scenes)
     emitted = []
@@ -461,134 +379,3 @@ def iter_cover_extract_targets(scenes):
             continue
         emitted.append((scene, step))
         yield scene, step
-
-
-def sync_cover_step_partners(scenes, scene) -> list:
-    """Copy settled authored stills/text to other scenes that share this cover step."""
-    if not isinstance(scenes, list) or not isinstance(scene, dict):
-        return []
-    from utility.scene_image_slots import clone_image_slots
-
-    updated = []
-    for other in scenes:
-        if not should_share_cover_extract(scene, other):
-            continue
-        for key in ("caption", "visual", "actor", "visual_before_remix", "actor_before_remix"):
-            if key in scene:
-                other[key] = scene[key]
-        try:
-            clone_image_slots(scene, other)
-        except Exception as exc:
-            print(f"⚠️ 同一步封面图没有同步到拆开的另一场：{exc}")
-            continue
-        updated.append(other)
-    return updated
-
-
-def index_after_monologue_insert(scenes, scene, current_index) -> int:
-    try:
-        current = int(current_index or 0)
-    except (TypeError, ValueError):
-        current = 0
-    try:
-        idx = next(i for i, item in enumerate(scenes or []) if item is scene)
-    except StopIteration:
-        return current
-    if current > idx:
-        return current + 1
-    return current
-
-
-def apply_monologue_split_after_image(scenes, scene, *, next_id=None):
-    """After image write (and remix, when that runs) settle: maybe insert a sibling.
-
-    ``scene`` stays the same object (batch jobs / callbacks keep their reference)
-    and becomes the first half. A new dict is inserted immediately after it.
-    Image slots on the sibling are independent file copies, including a new
-    file for frozen ``zero_image_last``. Clip video/audio and speaking_timing
-    are not copied onto the sibling (they belong to the unsplit speech).
-    Returns the sibling, or None if no split happened. Failure to copy images
-    leaves ``scenes`` and ``scene`` unchanged.
-    """
-    if not isinstance(scenes, list) or not isinstance(scene, dict):
-        return None
-    try:
-        idx = next(i for i, item in enumerate(scenes) if item is scene)
-    except StopIteration:
-        return None
-    if scene_monologue_split_done(scene):
-        return None
-    pair = split_speaking_pair(scene.get("speaking") or "")
-    if not pair:
-        return None
-    from utility.scene_image_slots import COVER_SEED_SLOTS, clone_image_slots
-
-    ensure_cover_steps(scenes)
-
-    if not any(
-        isinstance(scene.get(slot), str) and scene.get(slot) and os.path.isfile(scene[slot])
-        for slot in COVER_SEED_SLOTS
-    ):
-        return None
-    first_s, second_s, _kind = pair
-    sibling = copy.deepcopy(scene)
-    if next_id is None:
-        ids = [int(s.get("id") or 0) for s in scenes if isinstance(s, dict)]
-        base = max(ids) if ids else 0
-        next_id = (int(base) // 100 + 1) * 100
-        if next_id < 10000:
-            next_id = 10000
-    sibling["id"] = next_id
-    if scene_cover_step(scene):
-        sibling[COVER_STEP_KEY] = scene_cover_step(scene)
-    sibling["speaking"] = second_s
-    sibling.pop("speaking_timing", None)
-    sibling.pop("clip", None)
-    sibling.pop("clip_audio", None)
-    try:
-        clone_image_slots(scene, sibling)
-    except Exception as exc:
-        print(f"⚠️ 自言自语分场：没有独立拷贝场景图，保持一场：{exc}")
-        return None
-    # Drop unsplit speech A/V only after a valid split (clone succeeded).
-    # Halves must not inherit or later receive the full-speech clip/audio.
-    sibling[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
-    scene["speaking"] = first_s
-    scene.pop("speaking_timing", None)
-    scene.pop("clip", None)
-    scene.pop("clip_audio", None)
-    scene[MONOLOGUE_SPLIT_KEY] = MONOLOGUE_SPLIT_DONE
-    scenes.insert(idx + 1, sibling)
-    return sibling
-
-
-def expand_scenes_for_new_project(scenes):
-    """Speaking-only helper: deep-copy a list and split valid monologue scenes.
-
-    Not used at project creation (images must run once on the unsplit scene).
-    Kept for tests and any caller that only has scene dicts, no image files.
-    Invalid layouts are copied verbatim.
-    """
-    if not isinstance(scenes, list):
-        return scenes
-    planned = []
-    for item in scenes:
-        if not isinstance(item, dict):
-            planned.append(("keep", item, None))
-            continue
-        pair = split_speaking_pair(item.get("speaking") or "")
-        planned.append(("split" if pair else "keep", item, pair))
-    out = []
-    for action, item, pair in planned:
-        if action == "keep":
-            out.append(copy.deepcopy(item) if isinstance(item, dict) else item)
-            continue
-        first_s, second_s, _kind = pair
-        first = copy.deepcopy(item)
-        second = copy.deepcopy(item)
-        for sc, speaking in ((first, first_s), (second, second_s)):
-            sc["speaking"] = speaking
-            sc.pop("id", None)
-            sc.pop("speaking_timing", None)
-        out.extend([first, second])
-    return out

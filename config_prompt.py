@@ -1943,9 +1943,12 @@ def build_picture_flow_prompt(
     if task != "extract" and not style:
         raise ValueError("请先在项目里选定画面风格。")
     phrase = setting_place_phrase(region, era)
+    # t373u: 第一条规则 = 项目画风（人物提取也一样：肖像和原图同一个画风，三维卡通绝不变成真人照片）
+    style_lock = image_art_style_lock_rule(style, restyle=(task == "restyle"))
     if task == "extract":
         lines = [
-            "Make one clean upper-body portrait of each person already in the attached picture.",
+            "Make one clean upper-body portrait of each person already in the attached picture, "
+            "drawn in exactly the same art style as the picture.",
             "Extract every person. Do not add anyone. Do not drop anyone.",
             "Show each person from the waist up, turned to face the viewer.",
             "If two people are facing each other, both turn toward the camera.",
@@ -1954,7 +1957,7 @@ def build_picture_flow_prompt(
             "Hands are empty and still. Remove anything they were holding: cups, fans, books, tools, weapons, cloth, or any other object.",
             "Remove the action, the furniture, the scenery, the writing, and every other prop. Nothing remains except the person.",
             "Keep each person's identity, age, and the clothes they already wear.",
-            "Plain empty background. A clean picture of the face and the clothes.",
+            "Plain empty background in the same art style. A clean picture of the face and the clothes.",
         ]
         if phrase:
             lines.append(
@@ -2057,12 +2060,13 @@ def build_picture_flow_prompt(
         refs = picture_reference_images_note(actor_images, task=task, narrative=narrative, base_image=base_image)
         refs_part = f"Reference_images:\n{refs}\n\n" if refs else ""
         return (
+            f"{style_lock}\n\n"
             f"Picture_choices:\n{label}\n\n"
             f"Instruction_for_image:\n{body}\n\n"
             f"{refs_part}"
             f"Story_Scene_Content:\n{payload}"
         )
-    return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
+    return f"{style_lock}\n\nPicture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
 
 
 def output_aspect_line(video_size: str = "", width=None, height=None) -> str:
@@ -2205,7 +2209,8 @@ def _picture_edit_only_prompt(task: str, text: str, style: str, region: str, era
         )
     text_label = dict(PICTURE_FLOW_TEXT_CHOICES).get(text, text)
     label = f"仅修改现有图片 · {label_style} · {text_label}"
-    return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n" + "\n".join(lines)
+    lock = image_art_style_lock_rule(style, restyle=bool(task == "restyle" and style))  # t373u: 第一条
+    return f"{lock}\n\nPicture_choices:\n{label}\n\nInstruction_for_image:\n" + "\n".join(lines)
 
 
 def scene_speech_transform(actor_text: str) -> tuple[str, str] | None:
@@ -5222,6 +5227,82 @@ def video_art_style_lock_rule(style: str, pic: str = "the start picture") -> str
             f"（画风锁定：整段视频保持起始图原来的画风——{st}，不改画风。）")
 
 
+# ---------------------------------------------------------------------------
+# t373u: 所有图片处理（图片修改的每一种：仅修改 / 保持画风 / 转成项目风格 / 从封面提取 / 补全人物 / 人物提取 /
+# 提高分辨率，以及提取人物肖像）的第一条、最重要的规则 = 保持项目规定的画风。
+# 以前肖像提取的提示词一个字都没提画风（还写了 "real face"、"plain neutral background"），
+# Grok 就把三维卡通的人画成了真人照片。现在每个构造函数都把这一句放在最前面，送出前 style_lock_first 再挪到第一行。
+# ---------------------------------------------------------------------------
+IMAGE_STYLE_LOCK_PREFIX = "ART STYLE LOCK (rule 1, most important):"
+IMAGE_STYLE_NO_PHOTO = ("never photorealistic: not a photo, not a real-camera picture, not live-action, "
+                        "no real human skin")
+
+
+def image_art_style_lock_rule(style: str, pic: str = "the attached picture", *, restyle: bool = False,
+                              zh: bool = True) -> str:
+    """t373u: 图片处理第一条规则：项目画风（英文 + 中文）。非写实画风（三维卡通等）明确写「绝不变成照片 / 真人」。
+
+    ``restyle``：这次是「转成项目风格」（整张图改画成项目画风）；否则照原图的画法保持。
+    ``style`` 为空（项目还没选画风）：只锁原图的画风。``zh=False``：ComfyUI 短提示只写英文。"""
+    st = str(style or "").strip()
+    if not st:
+        en_rule = (f"{IMAGE_STYLE_LOCK_PREFIX} keep exactly the art style of {pic}: the same rendering, shading, "
+                   f"colours, textures and character design. If {pic} is a cartoon, 3D animation, painting or "
+                   "drawing, the output is too; it is never turned into a photo or a real person.")
+        zh_rule = "（画风锁定，第一条、最重要：保持原图的画风；卡通 / 三维动画 / 绘画就还是原来的画风，绝不变成照片或真人。）"
+        return en_rule + (" " + zh_rule if zh else "")
+    en, stylized = video_art_style_en(st)
+    short = en.split(" (")[0]
+    how = (f"redraw everything from {pic} in this style" if restyle else
+           f"match exactly how {pic} renders it: the same rendering, shading, colours, textures and character design")
+    if stylized:
+        en_rule = (f"{IMAGE_STYLE_LOCK_PREFIX} the project's visual style is {en}, the selected style {st}. "
+                   f"The whole output (every person, face, hair, clothing, object and background) is {short}; {how}. "
+                   f"It is {IMAGE_STYLE_NO_PHOTO}; real people and places are drawn in the same {short} style.")
+        zh_rule = (f"（画风锁定，第一条、最重要：项目规定的画风是「{st}」；整张图（人物、脸、头发、衣服、背景）"
+                   "都是这个画风，和原图的画法一样；绝不变成写实照片 / 真人。）")
+    elif is_realistic_style(st):
+        en_rule = (f"{IMAGE_STYLE_LOCK_PREFIX} the project's visual style is {st}: photorealistic. The whole output "
+                   f"stays photorealistic; {how}. Not illustration, not cartoon, not 3D animation, not painting.")
+        zh_rule = f"（画风锁定，第一条、最重要：项目规定的画风是「{st}」，保持写实，不变成插画 / 卡通 / 三维动画 / 绘画。）"
+    else:
+        en_rule = (f"{IMAGE_STYLE_LOCK_PREFIX} the project's visual style is {en}, the selected style {st}. "
+                   f"The whole output keeps this look; {how}; no restyling into another style.")
+        zh_rule = f"（画风锁定，第一条、最重要：项目规定的画风是「{st}」；整张图都保持这个画风，不改画风。）"
+    return en_rule + (" " + zh_rule if zh else "")
+
+
+def style_lock_first(prompt: str) -> str:
+    """t373u: 送出前把「ART STYLE LOCK」那一行挪到整段提示词的第一行（比例行 / FYI / 背景条件都在它后面）。幂等。"""
+    text = str(prompt or "")
+    lines = text.split("\n")
+    idx = next((i for i, ln in enumerate(lines) if ln.lstrip("*-• ").startswith(IMAGE_STYLE_LOCK_PREFIX)), -1)
+    if idx <= 0:
+        return text
+    lock = lines[idx].lstrip("*-• ")
+    rest = lines[:idx] + lines[idx + 1:]
+    if 0 < idx < len(rest) and not rest[idx - 1].strip() and not rest[idx].strip():
+        del rest[idx]  # 拿走后别留两行空行
+    return lock + "\n\n" + "\n".join(rest).strip("\n")
+
+
+COMFY_PHOTOREAL_NEGATIVE = ("photorealistic, photo, photograph, real person, live-action, realistic skin, "
+                            "real-camera look, different art style, restyled")
+
+
+def comfy_style_negative(style: str) -> str:
+    """t373u: MOSS / QN 反向提示里的画风词：非写实画风加写实 / 照片类词；写实加卡通 / 插画类词。"""
+    st = str(style or "").strip()
+    if not st:
+        return "different art style, restyled"
+    _en, stylized = video_art_style_en(st)
+    if stylized:
+        return COMFY_PHOTOREAL_NEGATIVE
+    if is_realistic_style(st):
+        return "cartoon, illustration, 3D render, anime, painting, different art style, restyled"
+    return "different art style, restyled"
+
+
 def _rule_span(text: str, prefix: str):
     """t369u: 以 prefix 开头的那条规则在 text 里的 (起, 止)：到同一行里的「）」为止；没有就到第一个句号。"""
     text = text or ""
@@ -6201,6 +6282,7 @@ def build_step_image_clipbody(
             lines.append("** Style: keep the input's art style.")
         else:
             lines.append(f"** Visual_Style: {vs}. Redraw panel {k} in this style, content unchanged.")
+        lines.insert(0, image_art_style_lock_rule(vs, "the input image", restyle=not (keep_style or not vs)))  # t373u
         return "\n".join(lines)
     lines = [
         f"Image edit: extract step {k} as its own picture.",
@@ -6226,6 +6308,7 @@ def build_step_image_clipbody(
     ) if x]
     if ctx:
         lines.append(f"** What step {k} shows (from the script): " + "; ".join(ctx))
+    lines.insert(0, image_art_style_lock_rule(vs, "the input image", restyle=not (keep_style or not vs)))  # t373u
     return "\n".join(lines)
 
 
@@ -8418,6 +8501,7 @@ def build_cast_fix_prompt(scene: dict, actor_rows: list, visual_style: str = "",
         parts.append(f"Art style: keep the style of Image 1 ({visual_style}).")
     if fyi:
         parts.insert(0, "IMPORTANT NOTE FROM THE USER: " + fyi)
+    parts.insert(0, image_art_style_lock_rule(visual_style, "Image 1"))  # t373u: 第一条 = 项目画风
     return "\n\n".join(parts)
 
 
@@ -8606,7 +8690,9 @@ def build_comfy_cover_step_prompt(
     text_pos, text_neg = _comfy_text_line(caption, "the panel")
     lines.append(text_pos)
     lines.append(_comfy_style_line(keep_style, visual_style))
-    return "\n".join(lines), _comfy_negative(COMFY_COVER_STEP_NEGATIVE, text_neg)
+    vs = (visual_style or "").strip()
+    lines.insert(0, image_art_style_lock_rule(vs, img1, restyle=not (keep_style or not vs), zh=False))  # t373u
+    return "\n".join(lines), _comfy_negative(COMFY_COVER_STEP_NEGATIVE, text_neg, comfy_style_negative(vs))
 
 
 def comfy_cast_rows(actor_rows: list, backend: str) -> tuple:
@@ -8673,7 +8759,8 @@ def build_comfy_cast_fix_prompt(scene: dict, actor_rows: list, *, backend: str =
     else:
         lines.append(_comfy_text_line(text)[0])
         neg = _comfy_negative(COMFY_CAST_FIX_NEGATIVE, _comfy_text_line(text)[1] or COMFY_BUBBLE_NEGATIVE)
-    return "\n".join(lines), neg
+    lines.insert(0, image_art_style_lock_rule(visual_style, img1, zh=False))  # t373u: 第一条 = 项目画风
+    return "\n".join(lines), _comfy_negative(neg, comfy_style_negative(visual_style))
 
 
 def build_comfy_picture_edit_prompt(
@@ -8699,19 +8786,21 @@ def build_comfy_picture_edit_prompt(
     """
     img1 = comfy_image_ref(backend, 1)
     sc = scene if isinstance(scene, dict) else {}
+    style = (visual_style or "").strip()
     if task == "extract":
         lines = [
-            f"Make one clean waist-up portrait of every person in {img1}, standing side by side and facing the viewer.",
+            f"Make one clean waist-up portrait of every person in {img1}, standing side by side and facing the viewer, "
+            f"drawn in exactly the same art style as {img1}.",
             "Keep each person's face, age, hair and clothing. Hands empty and relaxed.",
-            "Plain light grey background, nothing else.",
+            "Plain simple light background in the same art style, nothing else.",
         ]
         phrase = setting_place_phrase(region, era)
         if phrase:
             lines.append(f"Clothing and faces belong to {phrase}.")
         if (fyi or "").strip():
             lines.insert(0, fyi.strip())
-        return "\n".join(lines), COMFY_PEOPLE_EXTRACT_NEGATIVE
-    style = (visual_style or "").strip()
+        lines.insert(0, image_art_style_lock_rule(style, img1, zh=False))  # t373u: 第一条 = 项目画风
+        return "\n".join(lines), _comfy_negative(COMFY_PEOPLE_EXTRACT_NEGATIVE, comfy_style_negative(style))
     restyle = task == "restyle" and bool(style)
     story = bool(use_visual or use_speaking or use_actor)
     lines = []
@@ -8750,8 +8839,9 @@ def build_comfy_picture_edit_prompt(
         lines.append("Keep the picture's own art style exactly.")
     text_pos, text_neg = _comfy_text_line(text) if text != "keep" else (f"Keep any words already drawn in {img1}.", "")
     lines.append(text_pos)
+    lines.insert(0, image_art_style_lock_rule(style, img1, restyle=restyle, zh=False))  # t373u: 第一条 = 项目画风
     # 保留文字：反向里不放 caption / 字幕（图里本来就有的字会跟着被去掉）
-    return "\n".join(lines), _comfy_negative(COMFY_EDIT_NEGATIVE, text_neg)
+    return "\n".join(lines), _comfy_negative(COMFY_EDIT_NEGATIVE, text_neg, comfy_style_negative(style))
 
 
 # ---------------------------------------------------------------------------
@@ -8782,11 +8872,13 @@ def upscale_ratio_words(width, height) -> str:
     return f"{a}:{b} {orient}"
 
 
-def build_upscale_prompt(size) -> str:
-    """Grok / Gemini · 提高分辨率。size = (宽, 高) 目标尺寸（和原图同比例）。"""
+def build_upscale_prompt(size, style: str = "") -> str:
+    """Grok / Gemini · 提高分辨率。size = (宽, 高) 目标尺寸（和原图同比例）。
+    t373u: ``style`` = 项目画风，写在第一条（ART STYLE LOCK）。"""
     w, h = (int(v) for v in size)
     ratio = upscale_ratio_words(w, h)
     return "\n".join([
+        image_art_style_lock_rule(style, "the attached image"),
         f"TASK: UPSCALE ONLY. Re-render the attached image at a higher resolution. Output size: exactly {w}x{h} pixels "
         f"({ratio}, the same aspect ratio as the input image).",
         "Keep the original style: the same art style, rendering, texture and color palette. The style must not change.",
@@ -8816,7 +8908,9 @@ def build_comfy_upscale_prompt(size, *, backend: str = "moss", fyi: str = "", st
     非写实画风（三维动画等）再加「绝不变成写实」，反向提示也加写实类词。不给时和原来一字不差。"""
     w, h = (int(v) for v in size)
     img1 = comfy_image_ref(backend, 1)
-    lines = [fyi.strip()] if (fyi or "").strip() else []
+    lines = [image_art_style_lock_rule(style, img1, zh=False)]  # t373u: 第一条 = 项目画风
+    if (fyi or "").strip():
+        lines.append(fyi.strip())
     style_line = "Keep the original art style."
     negative = COMFY_UPSCALE_NEGATIVE
     st = str(style or "").strip()
@@ -8838,4 +8932,4 @@ def build_comfy_upscale_prompt(size, *, backend: str = "moss", fyi: str = "", st
         style_line,
         "Only add sharpness and fine detail: crisp edges and clean textures in hair, fabric and surfaces.",
     ]
-    return "\n".join(lines), negative
+    return "\n".join(lines), _comfy_negative(negative, comfy_style_negative(st))

@@ -318,7 +318,7 @@ class ActorPortraitReviewTest(unittest.TestCase):
     def test_prompt_and_no_strata_anywhere(self):
         prompt = build_portrait_extract_prompt(self.woman)
         for bit in ("Gender: woman", "Age: mature", "Nationality/ethnicity: chinese", "林氏", "青衫，低头，发髻",
-                    "clearly present", "Do not invent", "neutral background"):
+                    "clearly present", "Do not invent", "simple background in the same art style"):
             self.assertIn(bit, prompt)
         mod = Path(ROOT, "utility/actor_portrait_extract.py").read_text(encoding="utf-8")
         for gone in ("verify_portrait_with_strata", "VERIFY_SYSTEM", "MIN_VERIFY_CONFIDENCE", "parse_verify_json",

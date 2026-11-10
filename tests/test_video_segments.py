@@ -261,10 +261,13 @@ class LastFrameUpscaleTest(unittest.TestCase):
         self.assertIn("3D animation", pos)
         self.assertIn("never turns photorealistic", pos)
         self.assertIn("photorealistic", neg)
-        self.assertTrue(neg.startswith(base_neg))
+        self.assertNotIn("photorealistic", base_neg)
+        self.assertTrue(neg.startswith(cp.COMFY_UPSCALE_NEGATIVE))
         rpos, rneg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss", style="写实 (Realistic)")
         self.assertNotIn("never turns photorealistic", rpos)
-        self.assertEqual(rneg, base_neg)
+        self.assertNotIn("photorealistic", rneg)  # t373u: realistic style bans cartoon looks instead
+        self.assertIn("cartoon", rneg)
+        self.assertTrue(pos.startswith(cp.IMAGE_STYLE_LOCK_PREFIX))  # t373u: style lock is the first line
 
 
 class WiringTest(unittest.TestCase):
@@ -272,13 +275,16 @@ class WiringTest(unittest.TestCase):
         with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
             return f.read()
 
-    def test_creation_split_disabled_by_default(self):
-        # other test modules swap a stub ``config`` into sys.modules, so read the source
-        cfg = self._src("config.py")
-        self.assertIn('SPLIT_S_SCENES_AT_CREATION = _env("SPLIT_S_SCENES_AT_CREATION", "0")', cfg)
-        helper = self._src("gui/workflow/wf_images.py").split("def _finish_monologue_split_after_image", 1)[1]
-        helper = helper.split("\n    def ", 1)[0]
-        self.assertIn('if getattr(_cfg_split, "SPLIT_S_SCENES_AT_CREATION", False):', helper)
+    def test_old_split_after_image_is_gone(self):
+        # t373u: the old <Ns> split-after-image path and its switch are removed completely (no back-compat)
+        for rel in ("config.py", "gui/workflow/wf_images.py", "gui/workflow/wf_prompt_flows.py",
+                    "utility/speaking_marks.py", "utility/video_segments.py", "project_manager.py"):
+            src = self._src(rel)
+            for gone in ("SPLIT_S_SCENES_AT_CREATION", "_finish_monologue_split_after_image",
+                         "apply_monologue_split_after_image", "defer_monologue_split", "MONOLOGUE_SPLIT_KEY",
+                         "scene_monologue_split_done", "split_speaking_pair", "expand_scenes_for_new_project",
+                         "index_after_monologue_insert", "sync_cover_step_partners"):
+                self.assertNotIn(gone, src, f"{gone} still in {rel}")
 
     def test_dialog_and_flow_hooks(self):
         dlg = self._src("gui/video_prompt_dialog.py")

@@ -7,7 +7,6 @@ import threading
 import project_manager
 from utility.file_util import get_file_path, show_auto_close_popup
 from utility.voicebox_speech_service import split_speaking_turns
-import copy
 from gui.choice_dialog import askchoice
 
 
@@ -669,25 +668,25 @@ class SpeakingMixin:
             return False
         return bool(st & 0x20000) or bool(st & 0x0008)
 
-    def _on_speaking_ctrl_s_split_clone(self, event=None):
-        """Ctrl+S：以光标为界拆分讲话；当前镜保留光标前，下一镜为深拷贝场景，讲话为光标后。"""
+    def _on_speaking_ctrl_s_insert_segment_mark(self, event=None):
+        """t373u: Ctrl+S：在光标处加手工分节符 <s>（不再把这一场拆成两场；生场视频时按 <s> 一节一节生成）。
+
+        光标必须在某个说话人标记 <n> / <ns> 前面（中间只隔空格 / 换行也行），不能在最开头 / 最末尾，
+        这里已经有 <s> 也不再加；不对就弹窗提醒，什么都不加。加好后照常写回这一场并保存。"""
         if not self._speaking_shortcuts_guard():
             return "break"
-        self.update_current_scene()
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not scene:
-            return "break"
+        from utility.speaking_marks import segment_mark_insert
+
         ins = self.scene_speaking.index("insert")
-        before = self.scene_speaking.get("1.0", ins)
-        after = self.scene_speaking.get(ins, "end-1c")
-        dup = copy.deepcopy(scene)
-        dup["id"] = self.workflow.max_id(dup) + 1
-        scene["speaking"] = before
-        dup["speaking"] = after
-        self.workflow.scenes.insert(self.current_scene_index + 1, dup)
-        self.workflow.touch_episode_media(self.workflow.scene_group(dup))
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
+        text = self.scene_speaking.get("1.0", "end-1c")
+        pos = len(self.scene_speaking.get("1.0", ins))
+        new_text, new_pos, why = segment_mark_insert(text, pos)
+        if new_text is None:
+            messagebox.showwarning("加分节符 <s>", why, parent=self.root)
+            return "break"
+        self.scene_speaking.insert(ins, new_text[pos:new_pos])  # 插在光标处，光标停在 <s> 后面
+        self._cancel_scene_debounce_timer()
+        self.update_current_scene()  # 正常的写回场景 + 保存 JSON
         return "break"
 
     def _on_speaking_ctrl_right_move_tail_to_next(self, event=None):

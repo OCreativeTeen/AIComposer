@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tests.test_comfy_edit_prompts import GROK_GEMINI_DIGEST, cp, grok_gemini_cases, sdp  # noqa: E402
+from tests.test_comfy_edit_prompts import GROK_GEMINI_DIGEST, _body, cp, grok_gemini_cases, sdp  # noqa: E402
 from utility.image_upscale import (  # noqa: E402
     comfy_upscale_canvas,
     fit_to_size,
@@ -136,7 +136,7 @@ class UpscalePromptTest(unittest.TestCase):
 
     def test_comfy_prompt_and_negative(self):
         pos, neg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss")
-        self.assertTrue(pos.startswith("Upscale image 1 to a sharp, high-resolution 1920x1080"))
+        self.assertTrue(_body(pos).startswith("Upscale image 1 to a sharp, high-resolution 1920x1080"))
         self.assertIn("Keep the original art style.", pos)
         self.assertNotIn("16:9", pos)
         self.assertNotIn("OUTPUT FORMAT", pos)
@@ -147,7 +147,7 @@ class UpscalePromptTest(unittest.TestCase):
                      "text changes", "blurry", "noise", "sharpening halos", "artifacts"):
             self.assertIn(must, neg, must)
         fpos, _ = cp.build_comfy_upscale_prompt((1920, 1080), backend="qn", fyi="  让脸更清楚  ")
-        self.assertTrue(fpos.startswith("让脸更清楚\nUpscale Picture 1"))
+        self.assertTrue(_body(fpos).startswith("让脸更清楚\nUpscale Picture 1"))
 
     def test_existing_grok_gemini_prompts_unchanged(self):
         # digest taken at import (other test modules later swap in a project_manager stub)
@@ -190,8 +190,9 @@ class DialogWiringTest(unittest.TestCase):
 
     def test_upscale_branch_uses_both_prompt_sets_and_batch(self):
         body = self.src.split("def _go_upscale", 1)[1].split("\n    def ", 1)[0]
-        self.assertIn("config_prompt.build_upscale_prompt(target)", body)
+        self.assertIn("config_prompt.build_upscale_prompt(target, style_up)", body)  # t373u: 项目画风
         self.assertIn("config_prompt.build_comfy_upscale_prompt(target, backend=comfy", body)
+        self.assertIn("style=style_up", body)
         self.assertIn("comfy_upscale_canvas(target)", body)
         self.assertIn('"upscale_size": target', body)
         self.assertIn("run_batch(jobs, backend, skipped, account)", body)

@@ -163,13 +163,12 @@ class VideoSpeakerSemanticsTest(unittest.TestCase):
         self.assertNotIn("only that person's mouth moves", h3)
 
     def test_legacy_chinese_parenthetical_is_not_selftalk(self):
-        from utility.speaking_marks import speaking_is_single_inner_monologue, speaking_has_monologue, split_speaking_pair
+        from utility.speaking_marks import speaking_is_single_inner_monologue, speaking_has_monologue
         from config_prompt import SINGLE_INNER_MONOLOGUE_RULE
 
         speaking = "<2>（自言自语）我怎么又这样。"
         self.assertFalse(speaking_is_single_inner_monologue(speaking))
         self.assertFalse(speaking_has_monologue(speaking))
-        self.assertIsNone(split_speaking_pair(speaking))
         raw = self._flow(speaking)
         h3 = self._h3(speaking)
         self.assertNotIn(SINGLE_INNER_MONOLOGUE_RULE, raw)
