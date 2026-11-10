@@ -3235,6 +3235,7 @@ def build_video_fyi_only_prompt(
         "Only what the main action asks for moves or changes.",
         "Do not add people. Do not remove anyone unless the main action says so.",
     ]
+    lines.append(video_one_shot_rule("picture 1"))  # t382u
     if evolve == "keep":
         lines.append(f"Keep the visual style of picture 1 for the whole clip. Do not restyle it toward {style}.")
         lines.append(video_art_style_lock_rule(style, pic="picture 1"))  # t369u
@@ -4479,6 +4480,7 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
     lines = [(f"A realistic cinematic film shot" if _real else f"A {video_art_style_en(st)[0]} shot")
              + (f", set in {place}" if place else "") + "."]
     lines.append(video_art_style_lock_rule(st, pic="the first frame"))
+    lines.append(video_one_shot_rule("the first frame"))  # t382u
     lines.append("The video starts from the first frame and ends on the last frame." if two_frames else
                  "The video continues directly from the first frame: same place, same camera angle, same people.")
     visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip()
@@ -5226,6 +5228,59 @@ def video_art_style_lock_rule(style: str, pic: str = "the start picture") -> str
             f"the same rendering, colours and lighting style as the first frame, with no restyling. "
             f"（画风锁定：整段视频保持起始图原来的画风——{st}，不改画风。）")
 
+# t382u: 说话人切换时视频不能跳到说话人的肖像 / 单人镜头。整段一直在基础画面（起始图）里：
+# 说话的人在原位置 lip sync，不说话的人闭嘴（可以做小动作），只有缓慢的局部变化。Grok / Gemini / MiniMax 都写；
+# Strata 精简后原样补回（restore_video_locked_rules），多写了切镜头的词就不通过（added_cut_words）。
+VIDEO_ONE_SHOT_PREFIX = "One base shot:"
+
+
+def video_one_shot_rule(pic: str = "the start picture") -> str:
+    return (f"{VIDEO_ONE_SHOT_PREFIX} the whole video stays inside the base scene of {pic} from the first frame to the "
+            f"last, with the same place, background, composition and framing; it never cuts, never switches shots or "
+            f"scenes, and never cuts to a portrait, a close-up or a single-person shot of whoever is speaking. Each "
+            f"person speaks right where they are in {pic}: the speaker's lips move in sync with their line, and "
+            f"everyone who is not speaking keeps the mouth closed and may only make small natural movements (a nod, "
+            f"a glance, a gesture). When two or more people talk, they talk with each other inside this same frame. "
+            f"Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene; any "
+            f"camera move is one slow, gentle move within this same shot. （基础画面：整段一直在原来的基础画面里，"
+            f"绝不切镜头、绝不切到任何人的肖像或单人特写；谁说话谁在画面里原位置对口型，不说话的人闭嘴，可以做小动作；"
+            f"只有缓慢的局部变化，不换整个场景。）")
+
+
+_CUT_WORDS = ("cut to", "cuts to", "cutting to", "cutaway", "cut away", "jump cut", "hard cut", "[shot 2]",
+              "shot 2", "next shot", "new shot", "switches to", "switch to", "scene change", "change of scene",
+              "close-up of", "closeup of", "portrait shot", "single shot of", "solo shot", "reverse shot",
+              "shot-reverse-shot", "切到", "切换到", "切镜", "特写镜头", "肖像镜头")
+
+
+def added_cut_words(original: str, polished: str) -> str:
+    """t382u: 原文有「One base shot:」时，Strata 多写了切镜头 / 切到肖像类的词就返回那个词（不通过）。"""
+    if VIDEO_ONE_SHOT_PREFIX not in (original or ""):
+        return ""
+
+    def _body(s: str) -> str:
+        s = s or ""
+        for prefix in (VIDEO_ONE_SHOT_PREFIX,):
+            sp = _rule_span(s, prefix)
+            while sp:
+                s = s[:sp[0]] + " " + s[sp[1]:]
+                sp = _rule_span(s, prefix)
+        for rule in _PORTRAIT_RULES:
+            s = s.replace(rule, " ")
+        return s.lower()
+
+    lo, lp = _body(original), _body(polished)
+    for w in _CUT_WORDS:
+        if lp.count(w) > lo.count(w):
+            return w
+    return ""
+
+
+def restore_one_shot_rule(original: str, polished: str) -> str:
+    """t382u: 「One base shot:」那句 Strata 改了 / 丢了就换回原句，恰好一次。"""
+    return _restore_rule(original, polished, VIDEO_ONE_SHOT_PREFIX)
+
+
 
 # ---------------------------------------------------------------------------
 # t373u: 所有图片处理（图片修改的每一种：仅修改 / 保持画风 / 转成项目风格 / 从封面提取 / 补全人物 / 人物提取 /
@@ -5313,7 +5368,7 @@ def _rule_span(text: str, prefix: str):
         return None
     line_end = text.find("\n", i)
     line_end = len(text) if line_end < 0 else line_end
-    for other in (VIDEO_IMAGE_KEYWORDS_PREFIX, ART_STYLE_LOCK_PREFIX):  # 不跨到下一条锁定句
+    for other in (VIDEO_IMAGE_KEYWORDS_PREFIX, ART_STYLE_LOCK_PREFIX, VIDEO_ONE_SHOT_PREFIX):  # 不跨到下一条锁定句
         o = text.find(other, i + len(prefix), line_end)
         if o >= 0:
             line_end = o
@@ -5365,6 +5420,7 @@ def restore_art_style_rule(original: str, polished: str) -> str:
 def restore_video_locked_rules(original: str, polished: str) -> str:
     """t369u: 发送前最后核对：关键字句 + 画风锁定句都在（原文有才补）。"""
     out = restore_image_keywords_rule(original, polished)
+    out = restore_one_shot_rule(original, out)  # t382u: 基础画面、不切镜头
     return restore_art_style_rule(original, out)
 
 
@@ -5584,6 +5640,7 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     place = era_s if (reg_s and reg_s in era_s) else ", ".join(x for x in (era_s, reg_s) if x)
     shot = [f"[Shot 1] {_h3_style(style)}" + (f", set in {place}" if place else "") + "."]
     shot.append(video_art_style_lock_rule(style, pic="<Picture 1>"))  # t369u: 画风锁定
+    shot.append(video_one_shot_rule("<Picture 1>"))  # t382u: 基础画面里对话，不切到肖像
     try:
         from utility import story_stage as _ss
 
@@ -5930,6 +5987,7 @@ def build_video_flow_prompt(
     instruction = [_video_style_line(frames, evolve, style)]
     if evolve == "keep":  # t369u: 画风锁定（演进到目标风格时不锁）
         instruction.append(video_art_style_lock_rule(style, pic="picture 1"))
+    instruction.append(video_one_shot_rule("picture 1"))  # t382u: 基础画面里对话，不切到肖像
     if use_visual:
         instruction.append(
             "``visual`` describes the place, the action, and the angle; act it out inside picture 1. "

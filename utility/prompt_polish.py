@@ -15,6 +15,7 @@ Keep ALL hard facts:
 - Exact speech (t336u): if the prompt has the sentence starting "Exact speech:", copy it verbatim, once, in the same place (right before the first dialogue line, or inside the spoken transcript). The speaking text itself is never changed: do not repeat, split, merge, reword, translate, shorten or extend any spoken line, add no words to it, and never write a spoken line a second time anywhere else in the prompt.
 - Portraits (t340u): if the prompt has the paragraph starting "Single scene shot:", copy it verbatim, once, where it is. The video is one continuous shot of picture 1 (the scene); never write that it cuts, switches or transitions to a portrait or shows a portrait as a shot. Any portrait picture (<Picture 2>, <Picture 3> ... or reference image 2, 3 ...) only identifies a person in picture 1; keep those mentions as identity references.
 - Image keywords (t321u/t369u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. It means: lettering already drawn in the start picture (a keyword set into the background) is kept and never erased, and may gently come alive; NO new text is ever added. Never take words from the visual description, the speaking lines or the scene title and put them on screen, and never write any new word, keyword or sign text into the prompt.
+- One base shot (t382u): if the prompt has the sentence starting "One base shot:", copy it verbatim, once. The whole video stays in the base scene of picture 1 with the same composition: never write a cut, a shot change, a scene change, or a cut / switch to a portrait, a close-up or a single-person shot of whoever speaks. Each speaker talks where they are in the base scene (lips in sync for spoken lines), the others keep their mouths closed and may make small movements, and any change is slow and local.
 - Art style (t369u): if the prompt has the sentence starting "Art style lock:", copy it verbatim, once. The video keeps the start picture's own art style exactly as named there (for example 3D animation / Pixar-style 3D cartoon). Keep that style name wherever the style is mentioned; never rewrite the style as live-action, photorealistic, realistic, real footage, real camera or a film shot.
 - The OUTPUT FORMAT line(s) at the very top (right after the NO SUBTITLES line if present), copied verbatim.
 - Every dialogue line verbatim (same words and punctuation, same order), each with its speaker's name and that speaker's voice (gender, age, voice name).
@@ -38,6 +39,7 @@ FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:",
 Exact speech (t336u): if the prompt has the sentence starting "Exact speech:", copy it verbatim, once, in the same place (right before the first dialogue line, or inside the spoken transcript). The speaking text itself is never changed: do not repeat, split, merge, reword, translate, shorten or extend any spoken line, add no words to it, and never write a spoken line a second time anywhere else in the prompt.
 Portraits (t340u): if the prompt has the paragraph starting "Single scene shot:", copy it verbatim, once, where it is. The video is one continuous shot of picture 1 (the scene); never write that it cuts, switches or transitions to a portrait or shows a portrait as a shot. Any portrait picture (<Picture 2>, <Picture 3> ... or reference image 2, 3 ...) only identifies a person in picture 1; keep those mentions as identity references.
 Image keywords (t321u/t369u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. It means: lettering already drawn in the start picture (a keyword set into the background) is kept and never erased, and may gently come alive; NO new text is ever added. Never take words from the visual description, the speaking lines or the scene title and put them on screen, and never write any new word, keyword or sign text into the prompt.
+One base shot (t382u): if the prompt has the sentence starting "One base shot:", copy it verbatim, once. The whole video stays in the base scene of picture 1 with the same composition: never write a cut, a shot change, a scene change, or a cut / switch to a portrait, a close-up or a single-person shot of whoever speaks. Each speaker talks where they are in the base scene (lips in sync for spoken lines), the others keep their mouths closed and may make small movements, and any change is slow and local.
 Art style (t369u): if the prompt has the sentence starting "Art style lock:", copy it verbatim, once, right after the [Shot 1] style sentence. The video keeps <Picture 1>'s own art style exactly as named there (for example 3D animation / Pixar-style 3D cartoon). Keep the style name in the [Shot 1] opening; never rewrite the style as live-action, photorealistic, realistic, real footage, real camera or a film shot.
 1. The first line (the NO SUBTITLES line, or the H3 mode line when there is none) copied verbatim, then one blank line; when the NO SUBTITLES line is first, the H3 mode line follows it unchanged.
 2. Then exactly these three fields, each starting on its own line, in this order:
@@ -255,6 +257,13 @@ def validate(original: str, polished: str, backend: str) -> str:
             return f"Strata 把画风改成写实（{real}）"
         if ART_STYLE_LOCK_PREFIX in original and ART_STYLE_LOCK_PREFIX not in polished:
             return "画风锁定那句没保留"
+        from config_prompt import VIDEO_ONE_SHOT_PREFIX, added_cut_words  # t382u
+
+        cut = added_cut_words(original, polished)
+        if cut:
+            return f"Strata 加了切镜头 / 切到肖像的说法（{cut}）"
+        if VIDEO_ONE_SHOT_PREFIX in original and VIDEO_ONE_SHOT_PREFIX not in polished:
+            return "基础画面（不切镜头）那句没保留"
     except ImportError:
         pass
     for line in _dialogue_lines(original, h3):
