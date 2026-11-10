@@ -1084,10 +1084,8 @@ def open_video_prompt_dialog(
     go = big_submit_button(dlg, actions, on_submit, text="提交")
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
 
-    EPISODE_MAX_SCENES = 6
-
     def on_episode_submit() -> None:
-        """t172u: 全集提交：用现在的选项，从当前场到本集结束一场一场生成视频（一场做完再提交下一场，最多 6 场）。"""
+        """t172u: 全集提交：用现在的选项，从当前场到本集结束一场一场生成视频（一场做完再提交下一场；t361u 起不限场数）。"""
         import os
 
         from gui.picture_prompt_dialog import ask_llm_and_account
@@ -1101,15 +1099,7 @@ def open_video_prompt_dialog(
         if not todo:
             messagebox.showwarning("全集提交", "本集没有可处理的场景。", parent=dlg)
             return
-        n = len(todo)
-        if n > EPISODE_MAX_SCENES:
-            messagebox.showwarning(
-                "全集提交",
-                f"从当前第 {k_no} 场到本集结束共 {n} 场，超过 {EPISODE_MAX_SCENES} 场。\n"
-                f"请先把这一集分割（每集不超过 {EPISODE_MAX_SCENES} 场），再全集提交。",
-                parent=dlg,
-            )
-            return
+        n = len(todo)  # t361u: 不限场数，本集有多少场就生成多少场
         backend = backend_var.get()
         account = ""
         _dual = backend == _cfg_prefs.MINIMAX_DUAL_KEY and callable(episode.get("generate"))
