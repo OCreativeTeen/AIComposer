@@ -1160,9 +1160,13 @@ class ImagesMixin:
                     next_id = 10000
             except Exception:
                 next_id = None
-            sibling = apply_monologue_split_after_image(
-                getattr(self.workflow, "scenes", None), scene, next_id=next_id
-            )
+            import config as _cfg_split
+
+            # t370u: 默认不再按 <Ns> 拆场（生场视频时动态分节）；SPLIT_S_SCENES_AT_CREATION=1 恢复旧做法
+            if getattr(_cfg_split, "SPLIT_S_SCENES_AT_CREATION", False):
+                sibling = apply_monologue_split_after_image(
+                    getattr(self.workflow, "scenes", None), scene, next_id=next_id
+                )
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ 自言自语分场未执行: {exc}")
             sibling = None
@@ -1232,10 +1236,12 @@ class ImagesMixin:
                     except OSError:
                         pass
 
-    def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False, defer_monologue_split: bool = False) -> None:
+    def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False, defer_monologue_split: bool = False,
+                                            exact_size=None) -> None:
         """图片修改返回了一张图：独立写成这一场的 clip_image、clip_image_last 和 zero_image。
 
-        冻结的 zero_image_last（封面原图）不动。是当前场景时刷新预览。"""
+        冻结的 zero_image_last（封面原图）不动。是当前场景时刷新预览。
+        t366u: ``exact_size=(w, h)``（提高分辨率）按这个尺寸写，不再缩 / 裁到项目尺寸（保持原图比例）。"""
         import tempfile
 
         if pil_img is None or not hasattr(pil_img, "save"):
@@ -1252,7 +1258,10 @@ class ImagesMixin:
         os.close(fd)
         try:
             pil_img.save(tmp_path)
-            file_path = self.workflow.ffmpeg_processor.resize_image_smart(tmp_path)
+            if exact_size:
+                file_path = self.workflow.ffmpeg_processor.resize_image_smart(tmp_path, int(exact_size[0]), int(exact_size[1]))
+            else:
+                file_path = self.workflow.ffmpeg_processor.resize_image_smart(tmp_path)
         except Exception as exc:
             if scene is not current:
                 raise

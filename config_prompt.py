@@ -3232,6 +3232,7 @@ def build_video_fyi_only_prompt(
     ]
     if evolve == "keep":
         lines.append(f"Keep the visual style of picture 1 for the whole clip. Do not restyle it toward {style}.")
+        lines.append(video_art_style_lock_rule(style, pic="picture 1"))  # t369u
     else:
         how = {
             "to_style": "a slow continuous change",
@@ -4324,7 +4325,8 @@ def _video_camera_short(camera: str) -> str:
 
 
 # t159u: 视频（Grok / Gemini / MiniMax 共用）的两条硬规则，放在提示词最前面（不只在 FYI 里）。
-VIDEO_NO_CAPTION_RULE = "Clean film image: only the scene fills the frame."  # t321u: 禁字幕只在第一行说一次
+# t369u: 「film image」会把三维动画 / 卡通拉向真人实拍，改成中性的 picture
+VIDEO_NO_CAPTION_RULE = "Clean picture: only the scene fills the frame."  # t321u: 禁字幕只在第一行说一次
 VIDEO_CONTINUITY_MARK = "CONTINUITY (real time)"
 VIDEO_CONTINUITY_RULE = (
     "This is one continuous real-time moment of a few seconds: the room, the view outside, the light and "
@@ -4466,9 +4468,12 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
     except Exception:  # noqa: BLE001
         lang = ""
     st = str(style or "").strip()
-    st_en = "realistic" if ("写实" in st or "realistic" in st.lower() or not st) else st
+    _real = "写实" in st or "realistic" in st.lower() or not st
     place = " ".join(x for x in (era or "", region or "") if x).strip()
-    lines = [f"A {st_en} cinematic film shot" + (f", set in {place}" if place else "") + "."]
+    # t369u: 非写实画风不写 cinematic film（会把三维动画拉成真人实拍）
+    lines = [(f"A realistic cinematic film shot" if _real else f"A {video_art_style_en(st)[0]} shot")
+             + (f", set in {place}" if place else "") + "."]
+    lines.append(video_art_style_lock_rule(st, pic="the first frame"))
     lines.append("The video starts from the first frame and ends on the last frame." if two_frames else
                  "The video continues directly from the first frame: same place, same camera angle, same people.")
     visual = " ".join(str(s.get("visual") or "").strip() for s in scs).strip()
@@ -4550,7 +4555,7 @@ def build_minimax_video_prompt(scenes, *, style: str = "", language: str = "", r
         lines.append("The room, the view outside and everyone's clothes stay the same from the first frame to the last.")
     elif not lighting_change_requested(visual):
         lines.append(minimax_lighting_phrase(visual, start_image))
-    lines.append("Clean film image: only the scene itself fills the frame.")
+    lines.append("Clean picture: only the scene itself fills the frame.")  # t369u
     lines.append("Sound: the voices and the natural sound of the place, no music.")
     extra = []
     for ln in str(fyi or "").splitlines():  # FYI 里讲字幕 / 文字的句子不带（负面词会反过来引导）
@@ -4609,10 +4614,11 @@ _H3_CAMERA = {
 
 
 def _h3_style(style: str) -> str:
+    """t369u: 非写实画风先写英文画风名（3D animation …），不再以 Cinematic 开头（MiniMax 会拍成真人实拍）。"""
     st = str(style or "").strip()
     if not st or "写实" in st or "寫實" in st or "realistic" in st.lower():
         return "Live-action, cinematic, realistic"
-    return f"Cinematic, in the style of {st}"
+    return f"{video_art_style_en(st)[0]}, in the style of {st}"
 
 
 def _h3_speaker_phrase(row: dict) -> str:
@@ -5158,12 +5164,150 @@ VIDEO_NO_SUBTITLE_CRITICAL_LINE = (
 )
 # t321u: 「保留 / 关键字作背景」时的第二条说明：要留的字只是起始图里本来就有的几个场景关键字。
 IMAGE_TEXT_KEEP_CHOICES = ("keep", "keywords")
+# t369u: 以前写「the only words are … the scene's keywords」，模型 / Strata 会去 visual、讲话里找关键字往画面上加。
+# 现在写清：只是起始图里已经嵌在背景里的字——保留、不删、可以灵动；绝不新加任何字。
 VIDEO_IMAGE_KEYWORDS_RULE = (
-    "Image keywords: the only words in the video are the few key words already drawn in the start picture "
-    "(the scene's keywords); they stay in the background exactly as they are. "
-    "They are not the speaking content, not subtitles and not captions; no other text is written. "
-    "（图片关键字 = 起始图里本来就有的几个场景关键词，原样留在背景；不是讲话内容，不是字幕，不是 caption。）"
+    "Image keywords: any lettering already drawn in the start picture (for example a keyword set into the background) "
+    "stays there and is never erased; it may gently come alive with the scene (a soft glow, shimmer, sway or light "
+    "moving across it) while keeping the same characters in the same place. No new text is ever added: no word is "
+    "taken from the visual description, the speaking lines or the scene title and put on screen; it is not the "
+    "speaking content, not subtitles and not captions; if the start picture has no lettering, the video has none. "
+    "（关键字作背景 = 起始图里已经嵌在背景里的关键字：保留、不删除，可以灵动起来；绝不再加任何字，"
+    "不从场景描述或讲话里取字加到画面上。）"
 )
+VIDEO_IMAGE_KEYWORDS_PREFIX = "Image keywords:"
+
+# t369u: 画风锁定（Grok / Gemini / MiniMax 都写；Strata 精简后原样补回）。选了三维卡通，视频就一直是三维动画，绝不变成写实。
+ART_STYLE_LOCK_PREFIX = "Art style lock:"
+ART_STYLE_NO_REAL_MARK = "it never turns into live-action, photorealistic or real-camera footage"
+_ART_STYLE_EN = (  # (匹配词, 英文画风名, 是否「绝不写实」)
+    (("pixar", "三维卡通", "cartoon", "3d"), "3D animation (Pixar-style 3D animated cartoon, CGI)", True),
+    (("chinese-painting", "chinese painting", "中国画"), "Chinese ink-and-wash painting animation", True),
+    (("watercolor", "水彩"), "watercolor painting animation", True),
+    (("oil-painting", "oil painting", "油画"), "oil painting animation", True),
+    (("ink-comic", "ink comic", "连环画"), "black-and-white ink comic animation", True),
+    (("claymation", "黏土"), "claymation (clay stop-motion animation)", True),
+    (("anime", "动漫", "2d"), "2D anime animation", True),
+    (("vintage", "复古"), "vintage film look", False),
+    (("magical", "魔幻"), "magical realism", False),
+)
+
+
+def video_art_style_en(style: str) -> tuple:
+    """t369u: 画风标签 → (英文画风名, 是否非写实画风)。'三维卡通 (Pixar-Art-Cartoon)' → ('3D animation (…)', True)。"""
+    st = str(style or "").strip()
+    low = st.lower()
+    if not st or "写实" in st or "寫實" in low or "realistic" in low:
+        return "realistic live-action", False
+    for keys, en, stylized in _ART_STYLE_EN:
+        if any(k in low for k in keys):
+            return en, stylized
+    eng = st[st.rfind("(") + 1:st.rfind(")")].strip() if ("(" in st and st.rstrip().endswith(")")) else st
+    return (eng or st), not any(w in low for w in ("photo", "film", "realism", "real"))
+
+
+def video_art_style_lock_rule(style: str, pic: str = "the start picture") -> str:
+    """t369u: 「Art style lock:」一句：整段视频保持起始图原来的画风，并写明所选画风（非写实时绝不变写实）。"""
+    st = str(style or "").strip() or "写实 (Realistic)"
+    en, stylized = video_art_style_en(st)
+    short = en.split(" (")[0]
+    if stylized:
+        return (f"{ART_STYLE_LOCK_PREFIX} the whole video keeps the exact art style of {pic}: {en}, the selected "
+                f"style {st}. Every frame stays {short} with the same rendering, colours, shading, textures and "
+                f"character design as the first frame; {ART_STYLE_NO_REAL_MARK}, and real places and people are "
+                f"shown in that same {short} style. （画风锁定：整段视频保持起始图原来的画风——{st}；每一帧都一样，"
+                f"绝不变成写实 / 真人实拍。）")
+    return (f"{ART_STYLE_LOCK_PREFIX} the whole video keeps the exact look of {pic}: {en}, the selected style {st}; every frame keeps "
+            f"the same rendering, colours and lighting style as the first frame, with no restyling. "
+            f"（画风锁定：整段视频保持起始图原来的画风——{st}，不改画风。）")
+
+
+def _rule_span(text: str, prefix: str):
+    """t369u: 以 prefix 开头的那条规则在 text 里的 (起, 止)：到同一行里的「）」为止；没有就到第一个句号。"""
+    text = text or ""
+    i = text.find(prefix)
+    if i < 0:
+        return None
+    line_end = text.find("\n", i)
+    line_end = len(text) if line_end < 0 else line_end
+    for other in (VIDEO_IMAGE_KEYWORDS_PREFIX, ART_STYLE_LOCK_PREFIX):  # 不跨到下一条锁定句
+        o = text.find(other, i + len(prefix), line_end)
+        if o >= 0:
+            line_end = o
+    k = text.find("）", i, line_end)
+    if k >= 0:
+        return i, k + 1
+    import re as _re
+
+    m = _re.compile(r"[.。](?=\s|$)").search(text, i, line_end)
+    return i, (m.end() if m else line_end)
+
+
+def _restore_rule(original: str, polished: str, prefix: str, rule: str = "") -> str:
+    """t369u: 原提示词里有这条规则，打磨后改了就换回原句，丢了就补上（H3 放在 [Shot 1] 第一句后，否则放在禁字幕行后）。
+    多出来的副本删掉，恰好一次。"""
+    out = polished or ""
+    if not rule:
+        sp = _rule_span(original or "", prefix)
+        if not sp:
+            return out
+        rule = (original or "")[sp[0]:sp[1]]
+    if rule not in (original or ""):
+        return out
+    if out.count(rule) == 1:
+        return out
+    if out.count(rule) > 1:  # 多写了：只留第一句
+        first = out.find(rule) + len(rule)
+        return out[:first] + out[first:].replace(" " + rule, "").replace(rule, "")
+    sp = _rule_span(out, prefix)
+    if sp:  # Strata 改写了这句：换回原句
+        return out[:sp[0]] + rule + out[sp[1]:]
+    m = re.search(r"\[Shot 1\][^.\n]*\.", out)
+    if m:
+        return out[:m.end()] + " " + rule + out[m.end():]
+    lines = out.split("\n")
+    k = 1 if lines and lines[0].strip() == VIDEO_NO_SUBTITLE_CRITICAL_LINE else 0
+    if k < len(lines) and lines[k].strip() == "" and k + 1 < len(lines) and lines[k + 1].startswith("OUTPUT FORMAT"):
+        k += 2
+    elif k < len(lines) and lines[k].startswith("OUTPUT FORMAT"):
+        k += 1
+    return "\n".join(lines[:k] + ([""] if k else []) + [rule] + lines[k:]).replace("\n\n\n", "\n\n")
+
+
+def restore_art_style_rule(original: str, polished: str) -> str:
+    """t369u: 「Art style lock:」那句 Strata 改了 / 丢了就换回原句，恰好一次。"""
+    return _restore_rule(original, polished, ART_STYLE_LOCK_PREFIX)
+
+
+def restore_video_locked_rules(original: str, polished: str) -> str:
+    """t369u: 发送前最后核对：关键字句 + 画风锁定句都在（原文有才补）。"""
+    out = restore_image_keywords_rule(original, polished)
+    return restore_art_style_rule(original, out)
+
+
+_REALISM_WORDS = ("photorealistic", "photo-realistic", "photoreal", "live-action", "live action", "realistic",
+                  "real footage", "real-camera", "real camera", "real-life", "real life", "film still",
+                  "cinematic film", "shot on film", "35mm", "dslr", "natural skin", "real skin", "写实", "真人", "实拍")
+
+
+def added_realism_words(original: str, polished: str) -> str:
+    """t369u: 原文是非写实画风锁定（三维动画等）时，Strata 多写了写实 / 实拍类的词就返回那个词（不通过）。"""
+    if ART_STYLE_NO_REAL_MARK not in (original or ""):
+        return ""
+
+    def _body(s: str) -> str:
+        s = s or ""
+        sp = _rule_span(s, ART_STYLE_LOCK_PREFIX)
+        while sp:
+            s = s[:sp[0]] + " " + s[sp[1]:]
+            sp = _rule_span(s, ART_STYLE_LOCK_PREFIX)
+        return s.lower()
+
+    lo, lp = _body(original), _body(polished)
+    for w in _REALISM_WORDS:
+        if lp.count(w) > lo.count(w):
+            return w
+    return ""
 _LEGACY_VIDEO_NO_SUBTITLE_LINES = (
     "MOST IMPORTANT / CRITICAL REQUIREMENT: 永远不许加任何字幕！永远不许加任何字幕！永远不许加任何字幕！ "
     "NEVER add ANY subtitles, captions, dialogue text, translations, or automatic subtitles of ANY language to the video! "
@@ -5249,24 +5393,9 @@ ensure_h3_no_subtitle_rules = strip_repeated_no_subtitle_rules  # 旧名字（mi
 
 
 def restore_image_keywords_rule(original: str, polished: str) -> str:
-    """t321u: 原提示词有「Image keywords:」那句时，打磨后改了 / 丢了就换回原句（H3 放在 [Shot 1] 第一句后）。"""
-    rule = VIDEO_IMAGE_KEYWORDS_RULE
-    out = polished or ""
-    if rule not in (original or ""):
-        return out
-    if rule in out:
-        return out
-    i = out.find("Image keywords:")
-    if i >= 0:  # Strata 改写了这句：换回原句
-        j = out.find("\n", i)
-        j = len(out) if j < 0 else j
-        return out[:i] + rule + out[j:]
-    m = re.search(r"\[Shot 1\][^.\n]*\.", out)
-    if m:
-        return out[:m.end()] + " " + rule + out[m.end():]
-    lines = out.split("\n")
-    k = 1 if lines and lines[0].strip() == VIDEO_NO_SUBTITLE_CRITICAL_LINE else 0
-    return "\n".join(lines[:k] + ([""] if k else []) + [rule] + lines[k:]).replace("\n\n\n", "\n\n")
+    """t321u/t369u: 原提示词有「Image keywords:」那句时，打磨后改了 / 丢了就换回原句（H3 放在 [Shot 1] 第一句后）。
+    t369u: 改写的那句只换到它自己结尾（以前换到行尾，H3 整段在一行里会把后面全删掉）。"""
+    return _restore_rule(original, polished, VIDEO_IMAGE_KEYWORDS_PREFIX, VIDEO_IMAGE_KEYWORDS_RULE)
 
 
 def _inject_locked_rule(text: str, rule: str) -> str:
@@ -5371,6 +5500,7 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     era_s, reg_s = str(era or "").strip(), str(region or "").strip()
     place = era_s if (reg_s and reg_s in era_s) else ", ".join(x for x in (era_s, reg_s) if x)
     shot = [f"[Shot 1] {_h3_style(style)}" + (f", set in {place}" if place else "") + "."]
+    shot.append(video_art_style_lock_rule(style, pic="<Picture 1>"))  # t369u: 画风锁定
     try:
         from utility import story_stage as _ss
 
@@ -5715,6 +5845,8 @@ def build_video_flow_prompt(
     cast = _video_cast(scenes, use_actor)
     speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking)
     instruction = [_video_style_line(frames, evolve, style)]
+    if evolve == "keep":  # t369u: 画风锁定（演进到目标风格时不锁）
+        instruction.append(video_art_style_lock_rule(style, pic="picture 1"))
     if use_visual:
         instruction.append(
             "``visual`` describes the place, the action, and the angle; act it out inside picture 1. "
@@ -5868,7 +6000,8 @@ def build_transition_video_prompt(
     speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking and not silent)
     trans = [ln.lstrip("* ").strip() for ln in _transition_video_instruction(chosen, style).splitlines()]
     trans = [ln for ln in trans if ln and "No music in this clip" not in ln and "Music for the finished film" not in ln]
-    instruction = trans + [_video_form_line(narrative)]
+    instruction = trans + [video_art_style_lock_rule(style, pic="picture 1 and picture 2"),  # t369u
+                           _video_form_line(narrative)]
     if not silent:
         instruction += speech
     instruction += _video_people_lines(cast, "two", host_narrator, (actor_override or "").strip(), narrative)
@@ -8619,3 +8752,90 @@ def build_comfy_picture_edit_prompt(
     lines.append(text_pos)
     # 保留文字：反向里不放 caption / 字幕（图里本来就有的字会跟着被去掉）
     return "\n".join(lines), _comfy_negative(COMFY_EDIT_NEGATIVE, text_neg)
+
+
+# ---------------------------------------------------------------------------
+# t366u: 图片修改 · 提高分辨率。只提高分辨率 / 清晰度 / 细节；构图、内容、画风一点都不改；比例和原图一样。
+# Grok / Gemini 用 build_upscale_prompt（FYI 由对话框照旧加在最前面）；MOSS / QN 用 build_comfy_upscale_prompt（带反向提示）。
+# 尺寸由 utility.image_upscale.upscale_target_size 按原图比例算（长边 1920）。
+# ---------------------------------------------------------------------------
+COMFY_UPSCALE_NEGATIVE = (
+    "changed composition, different framing, cropped, zoomed in, zoomed out, shifted camera, new objects, "
+    "removed objects, extra people, missing people, altered face, different face, changed expression, changed pose, "
+    "changed clothing, different style, style change, color shift, changed lighting, text changes, garbled text, "
+    "misspelled text, new text, blurry, low resolution, noise, grain, jpeg artifacts, compression artifacts, "
+    "oversharpening, sharpening halos, ringing, over-smoothed, plastic skin, deformed face, bad anatomy, "
+    "extra fingers, extra limbs, worst quality, low quality"
+)
+
+
+def upscale_ratio_words(width, height) -> str:
+    """1920x1080 → '16:9 landscape'；1080x1920 → '9:16 portrait'；1920x1440 → '4:3 landscape'。"""
+    import math
+
+    w, h = int(width), int(height)
+    orient = "landscape" if w > h else ("portrait" if h > w else "square")
+    g = math.gcd(w, h) or 1
+    a, b = w // g, h // g
+    if max(a, b) > 32:  # 比例数字太大（不规整的比例）就直接写宽高
+        return f"{w}:{h} {orient}"
+    return f"{a}:{b} {orient}"
+
+
+def build_upscale_prompt(size) -> str:
+    """Grok / Gemini · 提高分辨率。size = (宽, 高) 目标尺寸（和原图同比例）。"""
+    w, h = (int(v) for v in size)
+    ratio = upscale_ratio_words(w, h)
+    return "\n".join([
+        f"TASK: UPSCALE ONLY. Re-render the attached image at a higher resolution. Output size: exactly {w}x{h} pixels "
+        f"({ratio}, the same aspect ratio as the input image).",
+        "Keep the original style: the same art style, rendering, texture and color palette. The style must not change.",
+        "Keep the original structure: the same composition and the same camera framing; nothing is cropped, zoomed, "
+        "shifted, extended or rotated.",
+        "Nothing in the picture may change at all: the same people (same number of people), the same faces and "
+        "expressions, the same poses, the same clothing, the same objects in the same places, the same background, "
+        "the same text exactly as written (same words, letters and position), the same colors, the same lighting "
+        "and shadows, the same camera framing.",
+        "Do not add, remove, move or redraw anything. No new people, objects, text or details that are not already "
+        "in the image.",
+        "Only increase resolution, sharpness and fine detail (crisp edges, clean fine textures such as hair, fabric "
+        "and surfaces), faithful to what is already there. No blur, noise or compression artifacts, no oversharpening "
+        "halos.",
+        f"Output exactly one image, {w}x{h}.",
+        "",
+        "任务：只提高分辨率。保持原来的画风，保持原来的结构；图里任何东西都不能改"
+        "（构图、人物、脸、姿势、衣服、物体、文字、颜色、光线、镜头取景都不变），画风不能变。"
+        f"只提高分辨率、清晰度和细节。比例和原图一样，输出尺寸 {w}x{h}。",
+    ])
+
+
+def build_comfy_upscale_prompt(size, *, backend: str = "moss", fyi: str = "", style: str = "") -> tuple:
+    """MOSS / QN · 提高分辨率。返回 (正面, 反向)。画布由调用方固定成目标尺寸（16 的倍数），这里不写比例行。
+
+    t370u: ``style`` = 项目画风（分节生成视频时末帧增强用）。给了就写明这个画风必须保持；
+    非写实画风（三维动画等）再加「绝不变成写实」，反向提示也加写实类词。不给时和原来一字不差。"""
+    w, h = (int(v) for v in size)
+    img1 = comfy_image_ref(backend, 1)
+    lines = [fyi.strip()] if (fyi or "").strip() else []
+    style_line = "Keep the original art style."
+    negative = COMFY_UPSCALE_NEGATIVE
+    st = str(style or "").strip()
+    if st:
+        en, stylized = video_art_style_en(st)
+        short = en.split(" (")[0]
+        if stylized:
+            style_line = (f"Keep the original art style exactly: {en} ({st}). It stays {short} with the same "
+                          "rendering, shading and colours; it never turns photorealistic or live-action. "
+                          "Also remove noise and compression artifacts.")
+            negative = negative + ", photorealistic, live-action, real photo, realistic skin, restyled"
+        else:
+            style_line = (f"Keep the original art style exactly: {en} ({st}), the same rendering and colours, "
+                          "no restyling. Also remove noise and compression artifacts.")
+    lines += [
+        f"Upscale {img1} to a sharp, high-resolution {w}x{h} version of exactly the same picture.",
+        "Keep everything exactly the same: composition, camera framing, people, faces, expressions, poses, clothing, "
+        "objects, background, text, colors and lighting.",
+        style_line,
+        "Only add sharpness and fine detail: crisp edges and clean textures in hair, fabric and surfaces.",
+    ]
+    return "\n".join(lines), negative

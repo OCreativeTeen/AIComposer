@@ -165,11 +165,13 @@ PICTURE_EDIT_MODES = (
      "按 视觉、讲话 和人物肖像图，补上缺的人物或改正对不上的人物。不加字，不改画风，不画对话泡泡。"),
     ("portrait", "提取人物肖像",
      "从当前场景图里重新提取每个人物的头部肖像，已有肖像也重新提取；满意就确定替换，不满意就忽略，保留原来的肖像。"),
+    ("upscale", "提高分辨率",
+     "按原图比例提高到 1920 级（长边 1920，16:9 = 1920x1080），只加清晰度和细节；构图、内容、文字、画风都不改。"),
 )
 
 
 def ask_picture_edit_mode(parent, anchor=None, *, initial: str = "modify", step_no: int = 0):
-    """t216u / t315u: 图片修改第一步：选类型。返回 "modify" / "cover" / "cast" / "portrait"，取消返回 None。"""
+    """t216u / t315u / t366u: 图片修改第一步：选类型。返回 "modify" / "cover" / "cast" / "portrait" / "upscale"，取消返回 None。"""
     box = tk.Toplevel(parent)
     box.title("图片修改 · 选类型")
     box.transient(parent)
@@ -522,6 +524,14 @@ def open_picture_prompt_dialog(
                      "每一张都给你看：确认 = 换上新的（原来的改名 .bak 备份），忽略 = 原来的肖像保持。不改场景图。",
             )
             return
+        if mode == "upscale":
+            hint.config(
+                foreground="",
+                text="提高分辨率：用下面选中的场景图，按它自己的比例提高到 1920 级（长边 1920；16:9 = 1920x1080，"
+                     "9:16 = 1080x1920）。只加清晰度和细节，构图、人物、文字、颜色、画风一点都不改。"
+                     "可以写「注意 / FYI」（会放在提示词最前面）。回来的图再用 Lanczos 对齐到这个尺寸，写回方式同其他图片修改。",
+            )
+            return
         if step_mode:
             hint.config(foreground="", text=f"提取第 {step_no} 步：只用画风改变（保持画风 / 转成项目风格）和说明文字（只管这一步的字），其他选项不进提示词。")
             return
@@ -566,6 +576,9 @@ def open_picture_prompt_dialog(
 
         if mode == "portrait":
             _run_portrait_extract(account)
+            return
+        if mode == "upscale":
+            _go_upscale(backend, account, comfy)
             return
         if mode == "cast" and not fix_on():
             messagebox.showwarning("图片修改", "补全/修正人物用不了：" + (_tip["text"] or "没有人物肖像图。"), parent=dlg)
@@ -911,7 +924,97 @@ def open_picture_prompt_dialog(
             else:
                 _call_open_manual(prompt, images, backend, account)
 
-    def _call_open_manual(prompt, images, backend, account, comfy=None) -> None:
+    def _go_upscale(backend: str, account: str, comfy: str) -> None:
+        """t366u: 提高分辨率：每一场用自己选中的图，按原图比例出 1920 级（utility.image_upscale）；
+        Grok / Gemini 用 build_upscale_prompt，MOSS / QN 用 build_comfy_upscale_prompt + 反向提示 + 固定画布。
+        meta["upscale_size"] = 目标尺寸：结果回来后对齐（Lanczos，比例变了就居中裁）再写回。"""
+        from utility.image_upscale import comfy_upscale_canvas, upscale_target_for_image
+
+        fyi_up = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
+
+        def _upscale_job(sc) -> tuple:
+            path = sc.get(chosen_image()) if isinstance(sc, dict) else ""
+            if not (isinstance(path, str) and path and os.path.isfile(path)):
+                raise ValueError("没有图")
+            try:
+                target = upscale_target_for_image(path)
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"读不出图的尺寸（{exc}）") from exc
+            if not target:
+                raise ValueError("读不出图的尺寸")
+            if comfy:
+                canvas = comfy_upscale_canvas(target)
+                pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend=comfy, fyi=fyi_up)
+                return pos, [path], {"aspect": "", "actors": [], "base": path, "comfy": True, "negative": neg,
+                                     "size": canvas, "upscale_size": target}
+            prompt = prepend_fyi(config_prompt.build_upscale_prompt(target), fyi_up, include=bool(fyi_up))
+            return prompt, [path], {"aspect": "", "actors": [], "base": path, "upscale_size": target}
+
+        scope = "scene"
+        batch_list, k_no, m_no = [], 0, 0
+        if callable(batch_scenes) and callable(run_batch):
+            got = batch_scenes()
+            if isinstance(got, tuple):
+                batch_list, k_no, m_no = got
+            else:
+                batch_list = list(got or [])
+            n_batch = len(batch_list)
+            here = f"（第{k_no}场）" if k_no else ""
+            span = f"（第{k_no}–{m_no}场，共{n_batch}场；前面的场不动）" if k_no else f"（共{n_batch}场）"
+            answer = messagebox.askyesnocancel(
+                "图片修改",
+                f"是 = 只处理当前这一场{here}\n"
+                f"否 = 从当前第{k_no}场到本集结束{span}，每一场用自己的图分别提高分辨率\n"
+                "取消 = 不处理",
+                parent=dlg,
+            )
+            if answer is None:
+                return
+            scope = "scene" if answer else "episode"
+        if scope == "episode":
+            jobs, skipped = [], []
+            for sc in batch_list:
+                if not isinstance(sc, dict):
+                    continue
+                no = k_no + len(jobs) + len(skipped)
+                label = f"第{no}场" if k_no else str(sc.get("id") or no)
+                try:
+                    p_, i_, m_ = _upscale_job(sc)
+                except ValueError as exc:
+                    skipped.append(f"{label}：{exc}")
+                    continue
+                jobs.append((sc, p_, i_, m_))
+            remember()
+            dlg.destroy()
+            try:
+                run_batch(jobs, backend, skipped, account)
+            except TypeError:
+                run_batch(jobs, backend, skipped)
+            return
+        scene = get_scene() if get_scene is not None else None
+        try:
+            p_, i_, m_ = _upscale_job(scene)
+        except ValueError as exc:
+            messagebox.showwarning("图片修改", f"提高分辨率用不了：这一场{exc}。", parent=dlg)
+            return
+        tw, th = m_["upscale_size"]
+        print(f"图片修改 · 提高分辨率（{(comfy or backend or 'grok').upper()}）：{os.path.basename(i_[0])} → {tw}x{th}"
+              + (f"（ComfyUI 画布 {m_['size'][0]}x{m_['size'][1]}）" if comfy else ""))
+        remember()
+        dlg.destroy()
+        if callable(open_manual):
+            _call_open_manual(p_, i_, backend, account, comfy=m_ if comfy else None, upscale=m_["upscale_size"])
+
+    def _call_open_manual(prompt, images, backend, account, comfy=None, upscale=None) -> None:
+        if upscale:  # t366u: 带目标尺寸，结果回来对齐后再写回
+            try:
+                if comfy:
+                    open_manual(prompt, images, backend, account, comfy=comfy, upscale=tuple(upscale))
+                else:
+                    open_manual(prompt, images, backend, account, upscale=tuple(upscale))
+                return
+            except TypeError:
+                pass
         if comfy:  # t356u: ComfyUI 专用提示：带反向提示词 / 画布给手动窗口
             try:
                 open_manual(prompt, images, backend, account, comfy=comfy)
@@ -1128,6 +1231,12 @@ def open_picture_prompt_dialog(
         elif mode == "portrait":
             _fields.pack_forget()
             fix_box.pack_forget()
+            if _cover_box is not None:
+                _cover_box.pack_forget()
+        elif mode == "upscale":  # t366u: 只留「交给 LLM 的图」和 FYI；内容来源 / 背景不进提示词
+            _fields.pack_forget()
+            fix_box.pack_forget()
+            _bg_box.pack_forget()
             if _cover_box is not None:
                 _cover_box.pack_forget()
         else:

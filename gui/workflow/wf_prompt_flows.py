@@ -87,8 +87,16 @@ class PromptFlowsMixin:
             cfg["picture_prompt"] = choice
             save_project_config(parent=self.root)
 
-        def open_manual(prompt: str, images: list[str], backend: str = "grok", account: str = "", comfy=None) -> None:
+        def open_manual(prompt: str, images: list[str], backend: str = "grok", account: str = "", comfy=None,
+                        upscale=None) -> None:
             def _on_image_response(pil_img):
+                if upscale:  # t366u: 提高分辨率：先对齐到目标尺寸（Lanczos；比例变了居中裁），按这个尺寸写回
+                    from utility.image_upscale import fit_to_size
+
+                    if pil_img is not None and hasattr(pil_img, "size"):
+                        pil_img = fit_to_size(pil_img, upscale)
+                    self._replace_current_clip_image_from_pil(pil_img, exact_size=tuple(upscale))
+                    return
                 self._replace_current_clip_image_from_pil(pil_img)
 
             # t229u / t234u: grok（默认）/ gemini / moss / qn（本机 ComfyUI）
@@ -241,6 +249,127 @@ class PromptFlowsMixin:
                 fail(f"导入失败：{exc}")
 
         threading.Thread(target=build_pair, daemon=True).start()
+
+    # ---- t370u: 生场视频动态分节（<Ns> / <s>），见 utility/video_segments.py ----
+    def _video_segment_count(self, scene) -> int:
+        from utility.speaking_marks import speaking_segment_count
+
+        return speaking_segment_count(scene.get("speaking") or "") if isinstance(scene, dict) else 0
+
+    def _split_video_segment(self, scene):
+        """第 1 节克隆成新场景插在前面（只留这一节的讲话；场景音频按时间轴切开），返回 token；不能分返回 None。"""
+        from project_manager import refresh_scene_media
+        from utility import video_segments as vs
+
+        wf = self.workflow
+        scenes = getattr(wf, "scenes", None) if wf else None
+        if not isinstance(scenes, list) or not isinstance(scene, dict):
+            return None
+        try:  # 先把输入框里还没存的改动写回这一场，再按它的讲话分节
+            self.update_current_scene()
+        except Exception:  # noqa: BLE001
+            pass
+        ap = wf.ffmpeg_audio_processor
+
+        def cut_audio(path, start, length):
+            return ap.audio_cut_fade(path, float(start), float(length), 0, 0)
+
+        def store(sc, key, ext, path):
+            refresh_scene_media(sc, key, ext, path)
+
+        tok = vs.split_first_segment(
+            scenes, scene, next_id=vs.new_scene_id(scenes), cut_audio=cut_audio,
+            audio_seconds=lambda p: ap.get_duration(p), store_media=store,
+        )
+        if not tok:
+            return None
+        print(f"✂️ 分节：第 1/{tok['segments']} 节拆成新场景 id={tok['clone'].get('id')}（插在前面），"
+              f"分界 {tok['cut']} 秒（{'时间轴' if tok['cut_source'] == 'timing' else '按字数估'}"
+              f"{'，场景音频已切开' if tok['audio_cut'] else ''}）")
+        try:
+            wf.touch_episode_media(wf.scene_group(scene))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._rebuild_monologue_preview_clips(tok["clone"], scene)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 分节预览片没有重做：{exc}")
+        for i, sc in enumerate(wf.scenes or []):  # 当前场 = 克隆；输入框马上换成克隆，旧讲话不会写回原场景
+            if sc is tok["clone"]:
+                self.current_scene_index = i
+                break
+        try:
+            wf.save_scenes_to_json()
+            refresh_now = getattr(self, "_refresh_gui_scenes_impl", None)
+            (refresh_now if callable(refresh_now) else self.refresh_gui_scenes)()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 分节后保存 / 刷新失败：{exc}")
+        return tok
+
+    def _undo_video_segment(self, token) -> None:
+        from utility import video_segments as vs
+
+        wf = self.workflow
+        if not wf:
+            return
+        vs.undo_first_segment(getattr(wf, "scenes", None), token)
+        scene = (token or {}).get("scene")
+        for i, sc in enumerate(wf.scenes or []):
+            if sc is scene:
+                self.current_scene_index = i
+                break
+        try:
+            wf.save_scenes_to_json()
+            self.refresh_gui_scenes()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 分节退回后保存 / 刷新失败：{exc}")
+
+    def _chain_video_segment(self, token, style, status, done) -> None:
+        """克隆那一节的视频末帧 → MOSS 提高分辨率（保持原画风 + 项目画风）→ 原场景 zero_image_last。
+        后台线程跑 ComfyUI；不通就用原末帧。完成后在主线程 ``done(起始图, 是否增强, 说明)``。"""
+        import threading
+
+        from utility import video_segments as vs
+        from utility.file_util import get_file_path
+        from utility.scene_image_slots import write_chained_next_zero_image_last
+
+        clone, scene = token["clone"], token["scene"]
+        src = get_file_path(clone, "clip") or clone.get("clip") or ""
+        fp = self.workflow.ffmpeg_processor
+
+        def work() -> None:
+            path, enhanced, note = "", False, ""
+            try:
+                frame = fp.extract_frame(src, False) if src and os.path.isfile(src) else None
+                if not frame or not os.path.isfile(frame):
+                    raise RuntimeError("这一节视频的末帧没取出来")
+                path, enhanced, note = vs.enhance_last_frame(
+                    frame, style=style, upscale=lambda p, t, s: vs.moss_upscale(p, t, s, status=status))
+                if not enhanced:
+                    path = fp.resize_image_smart(frame) or frame
+            except Exception as exc:  # noqa: BLE001
+                path, note = "", str(exc)
+            self.root.after(0, lambda: finish(path, enhanced, note))
+
+        def finish(path, enhanced, note) -> None:
+            written = ""
+            if path and os.path.isfile(path):
+                try:
+                    written = write_chained_next_zero_image_last(scene, path)
+                    print(f"🔗 分节：{'提高分辨率后的' if enhanced else '原'}末帧写进原场景 zero_image_last，作为下一节的起始图")
+                except Exception as exc:  # noqa: BLE001
+                    note = f"{note}；写 zero_image_last 失败：{exc}".strip("；")
+            if not written:  # 导入时已经把原末帧接到下一场（= 原场景）的 zero_image_last
+                written = str(scene.get("zero_image_last") or "")
+                enhanced = False
+            try:
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 分节接末帧后保存 / 刷新失败：{exc}")
+            done(written, enhanced, note)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _current_cover_step(self) -> int:
         """Original cover-panel number for the current scene (not the expanded list index)."""
@@ -492,13 +621,23 @@ class PromptFlowsMixin:
                 ui(end_one)
 
         written_events: dict = {}  # t319u: id(scene) → Event，apply 写完 clip_image 后通知工人线程
+        upscale_of = {  # t366u: 提高分辨率的场：id(scene) → 目标尺寸
+            id(j[0]): tuple(j[3]["upscale_size"]) for j in jobs
+            if len(j) > 3 and isinstance(j[3], dict) and j[3].get("upscale_size")
+        }
 
         def apply(scene, img, label):
             """UI 线程：写回这一场的图，有 clip 音频就马上排队重做这一场的静态 clip 视频。"""
             try:
+                up = upscale_of.get(id(scene))
+                if up:  # t366u: 提高分辨率：对齐到目标尺寸再写回
+                    from utility.image_upscale import fit_to_size
+
+                    img = fit_to_size(img, up)
                 self._replace_current_clip_image_from_pil(
                     img, scene=scene, defer_video=True,
                     defer_monologue_split=bool(remix_visual),
+                    exact_size=up,
                 )
                 done[0] += 1
                 updated.append(scene)
@@ -1272,6 +1411,11 @@ class PromptFlowsMixin:
                 "begin": lambda: setattr(self, "_video_batch_files", []),
                 "end": _episode_done,
                 "import": self._auto_import_scene_video,
+                # t370u: 生场视频动态分节（<Ns> / <s>）
+                "segments": self._video_segment_count,
+                "split": self._split_video_segment,
+                "unsplit": self._undo_video_segment,
+                "chain": self._chain_video_segment,
                 # t190u: MiniMax 双机全集：工人线程里直接生成（不开手动窗口），key = minimax_5070ti / minimax_5060
                 "generate": lambda prompt, images, extra, key, status: __import__(
                     "utility.minimax_dual", fromlist=["minimax_generate"]).minimax_generate(

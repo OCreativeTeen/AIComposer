@@ -142,6 +142,10 @@ class SpeakingMixin:
         return merged
 
     def _apply_collapsed_speaking(self, scene: dict, original: str) -> str:
+        from utility.speaking_marks import speaking_segment_count
+
+        if speaking_segment_count(original) > 1:  # t370u: 合并同一个人会吃掉 <Ns> / <s> 分节，不合并
+            return (original or "").strip()
         parts = self._speaking_turn_parts(original)
         collapsed = self._collapse_same_speaker_parts(parts)
         if len(collapsed) >= len(parts):

@@ -501,6 +501,24 @@ def open_video_prompt_dialog(
         dlg.destroy()
 
     _episode_state = {"started": False}  # t172u: 全集提交：这一场的提示词做出来了（已交给打磨 / 发送）
+    _seg_start = {"path": ""}  # t370u: 分节：这一节的起始图（上一节末帧，已提高分辨率）
+
+    def _seg_count(sc) -> int:
+        """t370u: 这一场讲话按 <Ns> / <s> 分成几节（1 = 不分）。"""
+        fn = episode.get("segments") if isinstance(episode, dict) else None
+        if not callable(fn) or not isinstance(sc, dict):
+            return 1
+        try:
+            return max(1, int(fn(sc) or 1))
+        except Exception:  # noqa: BLE001
+            return 1
+
+    def _segmented_single() -> bool:
+        if is_transition or not (isinstance(episode, dict) and callable(open_manual)
+                                 and callable(episode.get("split")) and callable(episode.get("import"))):
+            return False
+        scs = [s for s in (get_scenes() or []) if isinstance(s, dict)]
+        return len(scs) == 1 and _seg_count(scs[0]) > 1
 
     def on_go(backend: str = "grok", account: str = "", deliver=None, quiet: bool = False) -> None:
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
@@ -639,6 +657,11 @@ def open_video_prompt_dialog(
 
             # 多画面（起始 + 终止）仍用 clip_image + clip_image_last；单画面用选择器（含 Zero 两张）。
             start, end = resolve_video_prompt_images(frames, chosen_image(), get_image)
+            if _seg_start.get("path"):  # t370u: 分节：上一节末帧（已提高分辨率）就是这一节的起始图
+                import os as _os_seg
+
+                if _os_seg.path.isfile(_seg_start["path"]):
+                    start = _seg_start["path"]
             if start:
                 images.append(start)
             else:
@@ -849,6 +872,10 @@ def open_video_prompt_dialog(
                 dlg.after(250, _poll)
                 return
             final, why = box["v"]
+            try:  # t369u: 发送前最后核对：关键字作背景 / 画风锁定两句（原文有就必须在）
+                final = config_prompt.restore_video_locked_rules(box.get("pre") or prompt, final)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 关键字 / 画风句核对跳过：{exc}")
             print(f"视频提示：{why}")
             _log_prompt(box.get("pre") or prompt, final, why)
             _deliver(final)
@@ -1063,6 +1090,9 @@ def open_video_prompt_dialog(
         t235u: 提交前先确认画面风格 / 场景风格 / 讲员 / 地域 · 时代。"""
         from gui.picture_prompt_dialog import ask_llm_and_account
 
+        if _segmented_single():  # t370u: 讲话要分节：走一节一节生成 + 自动导入 + 接末帧
+            on_episode_submit(single=True)
+            return
         if not _confirm_before_submit():
             return
         backend = backend_var.get()
@@ -1084,44 +1114,59 @@ def open_video_prompt_dialog(
     go = big_submit_button(dlg, actions, on_submit, text="提交")
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
 
-    def on_episode_submit() -> None:
-        """t172u: 全集提交：用现在的选项，从当前场到本集结束一场一场生成视频（一场做完再提交下一场；t361u 起不限场数）。"""
+    def on_episode_submit(single: bool = False) -> None:
+        """t172u: 全集提交：用现在的选项，从当前场到本集结束一场一场生成视频（一场做完再提交下一场；t361u 起不限场数）。
+        t370u: ``single`` = 单场提交但讲话要分节（<Ns> / <s>）：同样一节一节生成、自动导入、接末帧。"""
         import os
 
         from gui.picture_prompt_dialog import ask_llm_and_account
 
+        _title = "生场视频 · 分节" if single else "全集提交"
         try:
-            todo, k_no, m_no = episode["scenes"]()
+            if single:
+                todo, k_no, m_no = [s for s in (get_scenes() or []) if isinstance(s, dict)][:1], 0, 0
+            else:
+                todo, k_no, m_no = episode["scenes"]()
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("全集提交", f"没有取到本集的场景：{exc}", parent=dlg)
+            messagebox.showerror(_title, f"没有取到本集的场景：{exc}", parent=dlg)
             return
         todo = [s for s in (todo or []) if isinstance(s, dict)]
         if not todo:
-            messagebox.showwarning("全集提交", "本集没有可处理的场景。", parent=dlg)
+            messagebox.showwarning(_title, "本集没有可处理的场景。", parent=dlg)
             return
         n = len(todo)  # t361u: 不限场数，本集有多少场就生成多少场
         backend = backend_var.get()
         account = ""
-        _dual = backend == _cfg_prefs.MINIMAX_DUAL_KEY and callable(episode.get("generate"))
-        _ep_note = (
-            f"将用以上选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。"
-            + (" MiniMax 双机：两台同时跑，先做完的接下一场。" if _dual
-               else " 一场做完、下载好再提交下一场。")
-        )
+        _segs = [_seg_count(s) for s in todo]
+        _seg_scenes = sum(1 for c in _segs if c > 1)
+        # t370u: 分节要一节接一节（后一节用前一节末帧），双机并行不适用 → 有分节就一台一台按顺序做
+        _dual = (backend == _cfg_prefs.MINIMAX_DUAL_KEY and callable(episode.get("generate"))
+                 and not single and not _seg_scenes)
+        if single:
+            _ep_note = (f"这一场的讲话按 <Ns> / <s> 分成 {_segs[0]} 节，一节一节生成：每节做完插成前面一场，"
+                        "末帧用 MOSS 提高分辨率后作为下一节的起始图（ComfyUI 不通就用原末帧）。")
+        else:
+            _ep_note = (
+                f"将用以上选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。"
+                + (" MiniMax 双机：两台同时跑，先做完的接下一场。" if _dual
+                   else " 一场做完、下载好再提交下一场。")
+                + (f" 其中 {_seg_scenes} 场的讲话要分节（<Ns> / <s>），一节一节生成，末帧提高分辨率后接下一节。"
+                   if _seg_scenes else "")
+            )
         if not _confirm_before_submit(episode_note=_ep_note):
             return
         if not _cfg_prefs.is_minimax(backend):
             picked = ask_llm_and_account(
                 dlg, pref_key="video_submit_choice",
-                title=("Grok" if backend == "grok" else "Gemini") + " 全集提交", fixed_backend=backend,
+                title=("Grok" if backend == "grok" else "Gemini") + " " + _title, fixed_backend=backend,
             )
             if not picked:
                 return
             account = picked[1]
         remember()
-        state = {"stop": False, "ok": 0, "files": [], "done": False}
+        state = {"stop": False, "ok": 0, "files": [], "done": False, "parts": 0, "seg": {}}
         prog = tk.Toplevel(parent)
-        prog.title(f"全集提交 · {n} 场")
+        prog.title(f"{_title} · {_segs[0]} 节" if single else f"全集提交 · {n} 场")
         prog.transient(parent)
         pvar = tk.StringVar(master=prog, value="准备 …")
         ttk.Label(prog, textvariable=pvar, wraplength=460, justify=tk.LEFT, padding=12).pack(fill=tk.BOTH)
@@ -1148,49 +1193,98 @@ def open_video_prompt_dialog(
                     episode["end"](list(state["files"]))
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 全集提交收尾失败：{exc}")
-            (messagebox.showinfo if ok else messagebox.showerror)("全集提交", msg, parent=parent)
+            (messagebox.showinfo if ok else messagebox.showerror)(_title, msg, parent=parent)
             try:
                 dlg.destroy()
             except tk.TclError:
                 pass
+
+        def _label(i: int) -> str:
+            base = f"本集第{k_no + i}场" if k_no else "这一场"
+            sg = state.get("seg") or {}
+            if sg.get("multi"):  # t370u: 分节
+                base += f" · 第{sg.get('part', 0) + 1}/{sg.get('total', 1)}节"
+            return base
+
+        def _undo_seg() -> None:
+            """t370u: 这一节没做成：去掉刚插的克隆，原场景讲话 / 音频 / 时间轴退回拆节前。"""
+            sg = state.get("seg") or {}
+            tok = sg.get("token")
+            sg["token"] = None
+            if tok and callable(episode.get("unsplit")):
+                try:
+                    episode["unsplit"](tok)
+                    print("↩️ 分节：这一节没做成，已退回拆节前（去掉克隆，原场景讲话 / 音频还原）")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 分节退回失败：{exc}")
+
+        def _fail(msg: str) -> None:
+            _undo_seg()
+            finish(msg, False)
 
         def run(i: int) -> None:
             if state["stop"]:
                 finish(f"已停止：{state['ok']}/{n} 场已生成并导入。", True)
                 return
             if i >= n:
-                finish(f"全集提交完成：{state['ok']} 场的视频都生成并自动导入了（原声 · Clip · 替换）。", True)
+                extra_note = f"（其中分节多生成了 {state['parts']} 节，各插成前面一场）" if state["parts"] else ""
+                finish(f"{_title}完成：{state['ok']} 场的视频都生成并自动导入了（原声 · Clip · 替换）{extra_note}。", True)
                 return
-            label = f"第{k_no + i}场"
-            pvar.set(f"第 {i + 1}/{n} 场（本集{label}）：准备提示词…")
+            cnt = _seg_count(todo[i])
+            state["seg"] = {"part": 0, "total": cnt, "multi": cnt > 1, "start": "", "token": None}
+            step(i)
+
+        def step(i: int) -> None:
+            """t370u: 一节一节来：还能分就先把第 1 节克隆成前面一场（只留这一节的讲话），在克隆上生成；
+            最后一节直接生成原场景。后面的节用上一节末帧（提高分辨率后）做起始图。"""
+            sg = state["seg"]
+            target = todo[i]
+            work = target
+            sg["token"] = None
+            label = _label(i)
+            pvar.set(f"第 {i + 1}/{n} 场（{label}）：准备提示词…")
+            if (_seg_count(target) > 1 and callable(episode.get("split"))
+                    and callable(episode.get("import")) and not is_transition):
+                try:
+                    tok = episode["split"](target)
+                except Exception as exc:  # noqa: BLE001
+                    finish(f"{label}：分节失败（{exc}），已停止。前面完成 {state['ok']} 场。", False)
+                    return
+                if tok:
+                    sg["token"] = tok
+                    work = tok["clone"]
             try:
-                episode["select"](todo[i])
+                episode["select"](work)
             except Exception as exc:  # noqa: BLE001
-                finish(f"{label}：切换场景失败（{exc}），已停止。前面完成 {state['ok']} 场。", False)
+                _fail(f"{label}：切换场景失败（{exc}），已停止。前面完成 {state['ok']} 场。")
                 return
             _episode_state["started"] = False
 
             def _one(final_prompt, images, extra) -> None:
-                dlg.after(0, lambda: submit(i, label, final_prompt, images, extra))
+                dlg.after(0, lambda: submit(i, label, final_prompt, images, extra, work))
 
+            _seg_start["path"] = sg.get("start") or ""
             try:
                 on_go(backend, account, deliver=_one, quiet=True)
             except Exception as exc:  # noqa: BLE001
-                finish(f"{label}：提示词出错（{exc}），已停止。前面完成 {state['ok']} 场。", False)
+                _seg_start["path"] = ""
+                _fail(f"{label}：提示词出错（{exc}），已停止。前面完成 {state['ok']} 场。")
                 return
+            _seg_start["path"] = ""
             if not _episode_state["started"]:
-                finish(f"{label}：提示词没有做出来（见提示），已停止。前面完成 {state['ok']} 场。", False)
+                _fail(f"{label}：提示词没有做出来（见提示），已停止。前面完成 {state['ok']} 场。")
 
-        def submit(i: int, label: str, final_prompt: str, images, extra) -> None:
-            pvar.set(f"第 {i + 1}/{n} 场（本集{label}）：生成视频中…")
+        def submit(i: int, label: str, final_prompt: str, images, extra, work=None) -> None:
+            work = work if isinstance(work, dict) else todo[i]
+            pvar.set(f"第 {i + 1}/{n} 场（{label}）：生成视频中…")
             try:
                 res = open_manual(final_prompt, images, extra=extra)
             except Exception as exc:  # noqa: BLE001
-                finish(f"{label}：生成失败（{exc}），已停止。前面完成 {state['ok']} 场。", False)
+                _fail(f"{label}：生成失败（{exc}），已停止。前面完成 {state['ok']} 场。")
                 return
             path = "" if res is None or hasattr(res, "save") else str(res)
             if not (path and os.path.isfile(path)):
-                finish(f"{label}：没有拿到视频（窗口取消或生成失败），已停止。前面完成 {state['ok']} 场。", False)
+                _fail(f"{label}：没有拿到视频（窗口取消或生成失败），已停止。前面完成 {state['ok']} 场。")
                 return
             state["files"].append(path)
             importer = episode.get("import")
@@ -1199,20 +1293,55 @@ def open_video_prompt_dialog(
                 dlg.after(300, lambda: run(i + 1))
                 return
             # t173u: 自动导入这一场（原声、Clip、替换），导入好了再做下一场
-            pvar.set(f"第 {i + 1}/{n} 场（本集{label}）：视频已下载，自动导入（原声 · Clip · 替换）…")
+            pvar.set(f"第 {i + 1}/{n} 场（{label}）：视频已下载，自动导入（原声 · Clip · 替换）…")
 
             def _imported(ok: bool, why: str) -> None:
                 if not ok:
-                    finish(f"{label}：视频生成了，但自动导入失败（{why}），已停止。前面完成 {state['ok']} 场。\n"
-                           f"视频文件：{path}", False)
+                    _fail(f"{label}：视频生成了，但自动导入失败（{why}），已停止。前面完成 {state['ok']} 场。\n"
+                          f"视频文件：{path}")
                     return
-                state["ok"] += 1
-                dlg.after(300, lambda: run(i + 1))
+                after_part(i, label)
 
             try:
-                importer(todo[i], path, lambda ok, why="": dlg.after(0, lambda: _imported(ok, why)))
+                importer(work, path, lambda ok, why="": dlg.after(0, lambda: _imported(ok, why)))
             except Exception as exc:  # noqa: BLE001
-                finish(f"{label}：自动导入出错（{exc}），已停止。前面完成 {state['ok']} 场。", False)
+                _fail(f"{label}：自动导入出错（{exc}），已停止。前面完成 {state['ok']} 场。")
+
+        def after_part(i: int, label: str) -> None:
+            """t370u: 一节导入好了。是克隆的那一节：末帧提高分辨率 → 原场景 zero_image_last → 接着做下一节。"""
+            sg = state["seg"]
+            tok = sg.get("token")
+            if not tok:
+                state["ok"] += 1
+                dlg.after(300, lambda: run(i + 1))
+                return
+            sg["token"] = None  # 这一节做成了，克隆留下
+            state["parts"] += 1
+            pvar.set(f"第 {i + 1}/{n} 场（{label}）：这一节做好了；末帧用 MOSS 提高分辨率，接下一节…")
+            style_now = (_look.get("visual_style") or get_style() or "").strip()
+
+            def _status(msg) -> None:
+                print(f"🎞️ 分节末帧提高分辨率：{msg}")
+
+            def _chained(path, enhanced, note) -> None:
+                if not enhanced:
+                    print(f"⚠️ 分节：{label} 末帧没有提高分辨率（{note}），用原末帧接下一节")
+                sg["part"] += 1
+                sg["start"] = path or str((tok.get("scene") or {}).get("zero_image_last") or "")
+                if state["stop"]:
+                    finish(f"已停止：{state['ok']}/{n} 场全部做完；{label} 这一节做好了，剩下的讲话还在原场景"
+                           "（起始图已接好），下次从它继续。", True)
+                    return
+                dlg.after(300, lambda: step(i))
+
+            chain = episode.get("chain")
+            if not callable(chain):
+                _chained("", False, "没有接末帧的功能")
+                return
+            try:
+                chain(tok, style_now, _status, lambda p, e, nt: dlg.after(0, lambda: _chained(p, e, nt)))
+            except Exception as exc:  # noqa: BLE001
+                _chained("", False, str(exc))
 
         def run_dual() -> None:
             """t190u: MiniMax 双机全集：主线程一场一场准备提示词（切场景、精简），放进队列；
@@ -1356,6 +1485,8 @@ def open_video_prompt_dialog(
         "太短用 5.17 秒，超过 12.25 秒用 12.25 秒并加语速档让人物说快，导入时按同一档放慢到实际这两端的时长。分辨率仍按实际长度分档（含带音频、分段的每一段）：≤ 6.58 秒（158 帧）1312×736（竖屏 736×1312），≤ 9.42 秒（226 帧）1280×704（竖屏 704×1280），更长 1120×640（竖屏 640×1120）。"
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
+        "分节（t370u）：讲话里的 <Ns>（自言自语那几句）和手工加在某个 <n> 前面的 <s> 会在生成时把这一场分成几节，"
+        "一节一节生成：每节做完插成前面一场，末帧用 MOSS 提高分辨率后作为下一节的起始图（有分节时双机也按顺序做）。"
         + ("" if _has_audio else "（这一场没有音频）"),
         foreground="#b05a00", wraplength=900, justify=tk.LEFT,
     )

@@ -74,8 +74,8 @@ class NoSubtitleRuleTest(unittest.TestCase):
             self.assertEqual(p.count(cp.VIDEO_IMAGE_KEYWORDS_RULE), 1)
             self.assertLess(p.index(cp.VIDEO_IMAGE_KEYWORDS_RULE), p.index("<d>"))
         rule = cp.VIDEO_IMAGE_KEYWORDS_RULE
-        for must in ("already drawn in the start picture", "scene's keywords", "in the background exactly as they are",
-                     "not the speaking content", "not subtitles", "not captions"):
+        for must in ("already drawn in the start picture", "never erased", "come alive", "No new text is ever added",
+                     "not the speaking content", "not subtitles", "not captions"):  # t369u
             self.assertIn(must, rule)
         for text in ("", "erase", "express"):
             p = _h3(text)
@@ -111,10 +111,10 @@ class NoSubtitleRuleTest(unittest.TestCase):
             low = _below_first_line(cp.ensure_video_no_subtitle_first_line(p)).lower()
             self.assertNotIn("subtitle", low)
             self.assertNotIn("caption area", low)
-        self.assertEqual(cp.VIDEO_NO_CAPTION_RULE, "Clean film image: only the scene fills the frame.")
+        self.assertEqual(cp.VIDEO_NO_CAPTION_RULE, "Clean picture: only the scene fills the frame.")  # t369u
         guard = cp.video_guard_block([_scene(SPEAK)])
-        self.assertEqual(guard.count("Clean film image"), 1)
-        self.assertNotIn("Clean film image", cp.video_closing_block([_scene(SPEAK)]))
+        self.assertEqual(guard.count("Clean picture"), 1)
+        self.assertNotIn("Clean picture", cp.video_closing_block([_scene(SPEAK)]))
 
     def test_legacy_repeats_are_cleaned_and_idempotent(self):
         old = (LEGACY_CRITICAL + "\n\nFor the target video ...\n\nintegrated_multimodal_description: [Shot 1] A. "

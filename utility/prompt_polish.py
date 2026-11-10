@@ -14,13 +14,14 @@ Keep ALL hard facts:
 - FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:", copy that whole line verbatim as the very first line of your output, once. It defines subtitles / captions as the speaking content (heard as voice only, never written on screen); it is not about text already in the image. Do not repeat it anywhere else and do not add any other wording about subtitles, captions or on-screen text.
 - Exact speech (t336u): if the prompt has the sentence starting "Exact speech:", copy it verbatim, once, in the same place (right before the first dialogue line, or inside the spoken transcript). The speaking text itself is never changed: do not repeat, split, merge, reword, translate, shorten or extend any spoken line, add no words to it, and never write a spoken line a second time anywhere else in the prompt.
 - Portraits (t340u): if the prompt has the paragraph starting "Single scene shot:", copy it verbatim, once, where it is. The video is one continuous shot of picture 1 (the scene); never write that it cuts, switches or transitions to a portrait or shows a portrait as a shot. Any portrait picture (<Picture 2>, <Picture 3> ... or reference image 2, 3 ...) only identifies a person in picture 1; keep those mentions as identity references.
-- Image keywords (t321u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. Those words are the few scene keywords already drawn in the start picture, kept in the background as they are; never turn the speaking content into those words or into any text on screen.
+- Image keywords (t321u/t369u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. It means: lettering already drawn in the start picture (a keyword set into the background) is kept and never erased, and may gently come alive; NO new text is ever added. Never take words from the visual description, the speaking lines or the scene title and put them on screen, and never write any new word, keyword or sign text into the prompt.
+- Art style (t369u): if the prompt has the sentence starting "Art style lock:", copy it verbatim, once. The video keeps the start picture's own art style exactly as named there (for example 3D animation / Pixar-style 3D cartoon). Keep that style name wherever the style is mentioned; never rewrite the style as live-action, photorealistic, realistic, real footage, real camera or a film shot.
 - The OUTPUT FORMAT line(s) at the very top (right after the NO SUBTITLES line if present), copied verbatim.
 - Every dialogue line verbatim (same words and punctuation, same order), each with its speaker's name and that speaker's voice (gender, age, voice name).
 - Who is in the clip and the cast lock (exactly these people, nobody else), their look and age.
 - Lighting / time of day and the real-time continuity of the moment.
 - Camera, visual style, setting region and era, and the sound rule (natural sound of the place, no music).
-- The sentence "Clean film image: only the scene fills the frame." copied verbatim once, near the top.
+- The sentence "Clean picture: only the scene fills the frame." copied verbatim once, near the top.
 - People's names exactly as written (do not romanize or translate names).
 - Speaker identity: <N> and <Ns> are the IDENTICAL actor N (any digits, e.g. <12>=<12s>); the letter s is a speech mode (self-talk / inner thought), not another person, portrait, costume, or voice. Copy any sentence starting "Speaker marks:" verbatim.
 - Spoken transcript: copy the block from BEGIN_SPOKEN_TRANSCRIPT through END_SPOKEN_TRANSCRIPT verbatim. Only those lines are spoken. Visual, scene title, actor, reference, FYI and direction text are silent and must never be read, summarized, or turned into narration. Copy any sentence starting "Spoken words:" verbatim.
@@ -36,7 +37,8 @@ The user gives a prompt already in the official H3 format. Return an improved pr
 FIRST LINE (t321u): if the prompt begins with the line starting "NO SUBTITLES:", copy that whole line verbatim as the very first line of your output, once. It defines subtitles / captions as the speaking content (heard as voice only, never written on screen); it is not about text already in the image. Do not repeat it anywhere else and do not add any other wording about subtitles, captions or on-screen text.
 Exact speech (t336u): if the prompt has the sentence starting "Exact speech:", copy it verbatim, once, in the same place (right before the first dialogue line, or inside the spoken transcript). The speaking text itself is never changed: do not repeat, split, merge, reword, translate, shorten or extend any spoken line, add no words to it, and never write a spoken line a second time anywhere else in the prompt.
 Portraits (t340u): if the prompt has the paragraph starting "Single scene shot:", copy it verbatim, once, where it is. The video is one continuous shot of picture 1 (the scene); never write that it cuts, switches or transitions to a portrait or shows a portrait as a shot. Any portrait picture (<Picture 2>, <Picture 3> ... or reference image 2, 3 ...) only identifies a person in picture 1; keep those mentions as identity references.
-Image keywords (t321u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. Those words are the few scene keywords already drawn in the start picture, kept in the background as they are; never turn the speaking content into those words or into any text on screen.
+Image keywords (t321u/t369u): if the prompt has the sentence starting "Image keywords:", copy it verbatim, once. It means: lettering already drawn in the start picture (a keyword set into the background) is kept and never erased, and may gently come alive; NO new text is ever added. Never take words from the visual description, the speaking lines or the scene title and put them on screen, and never write any new word, keyword or sign text into the prompt.
+Art style (t369u): if the prompt has the sentence starting "Art style lock:", copy it verbatim, once, right after the [Shot 1] style sentence. The video keeps <Picture 1>'s own art style exactly as named there (for example 3D animation / Pixar-style 3D cartoon). Keep the style name in the [Shot 1] opening; never rewrite the style as live-action, photorealistic, realistic, real footage, real camera or a film shot.
 1. The first line (the NO SUBTITLES line, or the H3 mode line when there is none) copied verbatim, then one blank line; when the NO SUBTITLES line is first, the H3 mode line follows it unchanged.
 2. Then exactly these three fields, each starting on its own line, in this order:
 integrated_multimodal_description: [Shot 1] ...
@@ -245,6 +247,16 @@ def validate(original: str, polished: str, backend: str) -> str:
     added = _added_text_words(original, polished)
     if added:
         return f"Strata 加了文字相关的词（{added}）"
+    try:  # t369u: 非写实画风（三维动画等）时 Strata 写进了写实 / 实拍的词 → 不通过
+        from config_prompt import ART_STYLE_LOCK_PREFIX, added_realism_words
+
+        real = added_realism_words(original, polished)
+        if real:
+            return f"Strata 把画风改成写实（{real}）"
+        if ART_STYLE_LOCK_PREFIX in original and ART_STYLE_LOCK_PREFIX not in polished:
+            return "画风锁定那句没保留"
+    except ImportError:
+        pass
     for line in _dialogue_lines(original, h3):
         if line not in polished:
             return f"台词没有原样保留：{line[:40]}"
@@ -268,8 +280,8 @@ def validate(original: str, polished: str, backend: str) -> str:
                 return f"「{prefix.strip()}」那句没有原样保留"
         lo, hi = 0.5, 2.0
     else:
-        if "Clean film image: only the scene fills the frame." in original and \
-                "Clean film image: only the scene fills the frame." not in polished:
+        if "Clean picture: only the scene fills the frame." in original and \
+                "Clean picture: only the scene fills the frame." not in polished:
             return "画面干净那句没保留"
         head = original.strip().splitlines()[0].strip()
         if head.startswith("OUTPUT FORMAT") and head not in polished:
@@ -340,10 +352,12 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
         restore_exact_speech_rule,
         restore_image_keywords_rule,
         restore_spoken_transcript,
+        restore_video_locked_rules,
     )
 
     out = restore_spoken_transcript(prompt, out)
     out = restore_image_keywords_rule(prompt, out)  # t321u
+    out = restore_video_locked_rules(prompt, out)  # t369u: 画风锁定句
     out = restore_exact_speech_rule(prompt, out)  # t336u
     _has_mono = ("Self-talk:" in (prompt or "") or bool(re.search(r"[<＜]\s*\d+\s*s\s*[>＞]", prompt or "")))
     _single_inner = ("Entire-scene self-talk:" in (prompt or "") or "Entire-scene inner monologue:" in (prompt or ""))
@@ -392,6 +406,7 @@ def polish_video_prompt(prompt: str, backend: str, timeout_s: float = POLISH_TIM
     from config_prompt import restore_portrait_reference_rule
 
     out = restore_portrait_reference_rule(prompt, out)  # t340u: 「Single scene shot:」恰好一句
+    out = restore_video_locked_rules(prompt, out)  # t369u: 最后再核对关键字句 + 画风锁定句
     why = f"Strata 精简完成：{len(prompt)} → {len(out)} 字（{secs:.1f} 秒）"
     print(f"[Strata 精简] {why}")
     return out, why

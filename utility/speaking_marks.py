@@ -33,6 +33,10 @@ SPEAKER_TOKEN_RE = re.compile(r"[<＜]\s*(\d+)\s*(s)?\s*[>＞]")
 # Number-only view of a speaker token (includes <Ns>). Used to find actor ids.
 SPEAKER_ID_RE = re.compile(r"[<＜]\s*(\d+)\s*s?\s*[>＞]")
 
+# t370u: 手工分节符 ``<s>``（没有数字）。加在某个 ``<n>`` 前面 = 从这一句起是新的一节；
+# 生场视频时按节一节一节生成。它不是说话人，不读出来，也不进视频提示词。
+SEGMENT_MARK_RE = re.compile(r"[<＜]\s*[sS]\s*[>＞]")
+
 SCENE_MONOLOGUE_RULE = """
 *** 自言自语 / self-talk
     ** 对白用 ``<N>``：N 是这一场 actor 里的第 N 个人。
@@ -50,6 +54,8 @@ class SpeechTurn:
     speaker: int
     text: str
     monologue: bool = False
+    # t370u: a manual ``<s>`` segment mark sits right before this turn.
+    cut_before: bool = False
 
 
 def strip_monologue_tag(body: str) -> tuple:
@@ -75,6 +81,7 @@ def strip_speaker_marks(text: str, *, pauses: bool = True) -> str:
     if pauses:
         out = PAUSE_MARK_RE.sub(" ", out)
     out = SPEAKER_TOKEN_RE.sub(" ", out)
+    out = SEGMENT_MARK_RE.sub(" ", out)  # t370u: <s> is a boundary, never spoken
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
@@ -99,15 +106,33 @@ def parse_speaking_turns(text: str) -> list:
     if not raw.strip():
         return []
     turns: list[SpeechTurn] = []
-    pos, who, mono = 0, 1, False
+    pos, who, mono, cut = 0, 1, False, False
     for m in SPEAKER_TOKEN_RE.finditer(raw):
         chunk = raw[pos:m.start()]
-        _append_turn(turns, who, chunk, mono)
+        cut = _append_chunk(turns, who, chunk, mono, cut)
         who = int(m.group(1))
         mono = bool(m.group(2))
         pos = m.end()
-    _append_turn(turns, who, raw[pos:], mono)
+    _append_chunk(turns, who, raw[pos:], mono, cut)
+    if turns:
+        turns[0].cut_before = False  # a mark before the first line splits nothing
     return turns
+
+
+def _append_chunk(turns: list, who: int, chunk: str, mono: bool, cut: bool) -> bool:
+    """t370u: one speaker chunk; ``<s>`` inside it starts a new segment (same speaker).
+
+    Returns whether a trailing ``<s>`` (no text after it) cuts before the next turn.
+    """
+    pending = bool(cut)
+    for k, piece in enumerate(SEGMENT_MARK_RE.split(str(chunk or ""))):
+        if k > 0:
+            pending = True
+        cleaned = piece.strip()
+        if cleaned:
+            turns.append(SpeechTurn(int(who), cleaned, bool(mono), pending))
+            pending = False
+    return pending
 
 
 def _append_turn(turns: list, who: int, chunk: str, token_mono: bool) -> None:
@@ -126,8 +151,48 @@ def format_speaking_turns(turns) -> str:
             continue
         speaker = int(getattr(t, "speaker", 1) or 1)
         mark = f"<{speaker}s>" if getattr(t, "monologue", False) else f"<{speaker}>"
+        if parts and getattr(t, "cut_before", False):
+            mark = "<s> " + mark  # t370u: keep the manual segment mark
         parts.append(f"{mark} {text}")
     return " ".join(parts).strip()
+
+
+def speaking_has_segment_marks(text: str) -> bool:
+    """t370u: speaking contains a manual ``<s>`` segment mark."""
+    return bool(SEGMENT_MARK_RE.search(str(text or "")))
+
+
+def speaking_segment_turns(text: str) -> list:
+    """t370u: speaking → segments (节), each a list of ``SpeechTurn``.
+
+    A new segment starts at every manual ``<s>`` mark and wherever self-talk
+    (``<Ns>``) starts or stops, so a run of ``<Ns>`` lines is its own segment.
+    One segment (or none) means the scene is generated in one go.
+    """
+    groups: list = []
+    for turn in parse_speaking_turns(text):
+        if groups and not turn.cut_before and bool(turn.monologue) == bool(groups[-1][-1].monologue):
+            groups[-1].append(turn)
+        else:
+            groups.append([turn])
+    return groups
+
+
+def format_segment_turns(turns) -> str:
+    """t370u: canonical speaking for a slice of turns; the first turn's ``<s>`` is dropped."""
+    out = [copy.copy(t) for t in (turns or [])]
+    if out:
+        out[0].cut_before = False
+    return format_speaking_turns(out)
+
+
+def speaking_segments(text: str) -> list:
+    """t370u: speaking text of each segment (no ``<s>`` inside a one-segment slice)."""
+    return [format_segment_turns(g) for g in speaking_segment_turns(text)]
+
+
+def speaking_segment_count(text: str) -> int:
+    return len(speaking_segment_turns(text))
 
 
 def split_speaking_turns(text: str) -> list:
