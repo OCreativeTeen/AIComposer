@@ -36,6 +36,12 @@ def _norm(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
+def _spoken(text: str) -> str:
+    """t380u: 只比讲话内容：加 <s> / 句中补一个同样的说话人标记不算改了文字。"""
+    from utility.speaking_marks import SEGMENT_MARK_RE, strip_speaker_marks
+    return "".join(strip_speaker_marks(SEGMENT_MARK_RE.sub(" ", str(text or ""))).split())
+
+
 def _clamp_speaker(n) -> int:
     try:
         return min(3, max(1, int(n)))
@@ -52,7 +58,7 @@ def turn_spans_from_timing(scene: dict, turns: list):
     tm = scene.get("speaking_timing") if isinstance(scene, dict) else None
     if not isinstance(tm, dict) or not turns:
         return None
-    if _norm(tm.get("text")) != _norm(scene.get("speaking")):
+    if _spoken(tm.get("text")) != _spoken(scene.get("speaking")):
         return None
     secs = []
     for x in tm.get("sections") or []:

@@ -159,22 +159,67 @@ class SegmentMarkInsertTest(unittest.TestCase):
 
     def test_refused_positions(self):
         for text, bit in (
-            ("<1> 你好|。<2> 嗯。", "前面"),             # not before a <n>
-            ("<1> 你|好。<2> 嗯。", "前面"),
-            ("<1> 你好。<|2> 嗯。", "前面"),             # inside the mark
+            ("<1> 你好。<|2> 嗯。", "标记里面"),          # inside the mark
+            ("<1|> 你好。<2> 嗯。", "标记里面"),
             ("|<1> 你好。<2> 嗯。", "最开头"),            # very start
             ("  \n|<1> 你好。", "最开头"),
             ("<1> 你好。|<2>", "最末尾"),                 # mark with nothing after it
             ("<1> 你好。|<2>  ", "最末尾"),
-            ("<1> 你好。<2> 嗯。|", "前面"),              # very end
+            ("<1> 你好。<2> 嗯。|", "最末尾"),            # very end
+            ("<1> 你好。<2> 嗯。  |", "最末尾"),
+            ("<1> 你好。<2> |嗯。", "前半句是空的"),     # right after a mark
+            ("<1> 你好。<2>\n|嗯。", "前半句是空的"),
+            ("你|好。", "说话人标记"),                    # no owner mark
             ("<1> 你好。<s>|<2> 嗯。", "已经有"),          # duplicate (before)
             ("<1> 你好。<s> |<2> 嗯。", "已经有"),
             ("<1> 你好。|<s> <2> 嗯。", "已经有"),         # duplicate (after)
+            ("<1> 你好 <s>|吗。<2> 嗯。", "已经有"),
         ):
             new, pos, why = self._ins(text)
             self.assertIsNone(new, text)
             self.assertIsNone(pos, text)
             self.assertIn(bit, why, text)
+
+    def test_mid_sentence_splits_with_same_speaker(self):
+        """t380u: cursor inside a line → <s> plus the same speaker mark."""
+        new, pos, why = self._ins("<1> 你好|吗。<2> 嗯。")
+        self.assertEqual(why, "")
+        self.assertEqual(new, "<1> 你好 <s> <1> 吗。<2> 嗯。")
+        self.assertEqual(new[pos:], "吗。<2> 嗯。")
+        new, pos, why = self._ins("<1>\n好，我試試……|寫完了，居然沒那麼可怕。\n<2>\n看，你不是做不到。")
+        self.assertEqual(why, "")
+        self.assertEqual(new, "<1>\n好，我試試……\n<s> <1>\n寫完了，居然沒那麼可怕。\n<2>\n看，你不是做不到。")
+        self.assertEqual(new[pos:pos + 3], "寫完了")
+        new, _pos, why = self._ins("<2s> 我想|想看。<1> 好。")
+        self.assertEqual(new, "<2s> 我想 <s> <2s> 想看。<1> 好。")
+        new, _pos, why = self._ins("<1> 甲。<12> 乙乙|丙丙")
+        self.assertEqual(new, "<1> 甲。<12> 乙乙 <s> <12> 丙丙")
+
+    def test_mid_sentence_segments(self):
+        from utility.speaking_marks import parse_speaking_turns, speaking_segments
+
+        new, _pos, _ = self._ins("<1>\n好，我試試……|寫完了。\n<2>\n看，你不是做不到。")
+        segs = speaking_segments(new)
+        self.assertEqual(len(segs), 2)
+        first = parse_speaking_turns(segs[0])
+        rest = parse_speaking_turns(segs[1])
+        self.assertEqual([(t.speaker, t.text) for t in first], [(1, "好，我試試……")])
+        self.assertEqual([(t.speaker, t.text) for t in rest], [(1, "寫完了。"), (2, "看，你不是做不到。")])
+        self.assertTrue(all(not t.cut_before for t in rest))
+
+    def test_mid_sentence_keeps_timing(self):
+        """t380u: speaking_timing stays usable after the extra <s> <n> (cut lands inside speaker 1's line)."""
+        from utility.video_segments import plan_first_segment, segment_cut_seconds
+
+        old = "<1>\n好，我試試寫完了。\n<2>\n看，你不是做不到。"
+        new, _pos, _ = self._ins("<1>\n好，我試試|寫完了。\n<2>\n看，你不是做不到。")
+        scene = {"speaking": new, "speaking_timing": {"text": old, "sections": [
+            {"speaker": 1, "start": 0.0, "end": 4.0, "text": "好，我試試寫完了。"},
+            {"speaker": 2, "start": 4.2, "end": 8.0, "text": "看，你不是做不到。"}]}}
+        plan = plan_first_segment(scene)
+        cut, source, _spans = segment_cut_seconds(scene, plan, 8.7)
+        self.assertEqual(source, "timing")
+        self.assertTrue(0.5 < cut < 4.0, cut)
 
     def test_hotkey_wiring(self):
         cfg = Path(ROOT, "gui/workflow/wf_config.py").read_text(encoding="utf-8")
@@ -186,6 +231,7 @@ class SegmentMarkInsertTest(unittest.TestCase):
         self.assertIn("segment_mark_insert(", body)
         self.assertIn("messagebox.showwarning", body)
         self.assertIn("self.update_current_scene()", body)
+        self.assertIn('mark_set("insert"', body)
         for gone in ("deepcopy", "scenes.insert", "max_id"):
             self.assertNotIn(gone, body)
 

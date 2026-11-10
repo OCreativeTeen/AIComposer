@@ -669,10 +669,11 @@ class SpeakingMixin:
         return bool(st & 0x20000) or bool(st & 0x0008)
 
     def _on_speaking_ctrl_s_insert_segment_mark(self, event=None):
-        """t373u: Ctrl+S：在光标处加手工分节符 <s>（不再把这一场拆成两场；生场视频时按 <s> 一节一节生成）。
+        """t373u / t380u: Ctrl+S：在光标处加手工分节符 <s>（不再把这一场拆成两场；生场视频时按 <s> 一节一节生成）。
 
-        光标必须在某个说话人标记 <n> / <ns> 前面（中间只隔空格 / 换行也行），不能在最开头 / 最末尾，
-        这里已经有 <s> 也不再加；不对就弹窗提醒，什么都不加。加好后照常写回这一场并保存。"""
+        光标在某个说话人标记 <n> / <ns> 前面：加 <s>。光标在一句话中间：加 <s> 再补一个同样的说话人标记，
+        这句话切成两半（前半句归前一节，后半句留在原场）。最开头 / 最末尾 / 标记里面 / 已经有 <s>：弹窗提醒，什么都不加。
+        加好后照常写回这一场并保存。"""
         if not self._speaking_shortcuts_guard():
             return "break"
         from utility.speaking_marks import segment_mark_insert
@@ -684,7 +685,10 @@ class SpeakingMixin:
         if new_text is None:
             messagebox.showwarning("加分节符 <s>", why, parent=self.root)
             return "break"
-        self.scene_speaking.insert(ins, new_text[pos:new_pos])  # 插在光标处，光标停在 <s> 后面
+        self.scene_speaking.delete("1.0", "end")
+        self.scene_speaking.insert("1.0", new_text)
+        self.scene_speaking.mark_set("insert", f"1.0+{new_pos}c")
+        self.scene_speaking.see("insert")
         self._cancel_scene_debounce_timer()
         self.update_current_scene()  # 正常的写回场景 + 保存 JSON
         return "break"

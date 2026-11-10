@@ -188,15 +188,24 @@ def speaking_segments(text: str) -> list:
 _SEGMENT_MARK_AT_END_RE = re.compile(r"[<＜]\s*[sS]\s*[>＞]\s*$")
 
 
+_INSIDE_MARK_BEFORE_RE = re.compile(r"[<＜][^<＜>＞\n]*$")
+_INSIDE_MARK_AFTER_RE = re.compile(r"^[^<＜>＞\n]*[>＞]")
+
+
+def _has_spoken(text: str) -> bool:
+    return bool(strip_speaker_marks(SEGMENT_MARK_RE.sub(" ", str(text or ""))).strip())
+
+
 def segment_mark_insert(text: str, pos: int) -> tuple:
-    """t373u: 讲话框 Ctrl+S = 在光标处加手工分节符 ``<s>``（不再把场景拆成两场）。
+    """t373u / t380u: 讲话框 Ctrl+S = 在光标处加手工分节符 ``<s>``（不再把场景拆成两场）。
 
     ``pos`` = 光标前的字数。可以加：返回 ``(新文本, 加完后的光标位置, "")``；不能加：``(None, None, 原因)``。
-    规则：
-    - 光标后面紧跟一个说话人标记 ``<n>`` / ``<ns>``（例 ``<2>``、``<12>``、``<1s>``）；中间只隔空格 / 换行也算。
-    - 不能在最开头（光标前面没有讲话）也不能在最末尾（这个标记后面没有讲话）。
-    - 这里已经有 ``<s>``（光标前紧挨着或光标后紧跟）就不再加。
-    加的是 ``<s>``；光标正好贴着 ``<n>`` 时加 ``<s> ``（留一个空格）。
+    两种位置都行：
+    - 光标后面紧跟一个说话人标记 ``<n>`` / ``<ns>``（中间只隔空格 / 换行也算）：加 ``<s>``。
+    - t380u：光标在某句讲话的中间：把这句话切成两半，光标处加 ``<s>`` 再补一个同样的说话人标记
+      （原来是 ``<1>`` 就补 ``<1>``，``<2s>`` 就补 ``<2s>``）。前半句归前一节（生成时新增在前面的那一场），
+      后半句留在后一节（原来那一场）。
+    不能加：最开头 / 最末尾（某一边没有讲话）、光标在标记里面、光标前面没有说话人标记、这里已经有 ``<s>``。
     """
     text = str(text or "")
     try:
@@ -204,19 +213,41 @@ def segment_mark_insert(text: str, pos: int) -> tuple:
     except (TypeError, ValueError):
         return None, None, "读不出光标位置。"
     before, after = text[:pos], text[pos:]
+    if _INSIDE_MARK_BEFORE_RE.search(before) and _INSIDE_MARK_AFTER_RE.search(after):
+        return None, None, "光标在标记里面，请把光标移到标记的前面或者讲话中间再按 Ctrl+S。"
     lead = len(after) - len(after.lstrip())
     if SEGMENT_MARK_RE.match(after, lead) or _SEGMENT_MARK_AT_END_RE.search(before):
         return None, None, "这里已经有分节符 <s>，不用再加。"
-    mark = SPEAKER_TOKEN_RE.match(after, lead)
-    if not mark:
-        return None, None, ("分节符 <s> 只能加在某个说话人标记（例如 <1>、<2>、<1s>）的前面。\n"
-                            "请把光标放在那个 <n> 的前面再按 Ctrl+S。")
-    if not strip_speaker_marks(SEGMENT_MARK_RE.sub(" ", before)).strip():
+    if not _has_spoken(before):
         return None, None, "最开头不能加分节符 <s>：前面还没有讲话。"
-    if not strip_speaker_marks(SEGMENT_MARK_RE.sub(" ", after[mark.end():])).strip():
-        return None, None, "最末尾不能加分节符 <s>：这个说话人标记后面没有讲话。"
-    piece = "<s>" if lead else "<s> "
-    return before + piece + after, pos + len(piece), ""
+    mark = SPEAKER_TOKEN_RE.match(after, lead)
+    if mark:
+        if not _has_spoken(after[mark.end():]):
+            return None, None, "最末尾不能加分节符 <s>：这个说话人标记后面没有讲话。"
+        piece = "<s>" if lead else "<s> "
+        return before + piece + after, pos + len(piece), ""
+    # t380u: 光标在一句话中间 → <s> + 同一个说话人标记
+    owner = None
+    for owner in SPEAKER_TOKEN_RE.finditer(before):
+        pass
+    if owner is None:
+        return None, None, "光标前面没有说话人标记（例如 <1>、<2>、<1s>），不知道这句话是谁说的，不能加 <s>。"
+    head = before[owner.end():]
+    if not _has_spoken(head):
+        return None, None, "光标紧挨在说话人标记后面，前半句是空的，不能在这里加 <s>。"
+    nxt = SPEAKER_TOKEN_RE.search(after)
+    tail = after[:nxt.start()] if nxt else after
+    if not _has_spoken(tail):
+        return None, None, "最末尾不能加分节符 <s>：光标后面这句话没有讲话了。"
+    speaker = f"<{int(owner.group(1))}{'s' if owner.group(2) else ''}>"
+    newline_style = text[owner.end():owner.end() + 1] in ("\n", "\r")
+    before_core = before.rstrip()
+    after_core = after.lstrip()
+    if newline_style:
+        piece = f"\n<s> {speaker}\n"
+    else:
+        piece = f" <s> {speaker} "
+    return before_core + piece + after_core, len(before_core) + len(piece), ""
 
 
 def speaking_segment_count(text: str) -> int:
