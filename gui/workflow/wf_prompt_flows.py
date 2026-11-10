@@ -286,6 +286,9 @@ class PromptFlowsMixin:
         )
         if not tok:
             return None
+        from utility.last_frame_chain import mark_segment_chain_pending
+
+        mark_segment_chain_pending(tok["clone"])  # t386u: 这一节的末帧由 _chain_video_segment 增强，导入时不重复
         print(f"✂️ 分节：第 1/{tok['segments']} 节拆成新场景 id={tok['clone'].get('id')}（插在前面），"
               f"分界 {tok['cut']} 秒（{'时间轴' if tok['cut_source'] == 'timing' else '按字数估'}"
               f"{'，场景音频已切开' if tok['audio_cut'] else ''}）")
@@ -312,6 +315,9 @@ class PromptFlowsMixin:
     def _undo_video_segment(self, token) -> None:
         from utility import video_segments as vs
 
+        from utility.last_frame_chain import clear_segment_chain_pending
+
+        clear_segment_chain_pending((token or {}).get("clone"))  # t386u
         wf = self.workflow
         if not wf:
             return
@@ -356,6 +362,9 @@ class PromptFlowsMixin:
             self.root.after(0, lambda: finish(path, enhanced, note))
 
         def finish(path, enhanced, note) -> None:
+            from utility.last_frame_chain import clear_segment_chain_pending
+
+            clear_segment_chain_pending(clone)  # t386u: 分节接完了；以后再导入这一场照常增强
             written = ""
             if path and os.path.isfile(path):
                 try:

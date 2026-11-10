@@ -407,12 +407,12 @@ class MediaScanner:
         if not video_import_updates_image_slots(media_type):
             print("🧊 导入或生成 zero 视频时不改写 zero 图片（封面原图 zero_image_last 保持冻结）")
             return
-        last_image = self.workflow.ffmpeg_processor.extract_frame(video_path, False)
+        frame = self.workflow.ffmpeg_processor.extract_frame(video_path, False)
 
-        if last_image is None:
+        if frame is None:
             print("⚠️ 无法提取视频末帧，跳过末帧图像替换")
             return
-        last_image = self.workflow.ffmpeg_processor.resize_image_smart(last_image)
+        last_image = self.workflow.ffmpeg_processor.resize_image_smart(frame)
         if last_image is None:
             print("⚠️ 末帧图像缩放失败，跳过末帧图像替换")
             return
@@ -422,15 +422,51 @@ class MediaScanner:
         # check if has next scene , if yes,   ask use if want to replace next scene['clip_image'] with last_image ? if yes, replace it.
 
         if str(media_type or "") == "clip" and next_scene:
+            raw_dest = ""
             try:
-                write_chained_next_zero_image_last(next_scene, last_image)
+                raw_dest = write_chained_next_zero_image_last(next_scene, last_image)
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️ 下一场 zero_image_last 未写入 clip 末帧衔接：{exc}")
+            if raw_dest:  # t386u: 每次导入都在后台按「尾帧增强」增强末帧，好了换掉下一场 zero_image_last
+                self._enhance_chained_last_frame(current_scene, next_scene, raw_dest, frame)
 
         # t342u: 导入/生成视频不再改写任何一场的 clip_image（原来 ENH2 会把末帧写成下一场的 clip_image）。
         #elif next_scene:
         #    dialog = messagebox.askyesno("替换下一场景图片", "是否要替换下一场景图片？")
         #    if dialog:
         #        refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
+
+    def _enhance_chained_last_frame(self, current_scene, next_scene, raw_dest, frame):
+        """t386u: 下一场 zero_image_last 已放原末帧（raw_dest）；后台按项目「尾帧增强」增强 frame，
+        好了且下一场还是 raw_dest 时换成增强图（write_chained_next_zero_image_last）。
+        生场视频分节的克隆那一节跳过（分节流程自己增强并写回原场景，不重复）。失败只打警告，原末帧留着。"""
+        try:
+            from utility import last_frame_chain as lfc
+
+            if lfc.is_segment_chain_pending(current_scene):
+                print("🔗 分节这一节：末帧由分节流程增强后接到原场景，导入时不再增强")
+                return
+            import project_manager
+
+            pc = project_manager.PROJECT_CONFIG or {}
+            wf = self.workflow
+
+            def still_valid():
+                return any(s is next_scene for s in (getattr(wf, "scenes", None) or []))
+
+            def written(path):
+                cb = getattr(self, "on_chain_written", None)
+                if callable(cb):
+                    cb(path)
+                else:
+                    wf.save_scenes_to_json()
+
+            lfc.start_enhanced_chain(
+                next_scene, raw_dest, frame,
+                mode=lfc.saved_enhance_mode(pc), style=lfc.saved_visual_style(pc),
+                dispatch=getattr(self, "ui_call", None), still_valid=still_valid, on_written=written,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 下一场 zero_image_last 末帧增强没有启动，保留原末帧：{exc}")
 
 

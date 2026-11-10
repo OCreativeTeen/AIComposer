@@ -181,6 +181,16 @@ class WorkflowGUI(LayoutMixin, ConfigMixin, FinalizePublishMixin, PromptFlowsMix
         
         # 初始化媒体扫描器（必须在启动后台线程之前），未选择项目时（如 YT 管理）跳过
         self.media_scanner = MediaScanner(self.workflow, 10) if self.workflow else None
+        if self.media_scanner is not None:  # t386u: 导入末帧后台增强好了 → 主线程写回下一场 zero_image_last、保存、刷新图
+            def _chain_written(_path, _gui=self):
+                if _gui.workflow:
+                    _gui.workflow.save_scenes_to_json()
+                preview = getattr(_gui, "load_all_images_preview", None)  # 只刷新图，不重载输入框（免得丢掉没存的改动）
+                if callable(preview):
+                    preview()
+
+            self.media_scanner.ui_call = lambda fn: self.root.after(0, fn)
+            self.media_scanner.on_chain_written = _chain_written
 
         # 必须先 load_scenes，再启动后台线程：否则 _perform_video_check 里 save_scenes_to_json 会在
         # self.scenes 未就绪时执行，报「无 scenes」或把空列表写盘覆盖项目。
