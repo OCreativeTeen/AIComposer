@@ -928,10 +928,10 @@ def open_picture_prompt_dialog(
         """t366u: 提高分辨率：每一场用自己选中的图，按原图比例出 1920 级（utility.image_upscale）；
         Grok / Gemini 用 build_upscale_prompt，MOSS / QN 用 build_comfy_upscale_prompt + 反向提示 + 固定画布。
         meta["upscale_size"] = 目标尺寸：结果回来后对齐（Lanczos，比例变了就居中裁）再写回。"""
-        from utility.image_upscale import comfy_upscale_canvas, upscale_target_for_image
+        from utility.image_upscale import comfy_upscale_canvas, upscale_init_denoise, upscale_target_for_image
 
         fyi_up = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
-        # t373u: 项目画风写进第一条（ART STYLE LOCK）
+        # t377u: 项目画风只当画风说明写进第一条（FAITHFUL RESTORE：看上去一模一样，不改 / 不加强画风）
         style_up = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
 
         def _upscale_job(sc) -> tuple:
@@ -948,7 +948,8 @@ def open_picture_prompt_dialog(
                 canvas = comfy_upscale_canvas(target)
                 pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend=comfy, fyi=fyi_up, style=style_up)
                 return pos, [path], {"aspect": "", "actors": [], "base": path, "comfy": True, "negative": neg,
-                                     "size": canvas, "upscale_size": target}
+                                     "size": canvas, "upscale_size": target,
+                                     "init_denoise": upscale_init_denoise(comfy)}  # t377u
             prompt = prepend_fyi(config_prompt.build_upscale_prompt(target, style_up), fyi_up, include=bool(fyi_up))
             return prompt, [path], {"aspect": "", "actors": [], "base": path, "upscale_size": target}
 

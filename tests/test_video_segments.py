@@ -257,17 +257,17 @@ class LastFrameUpscaleTest(unittest.TestCase):
 
         base_pos, base_neg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss")
         pos, neg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss", style="三维卡通 (Pixar-Art-Cartoon)")
-        self.assertIn("Keep the original art style.", base_pos)
-        self.assertIn("3D animation", pos)
-        self.assertIn("never turns photorealistic", pos)
-        self.assertIn("photorealistic", neg)
-        self.assertNotIn("photorealistic", base_neg)
-        self.assertTrue(neg.startswith(cp.COMFY_UPSCALE_NEGATIVE))
+        # t377u: style is only a description (faithful restore); the negative is the same for every style
+        self.assertNotIn("currently in", base_pos)
+        self.assertIn("currently in 3D animation style", pos)
+        self.assertIn("not a request to change, strengthen or improve the style", pos)
+        self.assertNotIn("photorealistic", pos)
+        self.assertEqual(neg, base_neg)
+        self.assertEqual(neg, cp.COMFY_UPSCALE_NEGATIVE)
         rpos, rneg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss", style="写实 (Realistic)")
-        self.assertNotIn("never turns photorealistic", rpos)
-        self.assertNotIn("photorealistic", rneg)  # t373u: realistic style bans cartoon looks instead
-        self.assertIn("cartoon", rneg)
-        self.assertTrue(pos.startswith(cp.IMAGE_STYLE_LOCK_PREFIX))  # t373u: style lock is the first line
+        self.assertEqual(rneg, neg)
+        self.assertIn("写实 (Realistic)", rpos)
+        self.assertTrue(pos.startswith(cp.UPSCALE_RESTORE_PREFIX))
 
 
 class WiringTest(unittest.TestCase):
@@ -295,7 +295,7 @@ class WiringTest(unittest.TestCase):
         flows = self._src("gui/workflow/wf_prompt_flows.py")
         for key in ('"segments": self._video_segment_count', '"split": self._split_video_segment',
                     '"unsplit": self._undo_video_segment', '"chain": self._chain_video_segment',
-                    "write_chained_next_zero_image_last(scene, path)", "vs.moss_upscale("):
+                    "write_chained_next_zero_image_last(scene, path)", "vs.enhance_segment_last_frame("):
             self.assertIn(key, flows)
 
     def test_segment_mark_never_in_video_prompt(self):

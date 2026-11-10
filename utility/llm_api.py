@@ -1584,7 +1584,8 @@ class LLMApi:
         extra_params = dict(extra) if isinstance(extra, dict) else {}
         shown_params = {k: v for k, v in extra_params.items()
                         if k not in ("image_backend", "video_backend", "orientation", "text_backend", "portrait_refs", "chrome_account",
-                                     "comfy_backend", "comfy_negative", "comfy_size") and v not in (None, "")}
+                                     "comfy_backend", "comfy_negative", "comfy_size", "comfy_init_denoise")
+                        and v not in (None, "")}
         if shown_params:
             ttk.Label(
                 model_frame,
@@ -1869,6 +1870,8 @@ class LLMApi:
                             _cf = {"negative": extra_params.get("comfy_negative"), "adapt": False,
                                    "width": _sz[0] if len(_sz) == 2 else None,
                                    "height": _sz[1] if len(_sz) == 2 else None}
+                            if extra_params.get("comfy_init_denoise") is not None:  # t377u: 提高分辨率
+                                _cf["init_denoise"] = extra_params.get("comfy_init_denoise")
                         if use_moss:
                             from .sd_image_processor import generate_image_moss_edit
                             img = generate_image_moss_edit(prompt, list(image_paths), status=_cli_set_status, **_cf)

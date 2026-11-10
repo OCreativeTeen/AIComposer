@@ -121,12 +121,12 @@ class FitTest(unittest.TestCase):
 class UpscalePromptTest(unittest.TestCase):
     def test_grok_prompt_is_strict(self):
         p = cp.build_upscale_prompt((1920, 1080))
-        for must in ("UPSCALE ONLY", "exactly 1920x1080", "16:9 landscape", "same aspect ratio",
-                     "Keep the original style", "The style must not change", "Keep the original structure",
-                     "Nothing in the picture may change at all", "composition", "faces", "poses", "clothing",
-                     "objects", "text", "colors", "lighting", "camera framing",
-                     "Only increase resolution, sharpness and fine detail", "保持原来的画风", "保持原来的结构",
-                     "画风不能变", "输出尺寸 1920x1080"):
+        for must in ("FAITHFUL RESTORE", "FAITHFUL UPSCALE / RESTORE ONLY", "exactly 1920x1080", "16:9 landscape",
+                     "same aspect ratio", "look exactly the same", "same art style at the same strength",
+                     "contrast, brightness, saturation", "No color grading", "Keep the picture identical",
+                     "composition", "faces", "poses", "clothing", "objects", "text", "colors", "lighting",
+                     "camera framing", "Only restore image quality", "remove noise", "recover fine detail",
+                     "看上去一模一样", "不调色", "不改画风", "输出尺寸 1920x1080"):
             self.assertIn(must, p, must)
         self.assertNotIn("OUTPUT FORMAT", p)  # no project aspect line
         self.assertIn("9:16 portrait", cp.build_upscale_prompt((1080, 1920)))
@@ -136,18 +136,19 @@ class UpscalePromptTest(unittest.TestCase):
 
     def test_comfy_prompt_and_negative(self):
         pos, neg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss")
-        self.assertTrue(_body(pos).startswith("Upscale image 1 to a sharp, high-resolution 1920x1080"))
-        self.assertIn("Keep the original art style.", pos)
+        self.assertTrue(_body(pos).startswith("Restore image 1 as a clean, sharp, high-resolution 1920x1080"))
+        self.assertIn("same art style at the same strength", pos)
         self.assertNotIn("16:9", pos)
         self.assertNotIn("OUTPUT FORMAT", pos)
         qpos, qneg = cp.build_comfy_upscale_prompt((1920, 1080), backend="qn")
-        self.assertIn("Upscale Picture 1", qpos)
+        self.assertIn("Restore Picture 1", qpos)
         self.assertEqual(neg, qneg)
-        for must in ("changed composition", "new objects", "different style", "extra people", "altered face",
-                     "text changes", "blurry", "noise", "sharpening halos", "artifacts"):
+        for must in ("changed composition", "new objects", "style change", "extra people", "altered face",
+                     "text changes", "blurry", "noise", "sharpening halos", "artifacts", "more cartoonish",
+                     "more realistic", "color shift", "higher contrast", "brighter", "oversaturated"):
             self.assertIn(must, neg, must)
         fpos, _ = cp.build_comfy_upscale_prompt((1920, 1080), backend="qn", fyi="  让脸更清楚  ")
-        self.assertTrue(_body(fpos).startswith("让脸更清楚\nUpscale Picture 1"))
+        self.assertTrue(_body(fpos).startswith("让脸更清楚\nRestore Picture 1"))
 
     def test_existing_grok_gemini_prompts_unchanged(self):
         # digest taken at import (other test modules later swap in a project_manager stub)
@@ -207,11 +208,12 @@ class DialogWiringTest(unittest.TestCase):
     def test_result_is_fitted_and_written_at_target_size(self):
         om = self.flows.split("def open_manual", 1)[1].split("\n        def batch_scenes", 1)[0]
         self.assertIn("upscale=None", om)
-        self.assertIn("fit_to_size(pil_img, upscale)", om)
+        self.assertIn("finish_upscale(pil_img, upscale, images[0] if images else None)", om)  # t377u
+        self.assertIn('extra["comfy_init_denoise"] = comfy["init_denoise"]', om)
         self.assertIn("exact_size=tuple(upscale)", om)
         batch = self.flows.split("def _run_picture_batch", 1)[1]
         apply = batch.split("def apply(scene, img, label)", 1)[1].split("\n        def ", 1)[0]
-        self.assertIn("fit_to_size(img, up)", apply)
+        self.assertIn("finish_upscale(img, up, upscale_base.get(id(scene)))", apply)  # t377u
         self.assertIn("exact_size=up", apply)
         rep = self.images.split("def _replace_current_clip_image_from_pil", 1)[1].split("\n    def ", 1)[0]
         self.assertIn("exact_size=None", rep)

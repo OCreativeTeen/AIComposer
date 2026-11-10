@@ -466,6 +466,7 @@ def open_video_prompt_dialog(
             "audio_mode": audio_mode_var.get(),
             "strata_polish": bool(polish_var.get()),  # t166u
             "h3_workflow": h3_wf_var.get(),  # t216u: MiniMax 工作流 i2v / r2v
+            "last_frame_enhance": enhance_var.get(),  # t376u: 分节尾帧增强 none / moss / qn / grok
         }
 
     def remember() -> None:
@@ -907,7 +908,7 @@ def open_video_prompt_dialog(
         advanced, bg_region, bg_era, host_narrator,
         style=(get_style() or "").strip(), actor_var=actor_var,
         initial=bool(saved_choice.get("background", True)) if isinstance(saved_choice, dict) else True,
-        pady=(0, 8),
+        pady=(0, 8), compact=True,  # t376u: 窄版，括号说明 / 场景风格折到下一行
     )
     # t235u: 提交前可改的背景 / 风格快照（on_go 读这里，避免只改主窗口却用到开窗时的旧值）
     _look = {
@@ -958,7 +959,7 @@ def open_video_prompt_dialog(
     _bg_box.pack(in_=lower, side=tk.LEFT, anchor=tk.N)
     _bg_box.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
     actions.pack_forget()
-    actions.pack(in_=lower, side=tk.LEFT, anchor=tk.N, padx=(16, 0))
+    actions.pack(in_=lower, side=tk.LEFT, anchor=tk.N, padx=(12, 0))
     actions.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
 
     from gui.clip_image_choice import pack_clip_image_choice
@@ -1021,6 +1022,14 @@ def open_video_prompt_dialog(
         _rb = ttk.Radiobutton(h3_wf_box, text=label, value=value, variable=h3_wf_var)
         _rb.pack(anchor=tk.W)
         h3_wf_radios.append(_rb)
+    # t376u: 尾帧增强：分节时上一节视频的末帧怎么增强后放进下一节的 zero_image_last（起始图）；记在项目 video_prompt
+    from utility import video_segments as _vs_enh
+
+    enhance_var = tk.StringVar(master=dlg, value=_vs_enh.normalize_last_frame_enhance(_sv.get("last_frame_enhance")))
+    enhance_box = ttk.LabelFrame(actions, text="尾帧增强", padding=(8, 4))
+    enhance_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
+    for value, label in _vs_enh.LAST_FRAME_ENHANCE_OPTIONS:
+        ttk.Radiobutton(enhance_box, text=label, value=value, variable=enhance_var).pack(anchor=tk.W)
     audio_box = ttk.LabelFrame(actions, text="场景音频" + ("" if _has_audio else "（这一场没有音频）"), padding=(8, 4))
     audio_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     audio_radios = []
@@ -1144,13 +1153,18 @@ def open_video_prompt_dialog(
                  and not single and not _seg_scenes)
         if single:
             _ep_note = (f"这一场的讲话按 <Ns> / <s> 分成 {_segs[0]} 节，一节一节生成：每节做完插成前面一场，"
-                        "末帧用 MOSS 提高分辨率后作为下一节的起始图（ComfyUI 不通就用原末帧）。")
+                        + ("末帧不增强，直接作为下一节的起始图。" if enhance_var.get() == "none" else
+                           f"末帧用「{_vs_enh.last_frame_enhance_label(enhance_var.get())}」提高分辨率后作为下一节的起始图"
+                           "（增强失败就用原末帧）。"))
         else:
             _ep_note = (
                 f"将用以上选项生成第 {k_no}–{m_no} 场的视频，共 {n} 场。"
                 + (" MiniMax 双机：两台同时跑，先做完的接下一场。" if _dual
                    else " 一场做完、下载好再提交下一场。")
-                + (f" 其中 {_seg_scenes} 场的讲话要分节（<Ns> / <s>），一节一节生成，末帧提高分辨率后接下一节。"
+                + (f" 其中 {_seg_scenes} 场的讲话要分节（<Ns> / <s>），一节一节生成，末帧"
+                   + ("不增强直接" if enhance_var.get() == "none"
+                      else f"用「{_vs_enh.last_frame_enhance_label(enhance_var.get())}」提高分辨率后")
+                   + "接下一节。"
                    if _seg_scenes else "")
             )
         if not _confirm_before_submit(episode_note=_ep_note):
@@ -1317,14 +1331,19 @@ def open_video_prompt_dialog(
                 return
             sg["token"] = None  # 这一节做成了，克隆留下
             state["parts"] += 1
-            pvar.set(f"第 {i + 1}/{n} 场（{label}）：这一节做好了；末帧用 MOSS 提高分辨率，接下一节…")
+            _enh = _vs_enh.normalize_last_frame_enhance(enhance_var.get())
+            pvar.set(f"第 {i + 1}/{n} 场（{label}）：这一节做好了；"
+                     + ("末帧不增强，" if _enh == "none" else f"末帧用「{_vs_enh.last_frame_enhance_label(_enh)}」提高分辨率，")
+                     + "接下一节…")
             style_now = (_look.get("visual_style") or get_style() or "").strip()
+            # Grok Image 增强用这次提交选的 Chrome 账户；MiniMax 提交没选过就用上次记下的
+            _enh_account = (account or _last_submit.get("account") or "") if _enh == "grok" else ""
 
             def _status(msg) -> None:
                 print(f"🎞️ 分节末帧提高分辨率：{msg}")
 
             def _chained(path, enhanced, note) -> None:
-                if not enhanced:
+                if not enhanced and _enh != "none":
                     print(f"⚠️ 分节：{label} 末帧没有提高分辨率（{note}），用原末帧接下一节")
                 sg["part"] += 1
                 sg["start"] = path or str((tok.get("scene") or {}).get("zero_image_last") or "")
@@ -1339,7 +1358,8 @@ def open_video_prompt_dialog(
                 _chained("", False, "没有接末帧的功能")
                 return
             try:
-                chain(tok, style_now, _status, lambda p, e, nt: dlg.after(0, lambda: _chained(p, e, nt)))
+                chain(tok, style_now, _status, lambda p, e, nt: dlg.after(0, lambda: _chained(p, e, nt)),
+                      enhance=_enh, account=_enh_account)
             except Exception as exc:  # noqa: BLE001
                 _chained("", False, str(exc))
 
@@ -1486,7 +1506,8 @@ def open_video_prompt_dialog(
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         "分节（t370u）：讲话里的 <Ns>（自言自语那几句）和手工加在某个 <n> 前面的 <s> 会在生成时把这一场分成几节，"
-        "一节一节生成：每节做完插成前面一场，末帧用 MOSS 提高分辨率后作为下一节的起始图（有分节时双机也按顺序做）。"
+        "一节一节生成：每节做完插成前面一场，末帧按「尾帧增强」（不增强 / MOSS / Qwen / Grok Image，默认 MOSS）"
+        "提高分辨率后作为下一节的起始图，增强失败就用原末帧（有分节时双机也按顺序做）。"
         + ("" if _has_audio else "（这一场没有音频）"),
         foreground="#b05a00", wraplength=900, justify=tk.LEFT,
     )

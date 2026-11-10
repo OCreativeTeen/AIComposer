@@ -91,10 +91,10 @@ class PromptFlowsMixin:
                         upscale=None) -> None:
             def _on_image_response(pil_img):
                 if upscale:  # t366u: 提高分辨率：先对齐到目标尺寸（Lanczos；比例变了居中裁），按这个尺寸写回
-                    from utility.image_upscale import fit_to_size
+                    from utility.image_upscale import finish_upscale
 
-                    if pil_img is not None and hasattr(pil_img, "size"):
-                        pil_img = fit_to_size(pil_img, upscale)
+                    if pil_img is not None and hasattr(pil_img, "size"):  # t377u: + 颜色统计对齐原图
+                        pil_img = finish_upscale(pil_img, upscale, images[0] if images else None)
                     self._replace_current_clip_image_from_pil(pil_img, exact_size=tuple(upscale))
                     return
                 self._replace_current_clip_image_from_pil(pil_img)
@@ -117,6 +117,8 @@ class PromptFlowsMixin:
                 extra["comfy_negative"] = comfy.get("negative") or ""
                 if comfy.get("size"):
                     extra["comfy_size"] = tuple(comfy["size"])
+                if comfy.get("init_denoise") is not None:  # t377u: 提高分辨率 = 从原图开始采样（低 denoise）
+                    extra["comfy_init_denoise"] = comfy["init_denoise"]
             self.llm_api.show_manual_window(
                 prompt, "", images=images, on_image_response=_on_image_response,
                 auto_cli=True, extra=extra,
@@ -325,9 +327,10 @@ class PromptFlowsMixin:
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ 分节退回后保存 / 刷新失败：{exc}")
 
-    def _chain_video_segment(self, token, style, status, done) -> None:
-        """克隆那一节的视频末帧 → MOSS 提高分辨率（保持原画风 + 项目画风）→ 原场景 zero_image_last。
-        后台线程跑 ComfyUI；不通就用原末帧。完成后在主线程 ``done(起始图, 是否增强, 说明)``。"""
+    def _chain_video_segment(self, token, style, status, done, enhance="moss", account="") -> None:
+        """克隆那一节的视频末帧 → 尾帧增强（t376u：none / moss / qn / grok，保持原画风 + 项目画风）
+        → 原场景 zero_image_last。后台线程跑；不增强或增强失败就用原末帧（缩到项目尺寸）。
+        完成后在主线程 ``done(起始图, 是否增强, 说明)``。"""
         import threading
 
         from utility import video_segments as vs
@@ -344,8 +347,8 @@ class PromptFlowsMixin:
                 frame = fp.extract_frame(src, False) if src and os.path.isfile(src) else None
                 if not frame or not os.path.isfile(frame):
                     raise RuntimeError("这一节视频的末帧没取出来")
-                path, enhanced, note = vs.enhance_last_frame(
-                    frame, style=style, upscale=lambda p, t, s: vs.moss_upscale(p, t, s, status=status))
+                path, enhanced, note = vs.enhance_segment_last_frame(
+                    frame, mode=enhance, style=style, status=status, account=account)
                 if not enhanced:
                     path = fp.resize_image_smart(frame) or frame
             except Exception as exc:  # noqa: BLE001
@@ -357,7 +360,8 @@ class PromptFlowsMixin:
             if path and os.path.isfile(path):
                 try:
                     written = write_chained_next_zero_image_last(scene, path)
-                    print(f"🔗 分节：{'提高分辨率后的' if enhanced else '原'}末帧写进原场景 zero_image_last，作为下一节的起始图")
+                    print(f"🔗 分节：{('「' + vs.last_frame_enhance_label(enhance) + '」增强后的') if enhanced else '原'}"
+                          "末帧写进原场景 zero_image_last，作为下一节的起始图")
                 except Exception as exc:  # noqa: BLE001
                     note = f"{note}；写 zero_image_last 失败：{exc}".strip("；")
             if not written:  # 导入时已经把原末帧接到下一场（= 原场景）的 zero_image_last
@@ -623,15 +627,19 @@ class PromptFlowsMixin:
             id(j[0]): tuple(j[3]["upscale_size"]) for j in jobs
             if len(j) > 3 and isinstance(j[3], dict) and j[3].get("upscale_size")
         }
+        upscale_base = {  # t377u: 提高分辨率的场：id(scene) → 原图（颜色统计对齐用）
+            id(j[0]): j[3].get("base") for j in jobs
+            if len(j) > 3 and isinstance(j[3], dict) and j[3].get("upscale_size")
+        }
 
         def apply(scene, img, label):
             """UI 线程：写回这一场的图，有 clip 音频就马上排队重做这一场的静态 clip 视频。"""
             try:
                 up = upscale_of.get(id(scene))
-                if up:  # t366u: 提高分辨率：对齐到目标尺寸再写回
-                    from utility.image_upscale import fit_to_size
+                if up:  # t366u: 提高分辨率：对齐到目标尺寸再写回；t377u: + 颜色统计对齐原图
+                    from utility.image_upscale import finish_upscale
 
-                    img = fit_to_size(img, up)
+                    img = finish_upscale(img, up, upscale_base.get(id(scene)))
                 self._replace_current_clip_image_from_pil(
                     img, scene=scene, defer_video=True,
                     exact_size=up,
@@ -722,8 +730,11 @@ class PromptFlowsMixin:
             if not meta.get("comfy"):
                 return {}
             size = tuple(meta.get("size") or ())
-            return {"negative": meta.get("negative") or "", "adapt": False,
-                    "width": size[0] if len(size) == 2 else None, "height": size[1] if len(size) == 2 else None}
+            kw = {"negative": meta.get("negative") or "", "adapt": False,
+                  "width": size[0] if len(size) == 2 else None, "height": size[1] if len(size) == 2 else None}
+            if meta.get("init_denoise") is not None:  # t377u: 提高分辨率 = 从原图开始采样（低 denoise）
+                kw["init_denoise"] = meta["init_denoise"]
+            return kw
 
         def moss_worker():
             """t229u: 本机 ComfyUI 跑 moss_edit_3ref_api.json；每一场单独提交。"""

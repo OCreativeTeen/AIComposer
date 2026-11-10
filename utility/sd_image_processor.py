@@ -1414,13 +1414,14 @@ def _moss_latent_size_from_prompt(prompt: str):
 def build_moss_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_names: list,
                            prompt: str, seed: int,
                            filename_prefix: str = "moss_edit_3ref",
-                           negative=None, width=None, height=None) -> Dict[str, Any]:
+                           negative=None, width=None, height=None, init_denoise=None) -> Dict[str, Any]:
     """把 API 格式 MOSS 编辑工作流复制一份并填入参数（纯函数，可离线测）。
 
     base_name / ref_names：/upload/image 返回的文件名。只用「底图 + 真实参考图」，
     不再用底图垫满空槽；多余的 images.image_N 与对应 LoadImage/Scale 节点会删掉。
     prompt → 正面 TextEncodeMOSSImageEdit；negative 不给则保留工作流原负面词。
     width/height 若给，则 EmptyFlux2LatentImage 用固定尺寸（不再跟底图像素走）。
+    t377u: ``init_denoise``（只给提高分辨率 / 忠实修复用）→ 采样从底图的 VAEEncode 开始，denoise=这个值。
     """
     import copy
 
@@ -1456,15 +1457,57 @@ def build_moss_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
         latent_id = _one_node(wf, "EmptyFlux2LatentImage")
         wf[latent_id]["inputs"]["width"] = w
         wf[latent_id]["inputs"]["height"] = h
+        if init_denoise is not None:  # t377u
+            vae_ref = wf[pos_id]["inputs"].get("vae") or [_one_node(wf, "VAELoader"), 0]
+            _init_latent_from_base(wf, ks, load_id=load_ids[0], vae_ref=vae_ref, width=w, height=h,
+                                   denoise=init_denoise, tag="moss")
+    elif init_denoise is not None:
+        raise ValueError("MOSS init_denoise 需要固定画布宽高")
     save_ids = _find_nodes(wf, "SaveImage")
     if save_ids:
         wf[save_ids[0]]["inputs"]["filename_prefix"] = filename_prefix
     return wf
 
 
+def _init_latent_from_base(wf: Dict[str, Any], ks: str, *, load_id: str, vae_ref, width: int, height: int,
+                           denoise: float, tag: str) -> None:
+    """t377u: 提高分辨率 / 忠实修复专用：采样不从空画布开始，而从「底图 Lanczos 缩到画布 → VAEEncode」开始，
+    KSampler.denoise 设成 ``denoise``（<1，只重画细节，颜色 / 构图 / 画风强度都跟着原图走）。其他编辑模式不调用。"""
+    d = float(denoise)
+    if not 0.0 < d <= 1.0:
+        raise ValueError(f"init denoise 必须在 (0, 1]（给的是 {denoise}）")
+    scale_id, enc_id = f"{tag}_init_scale", f"{tag}_init_encode"
+    wf[scale_id] = {"class_type": "ImageScale",
+                    "inputs": {"image": [str(load_id), 0], "upscale_method": "lanczos",
+                               "width": int(width), "height": int(height), "crop": "center"},
+                    "_meta": {"title": f"{tag}_init_base_to_canvas"}}
+    wf[enc_id] = {"class_type": "VAEEncode", "inputs": {"pixels": [scale_id, 0], "vae": list(vae_ref)},
+                  "_meta": {"title": f"{tag}_init_latent"}}
+    old = wf[ks]["inputs"].get("latent_image")
+    wf[ks]["inputs"]["latent_image"] = [enc_id, 0]
+    wf[ks]["inputs"]["denoise"] = round(d, 3)
+    # 原来的空画布 / 尺寸节点没人用了就删掉（画布宽高已被改成数字时 GetImageSize 也成了孤点）
+    drop = [str(old[0])] if isinstance(old, list) and old else []
+    drop += [k for k, n in wf.items() if n.get("class_type") == "GetImageSize"]
+    while drop:
+        nid = drop.pop()
+        if nid not in wf or nid in (scale_id, enc_id, str(load_id)):
+            continue
+        used = any(isinstance(v, list) and v and str(v[0]) == nid
+                   for k2, n2 in wf.items() if k2 != nid for v in n2.get("inputs", {}).values())
+        if used:
+            continue
+        ups = [str(v[0]) for v in wf[nid].get("inputs", {}).values() if isinstance(v, list) and v]
+        cls = wf[nid].get("class_type", "")
+        if cls in ("EmptyFlux2LatentImage", "EmptySD3LatentImage", "EmptyLatentImage", "GetImageSize", "VAEEncode"):
+            wf.pop(nid, None)
+            drop += ups
+
+
 def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
                              workflow_path=None, timeout_s: float = 1800.0,
-                             status=None, negative=None, adapt: bool = True, width=None, height=None):
+                             status=None, negative=None, adapt: bool = True, width=None, height=None,
+                             init_denoise=None):
     """ComfyUI 跑 MOSS 图片编辑。images[0]=底图，images[1:]=参考图（最多 3，可无）。
 
     返回 PIL.Image。server 默认 config.COMFYUI_MOSS_URL（192.168.1.x:8188，asus2060）。
@@ -1541,7 +1584,10 @@ def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
         workflow, base_name=base_name, ref_names=ref_names, prompt=prompt, seed=seed,
         filename_prefix=f"moss_edit_3ref_{stamp}", negative=negative,
         width=(size[0] if size else None), height=(size[1] if size else None),
+        init_denoise=init_denoise,
     )
+    if init_denoise is not None:
+        say(f"忠实修复：从底图开始采样，denoise={float(init_denoise):.2f}")
     # 日志：实际进正面编码器的图槽
     ks = _one_node(wf, "KSampler")
     pos_id = str(wf[ks]["inputs"]["positive"][0])
@@ -1657,7 +1703,8 @@ def adapt_prompt_for_qwen_edit(prompt: str, base_image: str = "") -> tuple:
 def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_names: list,
                            prompt: str, seed: int,
                            filename_prefix: str = "qwen_edit",
-                           negative=None, width=None, height=None, base_size=None) -> Dict[str, Any]:
+                           negative=None, width=None, height=None, base_size=None,
+                           init_denoise=None) -> Dict[str, Any]:
     """填 qwen_edit_3ref_api：底图 + 最多 2 张真实参考；空参考槽删除（不垫底图）。
 
     t356u: width/height 给了 → 采样用 EmptySD3LatentImage 固定画布（Qwen 以前跟着底图比例走，
@@ -1665,6 +1712,7 @@ def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
     ``base_size``（底图宽高）和画布比例差不到 5% 时（一般修改），底图的 FluxKontextImageScale 换成
     ImageScaleToTotalPixels（画布的像素量、16 的倍数），底图正好对齐画布（不然会错位重画、字会花）；
     比例差很多（封面裁出来的细长一格）仍用 FluxKontextImageScale（实测这样补成横图更好）。
+    t377u: ``init_denoise``（只给提高分辨率 / 忠实修复用）→ 采样从底图的 VAEEncode 开始，denoise=这个值。
     """
     import copy
 
@@ -1727,6 +1775,12 @@ def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
                        "inputs": {"image": wf[sid]["inputs"]["image"], "upscale_method": "lanczos",
                                   "megapixels": round(w * h / 1048576.0, 4), "resolution_steps": 16},
                        "_meta": {"title": "qn_base_to_canvas_pixels"}}
+        if init_denoise is not None:  # t377u
+            vae_ref = wf[pos_id]["inputs"].get("vae") or [_one_node(wf, "VAELoader"), 0]
+            _init_latent_from_base(wf, ks, load_id=slots["image1"], vae_ref=vae_ref, width=w, height=h,
+                                   denoise=init_denoise, tag="qn")
+    elif init_denoise is not None:
+        raise ValueError("QN init_denoise 需要固定画布宽高")
     save_ids = _find_nodes(wf, "SaveImage")
     if save_ids:
         wf[save_ids[0]]["inputs"]["filename_prefix"] = filename_prefix
@@ -1735,7 +1789,8 @@ def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
 
 def generate_image_qwen_edit(prompt: str, images, *, server=None, seed=None,
                              workflow_path=None, timeout_s: float = 1800.0,
-                             status=None, negative=None, adapt: bool = True, width=None, height=None):
+                             status=None, negative=None, adapt: bool = True, width=None, height=None,
+                             init_denoise=None):
     """ComfyUI 跑 Qwen(QN) 图片编辑。images[0]=底图，images[1:]=参考（最多 2，可无）。
 
     返回 PIL.Image。server 默认 config.COMFYUI_QN_URL（与 MOSS 同机）。
@@ -1818,7 +1873,10 @@ def generate_image_qwen_edit(prompt: str, images, *, server=None, seed=None,
         workflow, base_name=base_name, ref_names=ref_names, prompt=prompt, seed=seed,
         filename_prefix=f"qwen_edit_{stamp}", negative=negative,
         width=(size[0] if size else None), height=(size[1] if size else None), base_size=base_size,
+        init_denoise=init_denoise,
     )
+    if init_denoise is not None:
+        say(f"忠实修复：从底图开始采样，denoise={float(init_denoise):.2f}")
     ks = _one_node(wf, "KSampler")
     pos_id = str(wf[ks]["inputs"]["positive"][0])
     slot_keys = sorted(k for k in wf[pos_id]["inputs"] if k.startswith("image"))

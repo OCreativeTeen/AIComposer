@@ -5273,10 +5273,12 @@ def image_art_style_lock_rule(style: str, pic: str = "the attached picture", *, 
 
 
 def style_lock_first(prompt: str) -> str:
-    """t373u: 送出前把「ART STYLE LOCK」那一行挪到整段提示词的第一行（比例行 / FYI / 背景条件都在它后面）。幂等。"""
+    """t373u: 送出前把「ART STYLE LOCK」那一行挪到整段提示词的第一行（比例行 / FYI / 背景条件都在它后面）。幂等。
+    t377u: 提高分辨率 / 尾帧增强没有 ART STYLE LOCK，第一条是「FAITHFUL RESTORE」，同样挪到第一行。"""
     text = str(prompt or "")
     lines = text.split("\n")
-    idx = next((i for i, ln in enumerate(lines) if ln.lstrip("*-• ").startswith(IMAGE_STYLE_LOCK_PREFIX)), -1)
+    idx = next((i for i, ln in enumerate(lines)
+                if ln.lstrip("*-• ").startswith((IMAGE_STYLE_LOCK_PREFIX, UPSCALE_RESTORE_PREFIX))), -1)
     if idx <= 0:
         return text
     lock = lines[idx].lstrip("*-• ")
@@ -8849,14 +8851,48 @@ def build_comfy_picture_edit_prompt(
 # Grok / Gemini 用 build_upscale_prompt（FYI 由对话框照旧加在最前面）；MOSS / QN 用 build_comfy_upscale_prompt（带反向提示）。
 # 尺寸由 utility.image_upscale.upscale_target_size 按原图比例算（长边 1920）。
 # ---------------------------------------------------------------------------
+# t377u: 提高分辨率 / 尾帧增强 = 忠实修复。以前第一条是 ART STYLE LOCK（「项目画风是三维动画……整张图都是三维动画，
+# 绝不写实」），反向里还有 photorealistic 一类词：MOSS 把三维卡通味道加重、颜色 / 对比度都变了。
+# 现在第一条是 FAITHFUL RESTORE：看上去和原图一模一样（画风和画风强度、颜色、对比度、亮度、饱和度、色调、光线都不变），
+# 画风名只是「说明这张图现在是什么样子」，不是要求改画风 / 加强画风；只修损伤、去噪点和压缩痕迹、恢复细节。
+# 反向提示两边都罚：更卡通 / 更三维 和 更写实 都算变了；颜色、对比度、亮度、饱和度变化也算。
 COMFY_UPSCALE_NEGATIVE = (
     "changed composition, different framing, cropped, zoomed in, zoomed out, shifted camera, new objects, "
     "removed objects, extra people, missing people, altered face, different face, changed expression, changed pose, "
-    "changed clothing, different style, style change, color shift, changed lighting, text changes, garbled text, "
-    "misspelled text, new text, blurry, low resolution, noise, grain, jpeg artifacts, compression artifacts, "
-    "oversharpening, sharpening halos, ringing, over-smoothed, plastic skin, deformed face, bad anatomy, "
+    "changed clothing, text changes, garbled text, misspelled text, new text, "
+    "restyled, repainted, different look, different art style, style change, stronger style, more stylized, "
+    "exaggerated 3D, more cartoonish, more realistic, more photographic, "
+    "color shift, color grading, different colors, oversaturated, desaturated, more vivid colors, "
+    "higher contrast, lower contrast, brighter, darker, changed lighting, relit, HDR, glow, "
+    "blurry, low resolution, noise, grain, jpeg artifacts, compression artifacts, "
+    "oversharpening, sharpening halos, ringing, over-smoothed, plastic look, deformed face, bad anatomy, "
     "extra fingers, extra limbs, worst quality, low quality"
 )
+
+UPSCALE_RESTORE_PREFIX = "FAITHFUL RESTORE (rule 1, most important):"
+
+
+def upscale_restore_rule(style: str, pic: str = "the attached image", *, zh: bool = True) -> str:
+    """t377u: 提高分辨率 / 尾帧增强的第一条规则（替代 ART STYLE LOCK）：输出和原图一模一样，只提高画质。
+    ``style`` = 项目画风，只当「这张图现在是什么样子」的说明，不是改 / 加强画风的要求。"""
+    st = str(style or "").strip()
+    desc = ""
+    zh_desc = ""
+    if st:
+        en, _stylized = video_art_style_en(st)
+        short = en.split(" (")[0]
+        desc = (f" The picture is currently in {short} style ({st}); this is only a description to help you read it, "
+                "not a request to change, strengthen or improve the style.")
+        zh_desc = f"画风「{st}」只是说明这张图现在是什么样子，不是要求改画风或加强画风。"
+    en_rule = (f"{UPSCALE_RESTORE_PREFIX} the output must look exactly the same as {pic}, only cleaner and sharper: "
+               "the same art style at the same strength, the same colors, contrast, brightness, saturation, tone, "
+               "lighting and shadows, the same composition, people, faces and text." + desc +
+               " Do not make it more cartoonish, more 3D, more realistic, brighter, darker, more colorful or more "
+               "contrasty.")
+    zh_rule = ("（忠实修复，第一条、最重要：输出和原图看上去一模一样——画风和画风强度、颜色、对比度、亮度、饱和度、"
+               "色调、光线、构图、人物、脸、文字都不变。" + zh_desc +
+               "只修复损伤、去噪点和压缩痕迹、恢复细节、提高分辨率。）")
+    return en_rule + (" " + zh_rule if zh else "")
 
 
 def upscale_ratio_words(width, height) -> str:
@@ -8873,63 +8909,51 @@ def upscale_ratio_words(width, height) -> str:
 
 
 def build_upscale_prompt(size, style: str = "") -> str:
-    """Grok / Gemini · 提高分辨率。size = (宽, 高) 目标尺寸（和原图同比例）。
-    t373u: ``style`` = 项目画风，写在第一条（ART STYLE LOCK）。"""
+    """Grok / Gemini · 提高分辨率（也是尾帧增强的 Grok Image）。size = (宽, 高) 目标尺寸（和原图同比例）。
+    t377u: 第一条 = FAITHFUL RESTORE（看上去一模一样）；``style`` 只当画风说明，不再用 ART STYLE LOCK。"""
     w, h = (int(v) for v in size)
     ratio = upscale_ratio_words(w, h)
     return "\n".join([
-        image_art_style_lock_rule(style, "the attached image"),
-        f"TASK: UPSCALE ONLY. Re-render the attached image at a higher resolution. Output size: exactly {w}x{h} pixels "
-        f"({ratio}, the same aspect ratio as the input image).",
-        "Keep the original style: the same art style, rendering, texture and color palette. The style must not change.",
-        "Keep the original structure: the same composition and the same camera framing; nothing is cropped, zoomed, "
-        "shifted, extended or rotated.",
-        "Nothing in the picture may change at all: the same people (same number of people), the same faces and "
-        "expressions, the same poses, the same clothing, the same objects in the same places, the same background, "
-        "the same text exactly as written (same words, letters and position), the same colors, the same lighting "
-        "and shadows, the same camera framing.",
+        upscale_restore_rule(style, "the attached image"),
+        f"TASK: FAITHFUL UPSCALE / RESTORE ONLY. Output the same picture at a higher resolution: exactly {w}x{h} "
+        f"pixels ({ratio}, the same aspect ratio as the input image).",
+        "Keep the picture identical: the same composition and camera framing (nothing cropped, zoomed, shifted, "
+        "extended or rotated); the same people (same number of people), faces, expressions, poses and clothing; the "
+        "same objects in the same places; the same background; the same text exactly as written (same words, "
+        "letters and position).",
+        "Keep the look identical: the same art style at the same strength, the same colors and color palette, the "
+        "same contrast, brightness, saturation, white balance and tone, the same lighting and shadows. No color "
+        "grading, no relighting, no beautifying, no restyling.",
         "Do not add, remove, move or redraw anything. No new people, objects, text or details that are not already "
         "in the image.",
-        "Only increase resolution, sharpness and fine detail (crisp edges, clean fine textures such as hair, fabric "
-        "and surfaces), faithful to what is already there. No blur, noise or compression artifacts, no oversharpening "
-        "halos.",
+        "Only restore image quality: repair damaged or smeared areas, remove noise, grain, blur and compression "
+        "artifacts, and recover fine detail (clean edges, hair, fabric and surface textures) faithful to what is "
+        "already there. No oversharpening halos.",
         f"Output exactly one image, {w}x{h}.",
         "",
-        "任务：只提高分辨率。保持原来的画风，保持原来的结构；图里任何东西都不能改"
-        "（构图、人物、脸、姿势、衣服、物体、文字、颜色、光线、镜头取景都不变），画风不能变。"
-        f"只提高分辨率、清晰度和细节。比例和原图一样，输出尺寸 {w}x{h}。",
+        "任务：只做忠实修复、提高分辨率。输出和原图看上去一模一样：构图、人物、脸、姿势、衣服、物体、文字、镜头取景都不变；"
+        "画风和画风强度、颜色、对比度、亮度、饱和度、色调、光线都不变，不调色、不重新打光、不美化、不改画风。"
+        f"只修复损伤、去噪点和压缩痕迹、恢复细节。比例和原图一样，输出尺寸 {w}x{h}。",
     ])
 
 
 def build_comfy_upscale_prompt(size, *, backend: str = "moss", fyi: str = "", style: str = "") -> tuple:
-    """MOSS / QN · 提高分辨率。返回 (正面, 反向)。画布由调用方固定成目标尺寸（16 的倍数），这里不写比例行。
+    """MOSS / QN · 提高分辨率（也是尾帧增强）。返回 (正面, 反向)。画布由调用方固定成目标尺寸（16 的倍数），不写比例行。
 
-    t370u: ``style`` = 项目画风（分节生成视频时末帧增强用）。给了就写明这个画风必须保持；
-    非写实画风（三维动画等）再加「绝不变成写实」，反向提示也加写实类词。不给时和原来一字不差。"""
+    t377u: 第一条 = FAITHFUL RESTORE；``style`` 只当画风说明（不加强、不改）。反向提示用 COMFY_UPSCALE_NEGATIVE
+    （更卡通 / 更写实、颜色 / 对比度 / 亮度变化都罚），不再按画风加写实类词。"""
     w, h = (int(v) for v in size)
     img1 = comfy_image_ref(backend, 1)
-    lines = [image_art_style_lock_rule(style, img1, zh=False)]  # t373u: 第一条 = 项目画风
+    lines = [upscale_restore_rule(style, img1, zh=False)]
     if (fyi or "").strip():
         lines.append(fyi.strip())
-    style_line = "Keep the original art style."
-    negative = COMFY_UPSCALE_NEGATIVE
-    st = str(style or "").strip()
-    if st:
-        en, stylized = video_art_style_en(st)
-        short = en.split(" (")[0]
-        if stylized:
-            style_line = (f"Keep the original art style exactly: {en} ({st}). It stays {short} with the same "
-                          "rendering, shading and colours; it never turns photorealistic or live-action. "
-                          "Also remove noise and compression artifacts.")
-            negative = negative + ", photorealistic, live-action, real photo, realistic skin, restyled"
-        else:
-            style_line = (f"Keep the original art style exactly: {en} ({st}), the same rendering and colours, "
-                          "no restyling. Also remove noise and compression artifacts.")
     lines += [
-        f"Upscale {img1} to a sharp, high-resolution {w}x{h} version of exactly the same picture.",
-        "Keep everything exactly the same: composition, camera framing, people, faces, expressions, poses, clothing, "
-        "objects, background, text, colors and lighting.",
-        style_line,
-        "Only add sharpness and fine detail: crisp edges and clean textures in hair, fabric and surfaces.",
+        f"Restore {img1} as a clean, sharp, high-resolution {w}x{h} version of exactly the same picture.",
+        "Keep everything identical: composition, camera framing, people, faces, expressions, poses, clothing, "
+        "objects, background and text.",
+        "Keep the look identical: the same art style at the same strength, the same colors, contrast, brightness, "
+        "saturation, tone and lighting. No color grading, no relighting, no restyling.",
+        "Only remove noise, blur and compression artifacts, repair damaged areas and recover fine detail: crisp "
+        "edges and clean textures in hair, fabric and surfaces.",
     ]
-    return "\n".join(lines), _comfy_negative(negative, comfy_style_negative(st))
+    return "\n".join(lines), COMFY_UPSCALE_NEGATIVE

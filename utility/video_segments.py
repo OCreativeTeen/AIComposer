@@ -5,8 +5,9 @@
 
 1. 第 1 节：把这一场克隆一份插在它前面，克隆只留第 1 节的讲话（场景音频 / 时间轴也只留这一段），
    用这一场现在的起始图生成、导入到克隆上。原场景去掉这一节的讲话。
-2. 克隆视频的最后一帧临时取出来，用 MOSS「提高分辨率」（保持原画风 + 项目画风）增强，
-   写进原场景的 zero_image_last，作为下一节的起始图。ComfyUI 不通就用原末帧（打印警告）。
+2. 克隆视频的最后一帧临时取出来，按「尾帧增强」选项（t376u：不增强 / MOSS / Qwen / Grok Image，默认 MOSS）
+   「提高分辨率」（保持原画风 + 项目画风）增强，写进原场景的 zero_image_last，作为下一节的起始图。
+   增强失败（ComfyUI 不通、Grok 出错等）就用原末帧（打印警告）。
 3. 原场景剩下的讲话如果还能分，就重复 1–2；最后一节不再克隆，直接用新的 zero_image_last 生成原场景的视频。
 
 这里只放纯逻辑（可离线测）；读写媒体、ffmpeg、ComfyUI 由调用方注入。
@@ -283,7 +284,7 @@ def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None) -> tup
     try:
         import tempfile
 
-        from utility.image_upscale import fit_to_size, upscale_target_for_image
+        from utility.image_upscale import finish_upscale, upscale_target_for_image
 
         target = upscale_target_for_image(frame_path)
         if not target:
@@ -291,7 +292,7 @@ def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None) -> tup
         img = upscale(frame_path, target, style)
         if img is None or not hasattr(img, "save"):
             raise RuntimeError("提高分辨率没有返回图")
-        img = fit_to_size(img, target)
+        img = finish_upscale(img, target, frame_path)  # t377u: 对齐尺寸 + 颜色统计对齐原末帧
         fd, out = tempfile.mkstemp(suffix=".png", prefix="seg_lastframe_up_")
         os.close(fd)
         img.convert("RGB").save(out)
@@ -301,14 +302,79 @@ def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None) -> tup
         return frame_path, False, str(exc)
 
 
+# ---- t376u: 尾帧增强选项 ----
+LAST_FRAME_ENHANCE_OPTIONS = (("none", "不增强"), ("moss", "MOSS"), ("qn", "Qwen"), ("grok", "Grok Image"))
+LAST_FRAME_ENHANCE_DEFAULT = "moss"
+_ENHANCE_ALIASES = {"": LAST_FRAME_ENHANCE_DEFAULT, "off": "none", "raw": "none", "no": "none",
+                    "qwen": "qn", "grok_image": "grok", "grokimage": "grok"}
+
+
+def normalize_last_frame_enhance(value) -> str:
+    """记下的选项 → none / moss / qn / grok；不认得的（含没记过）= 默认 MOSS。"""
+    v = str(value or "").strip().lower().replace(" ", "")
+    v = _ENHANCE_ALIASES.get(v, v)
+    return v if v in dict(LAST_FRAME_ENHANCE_OPTIONS) else LAST_FRAME_ENHANCE_DEFAULT
+
+
+def last_frame_enhance_label(value) -> str:
+    return dict(LAST_FRAME_ENHANCE_OPTIONS)[normalize_last_frame_enhance(value)]
+
+
+def last_frame_upscaler(mode, *, status=None, account: str = ""):
+    """选项 → ``upscale(path, target, style) -> PIL``（给 enhance_last_frame）；「不增强」返回 None。"""
+    m = normalize_last_frame_enhance(mode)
+    if m == "none":
+        return None
+    if m == "qn":
+        return lambda p, t, s: qn_upscale(p, t, s, status=status)
+    if m == "grok":
+        return lambda p, t, s: grok_upscale(p, t, s, account=account, status=status)
+    return lambda p, t, s: moss_upscale(p, t, s, status=status)
+
+
+def enhance_segment_last_frame(frame_path: str, *, mode=LAST_FRAME_ENHANCE_DEFAULT, style: str = "",
+                               status=None, account: str = "") -> tuple:
+    """t376u: 按选项增强末帧。返回 (图路径, 是否增强了, 说明)；不增强 / 失败都返回原末帧。"""
+    m = normalize_last_frame_enhance(mode)
+    if m == "none":
+        if not frame_path or not os.path.isfile(frame_path):
+            raise FileNotFoundError(f"末帧不在：{frame_path}")
+        return frame_path, False, "选了不增强"
+    return enhance_last_frame(frame_path, style=style,
+                              upscale=last_frame_upscaler(m, status=status, account=account))
+
+
+def qn_upscale(frame_path: str, target, style: str = "", *, server=None, timeout_s: float = 600.0, status=None):
+    """t376u: Qwen(QN) ComfyUI 图片编辑 · 提高分辨率（同 MOSS 的提示词口吻换成 Picture 1 + 项目画风）。"""
+    import config_prompt
+    from utility.image_upscale import comfy_upscale_canvas, upscale_init_denoise
+    from utility.sd_image_processor import generate_image_qwen_edit
+
+    pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend="qn", style=style)
+    canvas = comfy_upscale_canvas(target)
+    return generate_image_qwen_edit(pos, [frame_path], server=server, negative=neg, adapt=False,
+                                    width=canvas[0], height=canvas[1], timeout_s=timeout_s,
+                                    status=status, init_denoise=upscale_init_denoise("qn"))  # t377u
+
+
+def grok_upscale(frame_path: str, target, style: str = "", *, account: str = "", status=None):
+    """t376u: Grok Image · 提高分辨率（同「图片修改 · 提高分辨率」的 Grok 提示词）。t377u: 第一行 = FAITHFUL RESTORE。"""
+    import config_prompt
+    from utility import chrome_account, grok_cdp
+
+    prompt = config_prompt.style_lock_first(config_prompt.build_upscale_prompt(target, style))
+    with chrome_account.use(account or ""):
+        return grok_cdp.make_image(prompt, [frame_path], status)
+
+
 def moss_upscale(frame_path: str, target, style: str = "", *, server=None, timeout_s: float = 600.0, status=None):
     """MOSS ComfyUI · 提高分辨率（同「图片修改 · 提高分辨率」的提示词 + 项目画风）。"""
     import config_prompt
-    from utility.image_upscale import comfy_upscale_canvas
+    from utility.image_upscale import comfy_upscale_canvas, upscale_init_denoise
     from utility.sd_image_processor import generate_image_moss_edit
 
     pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend="moss", style=style)
     canvas = comfy_upscale_canvas(target)
     return generate_image_moss_edit(pos, [frame_path], server=server, negative=neg, adapt=False,
                                     width=canvas[0], height=canvas[1], timeout_s=timeout_s,
-                                    status=status)
+                                    status=status, init_denoise=upscale_init_denoise("moss"))  # t377u

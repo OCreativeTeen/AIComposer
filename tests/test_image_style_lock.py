@@ -93,11 +93,25 @@ class GrokGeminiPromptsTest(unittest.TestCase):
                 prompts.append(cp.build_step_image_clipbody(2, visual_style=CARTOON, keep_style=keep, extract_only=ex,
                                                             fyi="多一点雨"))
         prompts.append(cp.build_cast_fix_prompt(SCENE, ROWS[:2], visual_style=CARTOON, fyi="主角换人"))
-        prompts.append(cp.build_upscale_prompt((1920, 1080), CARTOON))
         for p in prompts:
             self.assertTrue(p.startswith(cp.IMAGE_STYLE_LOCK_PREFIX), p[:120])
             self.assertIn("never photorealistic", _first(p))
             self.assertIn(CARTOON, _first(p))
+
+    def test_upscale_leads_with_faithful_restore_not_style_lock(self):
+        # t377u: upscale / last-frame enhance = faithful restore; the style is only a description
+        p = cp.build_upscale_prompt((1920, 1080), CARTOON)
+        self.assertTrue(p.startswith(cp.UPSCALE_RESTORE_PREFIX), p[:120])
+        self.assertNotIn(cp.IMAGE_STYLE_LOCK_PREFIX, p)
+        self.assertNotIn("never photorealistic", p)
+        self.assertIn(CARTOON, _first(p))
+        self.assertIn("only a description", _first(p))
+        pos, neg = cp.build_comfy_upscale_prompt((1920, 1080), backend="moss", style=CARTOON)
+        self.assertTrue(pos.startswith(cp.UPSCALE_RESTORE_PREFIX))
+        self.assertNotIn("忠实修复", pos)  # ComfyUI: English only
+        self.assertNotIn("photorealistic,", neg + ",")  # no one-sided realism push
+        for both in ("more cartoonish", "more realistic", "exaggerated 3D"):
+            self.assertIn(both, neg)
 
     def test_extract_has_no_photo_wording(self):
         p = cp.build_picture_flow_prompt(task="extract", text="keep", visual_style=CARTOON, scene_content=[SCENE])
@@ -116,7 +130,6 @@ class ComfyPromptsTest(unittest.TestCase):
             cp.build_comfy_picture_edit_prompt(backend="qn", task="keep", visual_style=CARTOON, edit_request="x"),
             cp.build_comfy_picture_edit_prompt(backend="qn", task="restyle", visual_style=CARTOON, scene=SCENE,
                                                use_visual=True),
-            cp.build_comfy_upscale_prompt((1920, 1080), backend="moss", style=CARTOON),
         ]
         for pos, neg in pairs:
             self.assertTrue(pos.startswith(cp.IMAGE_STYLE_LOCK_PREFIX), pos[:120])

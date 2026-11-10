@@ -136,8 +136,10 @@ def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0)):
     return box, get_text, include_var, get_history
 
 def pack_background_block(parent, region: str, era: str, person: str, *, style: str = "", form: str = "", actor_var=None,
-                          initial: bool = True, pady=(8, 0), wrap: int = 560):
+                          initial: bool = True, pady=(8, 0), wrap: int = 560, compact: bool = False):
     """背景三行块。勾选框只管前两行（地域 · 时代、人物）；第三行灰字是始终写入的画面风格。
+
+    t376u: ``compact=True``（生场视频）= 窄版：括号说明、场景风格各自折到下一行，宽度约为原来一半。
 
     ``form`` 是主窗口的「对话方式」，不写进图片 / 幻灯 / 视频提示词，只用来给叙事风格定默认值，所以单独标明。
     返回 (frame, include_var)。
@@ -158,7 +160,9 @@ def pack_background_block(parent, region: str, era: str, person: str, *, style: 
     inner.pack(anchor=tk.W, padx=(24, 0))
     ttk.Label(inner, text="地域 · 时代：" + (place or "（未选）")).pack(anchor=tk.W)
     host_lbl = ttk.Label(
-        inner, text="默认讲员：" + (who or "（未选）") + "（仅当人物中有讲员出镜时写入）"
+        inner, text="默认讲员：" + (who or "（未选）") + ("\n　（仅当人物中有讲员出镜时写入）" if compact
+                                                        else "（仅当人物中有讲员出镜时写入）"),
+        justify=tk.LEFT,
     )
     host_lbl.pack(anchor=tk.W)
     if actor_var is not None:
@@ -173,7 +177,14 @@ def pack_background_block(parent, region: str, era: str, person: str, *, style: 
     gray = {"foreground": "gray40", "justify": tk.LEFT}
     always = "始终写入：画面风格 " + ((style or "").strip() or "（未选）")
     scene = config_prompt.scene_style_short()  # ??????????????
-    if scene:
+    if compact:  # t376u: 画面风格 / 场景风格各占一行
+        st = (style or "").strip() or "（未选）"
+        if " (" in st:  # 「三维卡通 (Pixar-Art-Cartoon)」：英文名也折到下一行
+            st = st.replace(" (", "\n　　(", 1)
+        always = "始终写入：\n　画面风格 " + st
+        if scene:
+            always += "\n　场景风格 " + scene
+    elif scene:
         always += " · 场景风格 " + scene
     ttk.Label(box, text=always, **gray).pack(
         anchor=tk.W, padx=(24, 0), pady=(2, 0)

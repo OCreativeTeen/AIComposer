@@ -139,7 +139,7 @@ GROK_GEMINI_DIGEST = "24d15f7b4f36112f4f554b2189cbee219b678e0dcb62ae40301abbe876
 def _body(prompt: str) -> str:
     """t373u: the prompt without its leading ART STYLE LOCK line (asserts the lock really is first)."""
     first, _, rest = prompt.partition("\n")
-    assert first.startswith(cp.IMAGE_STYLE_LOCK_PREFIX), first[:80]
+    assert first.startswith((cp.IMAGE_STYLE_LOCK_PREFIX, cp.UPSCALE_RESTORE_PREFIX)), first[:80]  # t377u: upscale
     return rest.lstrip("\n")
 
 
