@@ -87,7 +87,7 @@ class PromptFlowsMixin:
             cfg["picture_prompt"] = choice
             save_project_config(parent=self.root)
 
-        def open_manual(prompt: str, images: list[str], backend: str = "grok", account: str = "") -> None:
+        def open_manual(prompt: str, images: list[str], backend: str = "grok", account: str = "", comfy=None) -> None:
             def _on_image_response(pil_img):
                 self._replace_current_clip_image_from_pil(pil_img)
 
@@ -102,6 +102,12 @@ class PromptFlowsMixin:
                 extra["image_backend"] = "qn"
             if account and b not in ("moss", "qn"):
                 extra["chrome_account"] = account
+            if isinstance(comfy, dict) and comfy.get("comfy") and b in ("moss", "qn"):
+                # t356u: ComfyUI 专用提示已经写好：带上反向提示词和输出画布，送出时不再改写
+                extra["comfy_backend"] = b
+                extra["comfy_negative"] = comfy.get("negative") or ""
+                if comfy.get("size"):
+                    extra["comfy_size"] = tuple(comfy["size"])
             self.llm_api.show_manual_window(
                 prompt, "", images=images, on_image_response=_on_image_response,
                 auto_cli=True, extra=extra,
@@ -591,6 +597,15 @@ class PromptFlowsMixin:
                 ui(lambda: var.set(f"{h}\n{msg}"))
             return status
 
+        def comfy_kwargs(job) -> dict:
+            """t356u: 图片修改已经给这一场写了 ComfyUI 专用提示（meta["comfy"]）→ 带反向提示 + 画布，不再改写。"""
+            meta = job[3] if len(job) > 3 and isinstance(job[3], dict) else {}
+            if not meta.get("comfy"):
+                return {}
+            size = tuple(meta.get("size") or ())
+            return {"negative": meta.get("negative") or "", "adapt": False,
+                    "width": size[0] if len(size) == 2 else None, "height": size[1] if len(size) == 2 else None}
+
         def moss_worker():
             """t229u: 本机 ComfyUI 跑 moss_edit_3ref_api.json；每一场单独提交。"""
             from utility.sd_image_processor import generate_image_moss_edit
@@ -604,7 +619,7 @@ class PromptFlowsMixin:
                 head = f"正在处理第 {k}/{n} 张（本集{label}，MOSS）"
                 ui(lambda h=head: var.set(h))
                 try:
-                    img = generate_image_moss_edit(prompt, list(images), status=scene_status(head))
+                    img = generate_image_moss_edit(prompt, list(images), status=scene_status(head), **comfy_kwargs(job))
                     if img is None or not hasattr(img, "save"):
                         raise RuntimeError("没有拿到图")
                     ui(lambda s=scene, i=img, l=label: apply(s, i, l))
@@ -624,7 +639,7 @@ class PromptFlowsMixin:
                 head = f"正在处理第 {k}/{n} 张（本集{label}，QN）"
                 ui(lambda h=head: var.set(h))
                 try:
-                    img = generate_image_qwen_edit(prompt, list(images), status=scene_status(head))
+                    img = generate_image_qwen_edit(prompt, list(images), status=scene_status(head), **comfy_kwargs(job))
                     if img is None or not hasattr(img, "save"):
                         raise RuntimeError("没有拿到图")
                     ui(lambda s=scene, i=img, l=label: apply(s, i, l))

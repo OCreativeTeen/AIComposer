@@ -541,6 +541,29 @@ def open_picture_prompt_dialog(
         dlg.destroy()
 
     def on_go(backend: str = "grok", account: str = "") -> None:
+        # t356u: MOSS / QN（本机 ComfyUI）用 config_prompt.build_comfy_* 单独的一套提示 + 反向提示；
+        # Grok / Gemini 走下面原来的提示词，一个字不变。
+        comfy = config_prompt.comfy_backend(backend)
+        comfy_size = config_prompt.comfy_canvas_size(_project_video_size()) if comfy else ()
+
+        def _comfy_step_job(step: int, base: str, sc=None) -> tuple:
+            """从封面（或当前多格图）提取第 step 步：看分格布局，能裁就把这一格裁出来当底图。"""
+            from utility.cover_panels import prepare_cover_step_input
+
+            style = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
+            prep = prepare_cover_step_input(base, step)
+            sc = sc if isinstance(sc, dict) else {}
+            pos, neg = config_prompt.build_comfy_cover_step_prompt(
+                step, backend=comfy, layout=prep["layout"], count=prep["count"], cropped=prep["cropped"],
+                caption=text_var.get(), keep_style=task_var.get() != "restyle", visual_style=style,
+                scene_caption=str(sc.get("caption") or ""), scene_visual=str(sc.get("visual") or ""),
+                fyi=(get_fyi_text() or "").strip() if fyi_include_var.get() else "", size=comfy_size,
+            )
+            print(f"图片修改 · {comfy.upper()} 提取第 {step} 步：布局={prep['layout'] or '看不出'}"
+                  f"（{prep['count'] or '?'} 格）" + ("，已裁出这一格当底图" if prep["cropped"] else "，用整张图"))
+            return pos, [prep["image"]], {"aspect": "", "actors": [], "base": prep["image"], "comfy": True,
+                                          "negative": neg, "size": comfy_size}
+
         if mode == "portrait":
             _run_portrait_extract(account)
             return
@@ -606,6 +629,10 @@ def open_picture_prompt_dialog(
                     if k <= 0:
                         skipped.append(f"{label}：没有步骤号")
                         continue
+                    if comfy:
+                        cp_, ci_, cm_ = _comfy_step_job(k, images[0], sc)
+                        jobs.append((sc, cp_, ci_, cm_))
+                        continue
                     prompt = _cover_step_prompt(k)
                     aspect = config_prompt.output_aspect_line(_project_video_size())
                     jobs.append((
@@ -622,6 +649,13 @@ def open_picture_prompt_dialog(
             if step_no <= 0:
                 messagebox.showwarning("图片修改", "当前场景没有步骤号，无法从封面提取。", parent=dlg)
                 return
+            if comfy:
+                cp_, ci_, cm_ = _comfy_step_job(step_no, images[0], get_scene() if get_scene is not None else None)
+                remember()
+                dlg.destroy()
+                if callable(open_manual):
+                    _call_open_manual(cp_, ci_, backend, account, comfy=cm_)
+                return
             prompt = _cover_step_prompt(step_no)
             remember()
             dlg.destroy()
@@ -634,6 +668,13 @@ def open_picture_prompt_dialog(
             path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
             if not (isinstance(path, str) and path and os.path.isfile(path)):
                 messagebox.showwarning("图片修改", "当前场景没有可用的图，提取不了第几步。", parent=dlg)
+                return
+            if comfy:
+                cp_, ci_, cm_ = _comfy_step_job(step_no, path, scene)
+                remember()
+                dlg.destroy()
+                if callable(open_manual):
+                    _call_open_manual(cp_, ci_, backend, account, comfy=cm_)
                 return
             style = (get_style() or "").strip() or (project_manager.LAST_VISUAL_STYLE or "").strip()
             # t114u: 只写「原样取出第 N 格」+ 画风改变 + 说明文字 + FYI;不带 visual/speaking/actor/讲员/背景
@@ -695,6 +736,17 @@ def open_picture_prompt_dialog(
                         raise ValueError(msg)
                     messagebox.showwarning("图片修改", msg, parent=dlg)
                     return None
+                if comfy:  # t356u: 参考图按工作流槽位截断（MOSS 3 / QN 2），放不下的人只用文字描述
+                    crow, cref = config_prompt.comfy_cast_rows(rows, comfy)
+                    cpos, cneg = config_prompt.build_comfy_cast_fix_prompt(
+                        scene, crow, backend=comfy, visual_style=style, fyi=fyi_now, text=text_var.get())
+                    cimgs = images[:1] + cref
+                    print(f"图片修改 · 补全/修正人物（{comfy.upper()}）：发出的图 = " + " | ".join(
+                        [f"1 场景图 {os.path.basename(cimgs[0])}"]
+                        + [f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no") else f"（{r['label']} {r['name']} 只用文字）"
+                           for r in crow]))
+                    return cpos, cimgs, {"aspect": "", "actors": crow, "base": cimgs[0], "full_images": True,
+                                         "comfy": True, "negative": cneg, "size": comfy_size}
                 imgs = list(images)
                 for r in rows:
                     if r["image"] not in imgs:
@@ -731,6 +783,22 @@ def open_picture_prompt_dialog(
                     sent.append(f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no")
                                 else f"（{r['label']} {r['name']} 没有形象图）")
                 print(f"图片修改：发出的图 = " + " | ".join(sent))
+            if comfy:  # t356u: 一般修改 / 人物提取：ComfyUI 专用短提示
+                crow, cref = config_prompt.comfy_cast_rows(actor_images, comfy)
+                cimgs = images[:1] + cref
+                use_bg = bool(bg_include_var.get()) and not extract
+                cpos, cneg = config_prompt.build_comfy_picture_edit_prompt(
+                    backend=comfy, task=task_var.get(), text=text_var.get(), visual_style=style,
+                    edit_request=fyi_now if edit_only else "", scene=scene,
+                    use_visual=bool(visual_var.get()) and not edit_only, use_speaking=bool(speaking_var.get()) and not edit_only,
+                    use_actor=bool(actor_var.get()) and not edit_only, actor_rows=crow,
+                    region=region if use_bg else "", era=era if use_bg else "",
+                    actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
+                    fyi="" if edit_only else fyi_now,
+                )
+                size = () if extract else comfy_size
+                return cpos, cimgs, {"aspect": "", "actors": crow, "base": cimgs[0] if cimgs else "", "comfy": True,
+                                     "negative": cneg, "size": size}
             if session:
                 images = images[:1]
             try:
@@ -838,9 +906,18 @@ def open_picture_prompt_dialog(
         remember()
         dlg.destroy()
         if callable(open_manual):
-            _call_open_manual(prompt, images, backend, account)
+            if comfy and isinstance(req[2], dict) and req[2].get("comfy"):
+                _call_open_manual(prompt, images, backend, account, comfy=req[2])
+            else:
+                _call_open_manual(prompt, images, backend, account)
 
-    def _call_open_manual(prompt, images, backend, account) -> None:
+    def _call_open_manual(prompt, images, backend, account, comfy=None) -> None:
+        if comfy:  # t356u: ComfyUI 专用提示：带反向提示词 / 画布给手动窗口
+            try:
+                open_manual(prompt, images, backend, account, comfy=comfy)
+                return
+            except TypeError:
+                pass
         try:
             open_manual(prompt, images, backend, account)
         except TypeError:

@@ -59,6 +59,14 @@ def _actor(body, label="人物1", note=""):
     }
 
 
+def _talk(scene):
+    """t357u: give every listed actor a spoken line (<1> … <N>) unless the test sets speaking itself."""
+    if isinstance(scene, dict) and "speaking" not in scene:
+        n = len(scene.get("actor_refs") or [])
+        scene["speaking"] = " ".join(f"<{i}> 台词{i}。" for i in range(1, n + 1))
+    return scene
+
+
 class ActorPortraitReviewTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="portrait_x_")
@@ -104,7 +112,7 @@ class ActorPortraitReviewTest(unittest.TestCase):
 
     def _run(self, scene, answers=None, confirmed=None, **kw):
         return review_portraits_for_scene(
-            scene, self.avatar, generate=self._gen(kw.pop("fail_for", ())), review=self._review(answers or {}),
+            _talk(scene), self.avatar, generate=self._gen(kw.pop("fail_for", ())), review=self._review(answers or {}),
             confirmed=confirmed if confirmed is not None else set(),
             portrait_path=self._path, portrait_dest=self._dest, **kw,
         )
@@ -119,7 +127,7 @@ class ActorPortraitReviewTest(unittest.TestCase):
         out = []
         for i in range(1, n + 1):
             img = _rgb_image(os.path.join(self.tmp, f"s{i}.png"), (20 * i, 20, 20), (160, 100))
-            out.append({"clip_image": img, "actor_refs": [dict(a) for a in actors]})
+            out.append(_talk({"clip_image": img, "actor_refs": [dict(a) for a in actors]}))
         return out
 
     # --- the six decisions -------------------------------------------------------------------
@@ -257,7 +265,7 @@ class ActorPortraitReviewTest(unittest.TestCase):
             return _rgb_image(os.path.join(self.tmp, f"actor_portrait_g{len(self.gen_calls)}.png"))
 
         out = review_portraits_for_scene(
-            {"clip_image": self.scene_img, "actor_refs": [self.woman, self.man]}, self.avatar,
+            _talk({"clip_image": self.scene_img, "actor_refs": [self.woman, self.man]}), self.avatar,
             generate=generate, review=self._review({}), portrait_path=self._path, portrait_dest=self._dest,
             existing="skip",
         )

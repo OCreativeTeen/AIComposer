@@ -31,6 +31,7 @@ STATUS_EXISTING = "existing"  # 已有肖像（手动模式只做没有肖像的
 STATUS_STOPPED = "stopped"  # 人按了取消 / Esc
 STATUS_REPLACED = "replaced"  # t343u 手动重新提取：新图换上，原来的改名 .bakN 备份
 STATUS_IGNORED = "ignored"  # t343u 手动重新提取：忽略新图，原来的保持
+STATUS_NOT_SPEAKING = "not_speaking"  # t357u 这一场 actor 里有、但讲话里没有他的台词：不从这一场的图提取
 
 STATUS_LABEL = {
     STATUS_OK: "成功（已确认）",
@@ -42,6 +43,7 @@ STATUS_LABEL = {
     STATUS_STOPPED: "已停止",
     STATUS_REPLACED: "已换成新提取的肖像（原来的已备份 .bak）",
     STATUS_IGNORED: "已忽略新提取的，原来的肖像不变",
+    STATUS_NOT_SPEAKING: "这一场没有讲话，跳过（在有他讲话的那一场提取）",
 }
 
 DEFAULT_IMAGE_SLOT = "clip_image"
@@ -148,14 +150,17 @@ def actor_ref_from_entry(entry) -> dict | None:
 
 
 def actors_from_scene(scene) -> list:
+    """这一场 actor 栏里的人（含讲员），按顺序。每行带 ``slot``：在 actor 栏的第几位（从 1 起），
+    就是讲话里 ``<N>`` / ``<Ns>`` 的 N。"""
     if not isinstance(scene, dict):
         return []
     preset = scene.get("actor_refs")
     if isinstance(preset, list):
         out = []
-        for item in preset:
+        for pos, item in enumerate(preset, 1):
             if isinstance(item, dict) and item.get("body"):
                 row = dict(item)
+                row.setdefault("slot", pos)
                 raw = str(row["body"])
                 row["body"] = actor_identity(raw)
                 if not row.get("note") and row["body"] != raw.strip():
@@ -170,11 +175,46 @@ def actors_from_scene(scene) -> list:
 
     text = project_manager.actor_text_for_generation(scene.get("actor") or "")
     rows = []
-    for entry in project_manager.active_actor_entries(text):
+    for pos, entry in enumerate(project_manager.active_actor_entries(text), 1):
         ref = actor_ref_from_entry(entry)
         if ref:
+            ref["slot"] = pos
             rows.append(ref)
     return rows
+
+
+def speaking_actor_slots(scene, n_actors: int = 0) -> set:
+    """t357u: 这一场讲话里有台词的人（actor 栏第几位）。
+
+    用 ``speaking_marks.parse_speaking_turns``：``<N>`` / ``<Ns>``（自言自语还是第 N 个人）；
+    没有任何标记的讲话、或第一个标记之前的话，按 app 一贯的规矩算第 1 个人（同 ``_speaker_slots``）。
+    讲话空 → 空集合。编号超出人数时和 ``config_prompt.h3_speaker_map`` 一样，按出现的编号顺序对到第 1、2… 位。
+    """
+    from utility.speaking_marks import parse_speaking_turns, scene_speaking_source
+
+    text = scene_speaking_source(scene, allow_story_content=True) if isinstance(scene, dict) else ""
+    labels = sorted({int(t.speaker) for t in parse_speaking_turns(text) if str(t.text or "").strip()})
+    n = int(n_actors or 0)
+    if n and labels and any(not (1 <= k <= n) for k in labels) and len(labels) <= n:
+        return set(range(1, len(labels) + 1))
+    return set(labels)
+
+
+def split_actors_by_speaking(scene) -> tuple:
+    """t357u: (要提取的, 不提取的)，都是去重后的项目人物（不含讲员）。
+
+    要提取 = 在这一场 actor 栏里（人物1/人物2…）**并且**讲话里有他的台词。同一个人在 actor 栏出现两次时，
+    任何一次有台词都算。没有 slot 的行（老数据）不作限制，照旧提取。
+    """
+    actors = actors_from_scene(scene)
+    slots = speaking_actor_slots(scene, len(actors))
+    speaking_keys = set()
+    for a in actors:
+        slot = a.get("slot")
+        if slot is None or int(slot) in slots:
+            speaking_keys.add(confirm_key(dict(a, body=actor_identity(a.get("body") or ""))))
+    rows = _dedupe_actors(actors)
+    return ([r for r in rows if r["key"] in speaking_keys], [r for r in rows if r["key"] not in speaking_keys])
 
 
 def actor_description_text(actor: dict) -> str:
@@ -364,10 +404,10 @@ def _dedupe_actors(actors, roles=REVIEW_ROLES) -> list:
 
 
 def all_actors_confirmed(scenes, confirmed) -> bool:
-    """这些场景里出现的每一位人物都确认过了。没有人物也算。"""
+    """这些场景里**有讲话**的每一位人物都确认过了（t357u：不讲话的人不在这一场提取，也不等他）。没有人物也算。"""
     confirmed = confirmed if confirmed is not None else set()
     for scene in scenes or []:
-        for actor in _dedupe_actors(actors_from_scene(scene)):
+        for actor in split_actors_by_speaking(scene)[0]:
             if actor["key"] not in confirmed:
                 return False
     return True
@@ -415,15 +455,18 @@ def review_portraits_for_scene(
         if _has_portrait(actor, avatar_dir, style, portrait_path, portrait_dest):
             remove_portrait_files(actor, avatar_dir, style, portrait_path, portrait_dest)
 
-    actors = _dedupe_actors(actors_from_scene(scene))
+    # t357u: 只提取 actor 栏里有、并且这一场讲话里有他台词的人；其余的人记一行「这一场没有讲话，跳过」
+    actors, silent = split_actors_by_speaking(scene)
     out = {"source": "", "results": [], "reason": "", "stopped": False, "grok_calls": 0}
+    silent_rows = [dict(a, status=STATUS_NOT_SPEAKING, dest="") for a in silent]
     if not actors:
-        out["reason"] = "no_actors"
+        out["reason"] = "no_speaking_actors" if silent else "no_actors"
+        out["results"] = silent_rows
         return out
     todo = [a for a in actors if a["key"] not in confirmed]
     if not todo:
         out["reason"] = "all_confirmed"
-        out["results"] = [dict(a, status=STATUS_SKIPPED, dest="") for a in actors]
+        out["results"] = [dict(a, status=STATUS_SKIPPED, dest="") for a in actors] + silent_rows
         return out
     image = scene_clip_image_source(scene, covers)
     if not image:
@@ -508,6 +551,7 @@ def review_portraits_for_scene(
             break
         confirmed.add(row["key"])
         results.append(dict(row, status=STATUS_OK, dest=saved))
+    results.extend(silent_rows)  # t357u: 不讲话的人放在最后，每人一行跳过原因
     return out
 
 

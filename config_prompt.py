@@ -8286,3 +8286,336 @@ def build_cast_fix_prompt(scene: dict, actor_rows: list, visual_style: str = "",
     if fyi:
         parts.insert(0, "IMPORTANT NOTE FROM THE USER: " + fyi)
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# t356u: ComfyUI 图片编辑（MOSS-Image-Edit / QN = Qwen-Image-Edit）专用的一套提示词。
+# Grok / Gemini 的提示词（上面那些 build_*）一个字都不改；只有后端是 MOSS / QN 时才用这里的。
+# 扩散编辑模型：正面写短句、具体（留什么、改什么），不放长篇规则、JSON、聊天式的说明；
+# 「不要 …」尽量放进反向提示词（Grok 没有反向提示词，所以这一套单独写）。
+# 图片的叫法跟各自工作流的样例：MOSS 用 image 1 / image 2，Qwen 用 Picture 1 / Picture 2。
+# ---------------------------------------------------------------------------
+COMFY_EDIT_BACKENDS = ("moss", "qn")
+COMFY_MAX_REFS = {"moss": 3, "qn": 2}  # 底图之外最多几张参考图（与 sd_image_processor 的工作流槽位一致）
+
+COMFY_BASE_NEGATIVE = (
+    "worst quality, low quality, blurry, jpeg artifacts, watermark, signature, logo, "
+    "deformed face, distorted face, bad anatomy, extra fingers, extra limbs, mutated hands, nsfw"
+)
+COMFY_TEXT_NEGATIVE = "text, letters, words, caption, subtitles, title, labels, speech bubble"
+COMFY_COVER_STEP_NEGATIVE = (
+    COMFY_BASE_NEGATIVE + ", multi-panel, collage, split screen, diptych, triptych, comic strip, storyboard, "
+    "grid layout, panel borders, frame border, picture-in-picture, infographic, step numbers, arrows, "
+    "several scenes, repeated people, new characters, added props"
+)
+COMFY_CAST_FIX_NEGATIVE = (
+    COMFY_BASE_NEGATIVE + ", extra people, crowd, passer-by, background figures, duplicate person, cloned face, "
+    "wrong scale, pasted-on look, mismatched lighting, mismatched art style"
+)
+COMFY_EDIT_NEGATIVE = COMFY_BASE_NEGATIVE + ", extra people, duplicate person"
+COMFY_PEOPLE_EXTRACT_NEGATIVE = (
+    COMFY_BASE_NEGATIVE + ", " + COMFY_TEXT_NEGATIVE + ", scenery, furniture, room, props, objects in hands, "
+    "extra people, cropped head, profile view, back view"
+)
+COMFY_BUBBLE_NEGATIVE = "speech bubble, caption box, subtitles"
+
+
+def comfy_backend(backend: str) -> str:
+    """'moss' / 'qn'；别的（grok / gemini / 空）返回 ""。"""
+    b = str(backend or "").strip().lower()
+    return b if b in COMFY_EDIT_BACKENDS else ""
+
+
+def comfy_image_ref(backend: str, n: int) -> str:
+    """第 n 张输入图的叫法：MOSS = image n，QN = Picture n。"""
+    return f"Picture {int(n)}" if comfy_backend(backend) == "qn" else f"image {int(n)}"
+
+
+def comfy_canvas_size(video_size: str = "") -> tuple:
+    """项目尺寸 → ComfyUI 输出画布（约 1MP、16 的倍数）：横屏 1360x768，竖屏 768x1360；读不到返回 ()。"""
+    try:
+        w, h = (int(v) for v in str(video_size or "").lower().split("x", 1))
+    except (TypeError, ValueError):
+        return ()
+    if w <= 0 or h <= 0:
+        return ()
+    return (1360, 768) if w >= h else (768, 1360)
+
+
+def _comfy_frame_words(size) -> str:
+    if size and len(size) == 2:
+        return "wide 16:9 landscape" if size[0] >= size[1] else "tall 9:16 portrait"
+    return "full"
+
+
+def _comfy_negative(*parts: str) -> str:
+    seen, out = set(), []
+    for p in parts:
+        for t in str(p or "").split(","):
+            t = t.strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                out.append(t)
+    return ", ".join(out)
+
+
+def _comfy_short(text: str, limit: int = 360) -> str:
+    t = " ".join(str(text or "").split())
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0].rstrip(",;，；、") + " …"
+
+
+def _ordinal(k: int) -> str:
+    k = int(k)
+    if 10 <= k % 100 <= 20:
+        suf = "th"
+    else:
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(k % 10, "th")
+    return f"{k}{suf}"
+
+
+def _comfy_text_line(text: str, subject: str = "the picture") -> tuple:
+    """说明文字 → (正面一句, 反向补充)。"""
+    if text == "keep":
+        return (f"Write {subject}'s short title once, as a single caption line at the bottom; no other text.",
+                "duplicate title, repeated text")
+    if text == "keywords":
+        return ("Remove the title and caption text; show two or three of its key words naturally inside the scene, "
+                "for example carved, painted or written on a wall, sign or surface.", COMFY_BUBBLE_NEGATIVE)
+    if text == "express":
+        return ("No writing anywhere; the people, action and setting tell the moment.", COMFY_TEXT_NEGATIVE)
+    return ("Remove all writing: no title, no caption, no labels.", COMFY_TEXT_NEGATIVE)
+
+
+def _comfy_style_line(keep_style: bool, visual_style: str) -> str:
+    vs = (visual_style or "").strip()
+    if keep_style or not vs:
+        return "Keep the original art style."
+    return f"Redraw everything in this art style: {vs}; the content stays the same."
+
+
+def _comfy_person(row: dict) -> str:
+    """'woman/mature/chinese/封氏' → '封氏 (woman, mature, chinese)'。"""
+    raw = str((row or {}).get("name") or "").strip()
+    bits = [b.strip() for b in raw.split("/") if b.strip()]
+    if not bits:
+        return str((row or {}).get("label") or "person")
+    name, desc = bits[-1], ", ".join(bits[:-1])
+    ov = str((row or {}).get("override") or "").strip()
+    if ov:
+        desc = (desc + ", " if desc else "") + ov
+    return f"{name} ({desc})" if desc else name
+
+
+def build_comfy_cover_step_prompt(
+    step: int,
+    *,
+    backend: str = "moss",
+    layout: str = "",
+    count: int = 0,
+    cropped: bool = False,
+    caption: str = "keep",
+    keep_style: bool = True,
+    visual_style: str = "",
+    scene_caption: str = "",
+    scene_visual: str = "",
+    fyi: str = "",
+    size=(),
+) -> tuple:
+    """图片修改 · 从封面提取第 N 步（MOSS / QN）。返回 (正面, 反向)。
+
+    ``cropped``：底图已经是裁出来的第 N 格（``utility.cover_panels``），模型只要把这一格补成一整幅画。
+    没裁时按 ``layout`` 说位置：columns = 左右并排（从左数第 N 格），rows = 上下叠放（从上数第 N 格），
+    "" = 看不出来（按阅读顺序第 N 格）。``scene_caption`` / ``scene_visual`` 是这一场的标题 / 描述，帮模型认出这一格。
+    """
+    try:
+        k = max(1, int(step))
+    except (TypeError, ValueError):
+        k = 1
+    img1 = comfy_image_ref(backend, 1)
+    frame = _comfy_frame_words(size)
+    lines = []
+    if (fyi or "").strip():
+        lines.append(fyi.strip())
+    if cropped:
+        lines += [
+            f"{img1} is one panel cut out of a multi-panel story cover.",
+            f"Expand {img1} outward into one {frame} picture that fills the whole frame: the panel stays in the "
+            "middle, unchanged; the new areas around it continue the same place, with the same kind of background.",
+            "Keep the same people, faces, hair, clothing, poses, action, setting, lighting and colors.",
+            "The panel's main person stays the one main character, in the center; everyone else stays a quiet "
+            "background figure exactly as in the panel.",
+        ]
+    else:
+        n = int(count or 0)
+        of_n = f" of {n}" if n else ""
+        if layout == "columns":
+            where = (f"{img1} is a story cover with {n or 'several'} panels side by side, read from left to right. "
+                     f"Take only the {_ordinal(k)} panel from the left (panel {k}{of_n}).")
+        elif layout == "rows":
+            where = (f"{img1} is a story cover with {n or 'several'} panels stacked from top to bottom. "
+                     f"Take only the {_ordinal(k)} panel from the top (panel {k}{of_n}).")
+        else:
+            where = (f"{img1} is a story cover made of several numbered panels. "
+                     f"Take only panel {k}, counting in reading order (left to right, then top to bottom).")
+        lines += [
+            where,
+            f"Turn that one panel into a single complete {frame} scene that fills the whole frame, "
+            "continuing its place naturally to the edges.",
+            "Keep that panel's people, faces, clothing, poses, action, setting and lighting.",
+            "Leave out the other panels, the cover title, step numbers, arrows and borders.",
+        ]
+    hint = "; ".join(x for x in (
+        f"title \"{_comfy_short(scene_caption, 80)}\"" if (scene_caption or "").strip() else "",
+        _comfy_short(scene_visual, 240) if (scene_visual or "").strip() else "",
+    ) if x)
+    if hint:
+        lines.append(f"This panel shows: {hint}.")
+    text_pos, text_neg = _comfy_text_line(caption, "the panel")
+    lines.append(text_pos)
+    lines.append(_comfy_style_line(keep_style, visual_style))
+    return "\n".join(lines), _comfy_negative(COMFY_COVER_STEP_NEGATIVE, text_neg)
+
+
+def comfy_cast_rows(actor_rows: list, backend: str) -> tuple:
+    """补全/修正人物：只留工作流放得下的参考图（MOSS 3 / QN 2），重新编号（底图是第 1 张）。
+
+    返回 (rows, image_paths)：rows 是复制的行，有图的 image_no = 2,3,..；放不下的 image="" / image_no=0（只用文字描述）。
+    """
+    cap = COMFY_MAX_REFS.get(comfy_backend(backend), 2)
+    out, paths = [], []
+    for r in actor_rows or []:
+        if not isinstance(r, dict):
+            continue
+        row = dict(r)
+        img = row.get("image") or ""
+        if img and img in paths:
+            row["image_no"] = paths.index(img) + 2
+        elif img and len(paths) < cap:
+            paths.append(img)
+            row["image_no"] = len(paths) + 1
+        else:
+            row["image"], row["image_no"] = "", 0
+        out.append(row)
+    return out, paths
+
+
+def _comfy_cast_lines(rows: list, backend: str) -> list:
+    lines = []
+    for r in rows:
+        who = _comfy_person(r)
+        if r.get("image_no"):
+            lines.append(f"{comfy_image_ref(backend, r['image_no'])} shows {who}: that person in "
+                         f"{comfy_image_ref(backend, 1)} gets this face, hair and clothing.")
+        else:
+            lines.append(f"{who} has no reference picture; draw them from that description.")
+    return lines
+
+
+def build_comfy_cast_fix_prompt(scene: dict, actor_rows: list, *, backend: str = "moss", visual_style: str = "",
+                                fyi: str = "", text: str = "keep") -> tuple:
+    """图片修改 · 补全/修正人物（MOSS / QN）。``actor_rows`` 先过 ``comfy_cast_rows``。返回 (正面, 反向)。"""
+    sc = scene if isinstance(scene, dict) else {}
+    rows = [r for r in (actor_rows or []) if isinstance(r, dict)]
+    img1 = comfy_image_ref(backend, 1)
+    names = ", ".join(_comfy_person(r) for r in rows) or "the people already there"
+    lines = []
+    if (fyi or "").strip():
+        lines.append(fyi.strip())
+    lines += [
+        f"Edit {img1}: fix the people so the scene has exactly {len(rows) or 'the same'} "
+        f"{'person' if len(rows) == 1 else 'people'}: {names}.",
+    ]
+    lines += _comfy_cast_lines(rows, backend)
+    visual = _comfy_short(sc.get("visual") or "", 360)
+    if visual:
+        lines.append(f"If someone is missing, add them where the scene needs them: {visual}")
+    else:
+        lines.append("If someone is missing, add them naturally into the scene.")
+    lines.append("People who already look right stay unchanged. Everyone has natural size and perspective for the scene.")
+    lines.append(f"Keep the composition, camera angle, background, props, lighting and art style of {img1}"
+                 + (f" ({visual_style.strip()})." if (visual_style or "").strip() else "."))
+    if text == "keep":
+        lines.append(f"Keep any words already drawn in {img1}.")
+        neg = _comfy_negative(COMFY_CAST_FIX_NEGATIVE, COMFY_BUBBLE_NEGATIVE)
+    else:
+        lines.append(_comfy_text_line(text)[0])
+        neg = _comfy_negative(COMFY_CAST_FIX_NEGATIVE, _comfy_text_line(text)[1] or COMFY_BUBBLE_NEGATIVE)
+    return "\n".join(lines), neg
+
+
+def build_comfy_picture_edit_prompt(
+    *,
+    backend: str = "moss",
+    task: str = "keep",
+    text: str = "keep",
+    visual_style: str = "",
+    edit_request: str = "",
+    scene: dict | None = None,
+    use_visual: bool = False,
+    use_speaking: bool = False,
+    use_actor: bool = False,
+    actor_rows: list | None = None,
+    region: str = "",
+    era: str = "",
+    actor_override: str = "",
+    fyi: str = "",
+) -> tuple:
+    """图片修改 · 一般修改（MOSS / QN）：仅修改（只有 FYI）、保持画风 / 转成项目风格 + 场景内容、人物提取。
+
+    ``actor_rows``（人物形象图）先过 ``comfy_cast_rows``。返回 (正面, 反向)。
+    """
+    img1 = comfy_image_ref(backend, 1)
+    sc = scene if isinstance(scene, dict) else {}
+    if task == "extract":
+        lines = [
+            f"Make one clean waist-up portrait of every person in {img1}, standing side by side and facing the viewer.",
+            "Keep each person's face, age, hair and clothing. Hands empty and relaxed.",
+            "Plain light grey background, nothing else.",
+        ]
+        phrase = setting_place_phrase(region, era)
+        if phrase:
+            lines.append(f"Clothing and faces belong to {phrase}.")
+        if (fyi or "").strip():
+            lines.insert(0, fyi.strip())
+        return "\n".join(lines), COMFY_PEOPLE_EXTRACT_NEGATIVE
+    style = (visual_style or "").strip()
+    restyle = task == "restyle" and bool(style)
+    story = bool(use_visual or use_speaking or use_actor)
+    lines = []
+    request = (edit_request or fyi or "").strip()
+    if request:
+        lines.append(request)
+    if not story:
+        if not request:
+            lines.append(f"Clean up {img1} without changing its content.")
+        lines.append(f"Change only what is asked; keep everything else in {img1} the same: composition, people, faces, "
+                     "poses, clothing, place and objects.")
+    else:
+        visual = _comfy_short(sc.get("visual") or "", 420) if use_visual else ""
+        if not visual:
+            visual = _comfy_short(sc.get("caption") or "", 160)
+        if visual:
+            lines.append(f"Edit {img1} to show this scene: {visual}")
+        else:
+            lines.append(f"Edit {img1} to fit this scene.")
+        lines.append(f"Keep the setting, camera angle and lighting of {img1} where they fit.")
+        rows = [r for r in (actor_rows or []) if isinstance(r, dict)]
+        if use_actor and rows:
+            lines.append("People in the scene: " + ", ".join(_comfy_person(r) for r in rows) + "; nobody else.")
+            lines += _comfy_cast_lines(rows, backend)
+        else:
+            lines.append(f"Only the people already in {img1}; nobody new.")
+        override = (actor_override or "").strip()
+        if override:
+            lines.append(f"Draw every person as {override}.")
+        phrase = setting_place_phrase(region, era)
+        if phrase:
+            lines.append(f"Place and period: {phrase}; clothing, buildings and objects match it.")
+    if restyle:
+        lines.append(f"Redraw the whole picture in this art style: {style}; the content stays the same.")
+    else:
+        lines.append("Keep the picture's own art style exactly.")
+    text_pos, text_neg = _comfy_text_line(text) if text != "keep" else (f"Keep any words already drawn in {img1}.", "")
+    lines.append(text_pos)
+    # 保留文字：反向里不放 caption / 字幕（图里本来就有的字会跟着被去掉）
+    return "\n".join(lines), _comfy_negative(COMFY_EDIT_NEGATIVE, text_neg)

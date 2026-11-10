@@ -1583,13 +1583,23 @@ class LLMApi:
         # ``extra``：不进提示词的参数（如 {"duration": "10s", "resolution": "720p"}），交给 CLI自动；只读显示。
         extra_params = dict(extra) if isinstance(extra, dict) else {}
         shown_params = {k: v for k, v in extra_params.items()
-                        if k not in ("image_backend", "video_backend", "orientation", "text_backend", "portrait_refs", "chrome_account") and v not in (None, "")}
+                        if k not in ("image_backend", "video_backend", "orientation", "text_backend", "portrait_refs", "chrome_account",
+                                     "comfy_backend", "comfy_negative", "comfy_size") and v not in (None, "")}
         if shown_params:
             ttk.Label(
                 model_frame,
                 text="参数: " + " · ".join(str(v) for v in shown_params.values()),
                 font=("TkDefaultFont", 9),
                 foreground="gray35",
+            ).pack(anchor=tk.W, pady=(2, 0))
+        if str(extra_params.get("comfy_negative") or "").strip():  # t356u: ComfyUI 反向提示词（只读显示）
+            ttk.Label(
+                model_frame,
+                text="反向提示词（ComfyUI）: " + str(extra_params.get("comfy_negative"))[:300],
+                font=("TkDefaultFont", 9),
+                foreground="gray35",
+                wraplength=720,
+                justify=tk.LEFT,
             ).pack(anchor=tk.W, pady=(2, 0))
         if str(extra_params.get("text_backend") or "").strip():
             ttk.Label(
@@ -1851,12 +1861,20 @@ class LLMApi:
                         _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…")
                         print(f"[CLI自动] 发给 {who} 的图（{len(image_paths)} 张）: " + " | ".join(
                             f"{k}={os.path.basename(str(p))}" for k, p in enumerate(image_paths, 1)))
+                        # t356u: 图片修改给 MOSS / QN 时已写好 ComfyUI 专用提示 + 反向提示 + 画布（extra 里 comfy_*），
+                        # 原样送出（不再改写）；在窗口里换了别的 ComfyUI 后端也照用；没有就走后备改写。
+                        _cf = {}
+                        if (use_moss or use_qn) and str(extra_params.get("comfy_backend") or "") in ("moss", "qn"):
+                            _sz = extra_params.get("comfy_size") or ()
+                            _cf = {"negative": extra_params.get("comfy_negative"), "adapt": False,
+                                   "width": _sz[0] if len(_sz) == 2 else None,
+                                   "height": _sz[1] if len(_sz) == 2 else None}
                         if use_moss:
                             from .sd_image_processor import generate_image_moss_edit
-                            img = generate_image_moss_edit(prompt, list(image_paths), status=_cli_set_status)
+                            img = generate_image_moss_edit(prompt, list(image_paths), status=_cli_set_status, **_cf)
                         elif use_qn:
                             from .sd_image_processor import generate_image_qwen_edit
-                            img = generate_image_qwen_edit(prompt, list(image_paths), status=_cli_set_status)
+                            img = generate_image_qwen_edit(prompt, list(image_paths), status=_cli_set_status, **_cf)
                         else:
                             from . import chrome_account
 

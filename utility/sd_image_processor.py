@@ -1341,47 +1341,64 @@ def _moss_scale_ids_for_loads(workflow: Dict[str, Any], load_ids: list) -> list:
     return out
 
 
-def adapt_prompt_for_moss_edit(prompt: str) -> tuple:
-    """把 Grok 向的图片提示改成 MOSS-Image-Edit 口吻。返回 (prompt, negative_or_None)。
-
-    封面/分镜「extract step N」：明确只要第 N 格铺满全画幅，禁止嵌套堆叠多格。
-    其他提示原样返回（negative=None → 工作流默认负面）。
-    """
+def _parse_extract_step_prompt(text: str):
+    """Grok 向「extract step N」提示 → dict(step, caption, keep_style, visual_style, fyi, size)；不是返回 None。"""
     import re
+    import config_prompt as cp
+
+    m = re.search(r"extract\s+step\s+(\d+)", text or "", flags=re.I)
+    if not m:
+        return None
+    k = max(1, int(m.group(1)))
+    caption = "keep"
+    for key, tmpl in cp._STEP_CAPTION_LINES.items():
+        if tmpl.format(k=k) in text:
+            caption = key
+            break
+    vs = ""
+    mv = re.search(r"^\*\* Visual_Style:\s*(.+?)\. Redraw", text, flags=re.M)
+    if mv:
+        vs = mv.group(1).strip()
+    mf = re.search(r"^Note:\s*(.+)$", text, flags=re.M)
+    return {"step": k, "caption": caption, "keep_style": not vs, "visual_style": vs,
+            "fyi": mf.group(1).strip() if mf else "", "size": _moss_latent_size_from_prompt(text) or ()}
+
+
+def _adapt_extract_step(prompt: str, base_image: str = "", backend: str = "moss", crop: bool = False):
+    """t356u: 「extract step N」→ ComfyUI 专用提示（config_prompt.build_comfy_cover_step_prompt）。
+
+    看底图的分格布局（utility.cover_panels）：左右并排就说「从左数第 N 格」，上下叠放说「从上数」，
+    看不出来说「按阅读顺序」。``crop`` 且布局确定 → 第 N 格裁出来当底图。
+    返回 (prompt, negative, base_image_to_use)；不是 extract-step 返回 (原文, None, base_image)。
+    """
+    import config_prompt as cp
 
     text = (prompt or "").strip()
-    m = re.search(r"extract\s+step\s+(\d+)", text, flags=re.I)
-    if not m:
-        return text, None
-    k = max(1, int(m.group(1)))
-    aspect_lines, keep_lines = [], []
-    for line in text.splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        low = s.lower()
-        if low.startswith("output format") or s.startswith("输出比例"):
-            aspect_lines.append(s)
-        elif s.startswith("Note:") or s.startswith("** Text:") or s.startswith("** Style:") \
-                or s.startswith("** Visual_Style:") or s.startswith("Text:") or s.startswith("Style:") \
-                or s.startswith("Visual_Style:"):
-            keep_lines.append(s)
-    where = "topmost / first" if k == 1 else f"number {k} counting from the top"
-    moss_body = [
-        f"Replace the entire image with ONLY panel/step {k} from the input "
-        f"(the {where} step panel in the multi-panel cover/infographic).",
-        f"Crop out that one panel alone and expand it to fill the full output frame as a single "
-        f"standalone scene. The result must be one full-bleed picture of panel {k} only.",
-        "Remove every other panel, step numbers, arrows, grid and the multi-panel collage layout.",
-        "Do not nest panels inside panels. Do not stack or tile multiple panels. "
-        "Do not return a smaller collage or picture-in-picture.",
-        f"Keep panel {k}'s people, setting, action, composition details and art style; "
-        f"only reframe that panel to fill the canvas.",
-    ]
-    parts = aspect_lines + [""] + moss_body
-    if keep_lines:
-        parts += [""] + keep_lines
-    return "\n".join(parts).strip(), MOSS_EXTRACT_NEGATIVE
+    info = _parse_extract_step_prompt(text)
+    if not info:
+        return text, None, base_image
+    lay = {"layout": "", "count": 0, "image": base_image, "cropped": False}
+    if base_image and os.path.isfile(base_image):
+        from utility.cover_panels import prepare_cover_step_input
+
+        lay = prepare_cover_step_input(base_image, info["step"], crop=crop)
+    pos, neg = cp.build_comfy_cover_step_prompt(
+        info["step"], backend=backend, layout=lay["layout"], count=lay["count"], cropped=lay["cropped"],
+        caption=info["caption"], keep_style=info["keep_style"], visual_style=info["visual_style"],
+        fyi=info["fyi"], size=info["size"],
+    )
+    return pos, neg, lay["image"]
+
+
+def adapt_prompt_for_moss_edit(prompt: str, base_image: str = "") -> tuple:
+    """把 Grok 向的图片提示改成 MOSS-Image-Edit 口吻（后备：调用方没给 ComfyUI 专用提示时用）。
+    返回 (prompt, negative_or_None)。
+
+    封面「extract step N」：换成 ComfyUI 专用的提取提示 + 反向提示；``base_image`` 给了就按它的分格布局说位置
+    （t356u：以前一律说「从上数」，左右并排的封面就数错了）。其他提示原样返回（negative=None → 工作流默认负面）。
+    """
+    pos, neg, _img = _adapt_extract_step(prompt, base_image, "moss", crop=False)
+    return pos, neg
 
 
 def _moss_latent_size_from_prompt(prompt: str):
@@ -1447,17 +1464,26 @@ def build_moss_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
 
 def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
                              workflow_path=None, timeout_s: float = 1800.0,
-                             status=None, negative=None):
+                             status=None, negative=None, adapt: bool = True, width=None, height=None):
     """ComfyUI 跑 MOSS 图片编辑。images[0]=底图，images[1:]=参考图（最多 3，可无）。
 
     返回 PIL.Image。server 默认 config.COMFYUI_MOSS_URL（192.168.1.x:8188，asus2060）。
     t231u: 送出前把「extract step」类提示改成 MOSS 口吻；无参考时只传 1 张底图。
+    t356u: ``adapt=False`` = 调用方已经给了 ComfyUI 专用提示（config_prompt.build_comfy_*），原样送出；
+    ``width``/``height`` 给了就用它当输出画布，否则从提示里的 16:9 / 9:16 读。
     """
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
-    adapted, adapt_neg = adapt_prompt_for_moss_edit(prompt)
-    prompt = adapted
-    if negative is None and adapt_neg:
-        negative = adapt_neg
+    images = list(images or [])
+    if adapt:
+        size_hint = _moss_latent_size_from_prompt(prompt)
+        adapted, adapt_neg, new_base = _adapt_extract_step(prompt, images[0] if images else "", "moss", crop=True)
+        if new_base and images:
+            images[0] = new_base
+        prompt = adapted if adapt_neg else prompt
+        if negative is None and adapt_neg:
+            negative = adapt_neg
+        if not (width and height) and size_hint:
+            width, height = size_hint
     import io
     import random
     import time
@@ -1485,7 +1511,7 @@ def generate_image_moss_edit(prompt: str, images, *, server=None, seed=None,
         workflow = json.load(f)
     seed = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    size = _moss_latent_size_from_prompt(prompt)
+    size = (int(width), int(height)) if (width and height) else _moss_latent_size_from_prompt(prompt)
 
     def upload(path, name):
         with open(path, "rb") as f:
@@ -1622,16 +1648,24 @@ def _qwen_slot_load_ids(workflow: Dict[str, Any]) -> dict:
     return out
 
 
-def adapt_prompt_for_qwen_edit(prompt: str) -> tuple:
-    """封面 extract-step：复用 MOSS 口吻（同属本地图编辑，避免多格嵌套）。"""
-    return adapt_prompt_for_moss_edit(prompt)
+def adapt_prompt_for_qwen_edit(prompt: str, base_image: str = "") -> tuple:
+    """封面 extract-step：同 MOSS 的后备改写，但图片叫 Picture 1（Qwen 的叫法）。"""
+    pos, neg, _img = _adapt_extract_step(prompt, base_image, "qn", crop=False)
+    return pos, neg
 
 
 def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_names: list,
                            prompt: str, seed: int,
                            filename_prefix: str = "qwen_edit",
-                           negative=None) -> Dict[str, Any]:
-    """填 qwen_edit_3ref_api：底图 + 最多 2 张真实参考；空参考槽删除（不垫底图）。"""
+                           negative=None, width=None, height=None, base_size=None) -> Dict[str, Any]:
+    """填 qwen_edit_3ref_api：底图 + 最多 2 张真实参考；空参考槽删除（不垫底图）。
+
+    t356u: width/height 给了 → 采样用 EmptySD3LatentImage 固定画布（Qwen 以前跟着底图比例走，
+    竖屏封面就出竖图）；原来的 VAEEncode 去掉（denoise=1，只提供尺寸）。
+    ``base_size``（底图宽高）和画布比例差不到 5% 时（一般修改），底图的 FluxKontextImageScale 换成
+    ImageScaleToTotalPixels（画布的像素量、16 的倍数），底图正好对齐画布（不然会错位重画、字会花）；
+    比例差很多（封面裁出来的细长一格）仍用 FluxKontextImageScale（实测这样补成横图更好）。
+    """
     import copy
 
     wf = copy.deepcopy(workflow)
@@ -1666,6 +1700,33 @@ def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
     if negative is not None:
         wf[neg_id]["inputs"]["prompt"] = (negative or "").strip()
     wf[ks]["inputs"]["seed"] = int(seed)
+    if width and height:
+        w, h = int(width), int(height)
+        if w % 16 or h % 16:
+            raise ValueError(f"QN 宽高必须是 16 的倍数（给的是 {w}x{h}）")
+        old = wf[ks]["inputs"].get("latent_image")
+        latent_id = "qn_canvas"
+        wf[latent_id] = {"class_type": "EmptySD3LatentImage",
+                         "inputs": {"width": w, "height": h, "batch_size": 1},
+                         "_meta": {"title": "qn_canvas"}}
+        wf[ks]["inputs"]["latent_image"] = [latent_id, 0]
+        if isinstance(old, list) and old and wf.get(str(old[0]), {}).get("class_type") == "VAEEncode":
+            wf.pop(str(old[0]), None)
+        # 底图缩放改成和画布同样的像素量（16 的倍数）：横屏底图正好落在 1360x768 上，和画布对齐；
+        # FluxKontextImageScale 会缩到 1392x752，跟画布错位，整张图会被重画（字会花）。
+        img1 = wf[pos_id]["inputs"].get("image1")
+        sid = str(img1[0]) if isinstance(img1, list) and img1 else ""
+        same_aspect = False
+        try:
+            bw, bh = (int(v) for v in (base_size or ()))
+            same_aspect = bw > 0 and bh > 0 and abs((bw / bh) / (w / h) - 1.0) < 0.05
+        except (TypeError, ValueError):
+            same_aspect = False
+        if same_aspect and wf.get(sid, {}).get("class_type") == "FluxKontextImageScale":
+            wf[sid] = {"class_type": "ImageScaleToTotalPixels",
+                       "inputs": {"image": wf[sid]["inputs"]["image"], "upscale_method": "lanczos",
+                                  "megapixels": round(w * h / 1048576.0, 4), "resolution_steps": 16},
+                       "_meta": {"title": "qn_base_to_canvas_pixels"}}
     save_ids = _find_nodes(wf, "SaveImage")
     if save_ids:
         wf[save_ids[0]]["inputs"]["filename_prefix"] = filename_prefix
@@ -1674,17 +1735,26 @@ def build_qwen_edit_prompt(workflow: Dict[str, Any], *, base_name: str, ref_name
 
 def generate_image_qwen_edit(prompt: str, images, *, server=None, seed=None,
                              workflow_path=None, timeout_s: float = 1800.0,
-                             status=None, negative=None):
+                             status=None, negative=None, adapt: bool = True, width=None, height=None):
     """ComfyUI 跑 Qwen(QN) 图片编辑。images[0]=底图，images[1:]=参考（最多 2，可无）。
 
     返回 PIL.Image。server 默认 config.COMFYUI_QN_URL（与 MOSS 同机）。
     extract-step 提示走 adapt_prompt_for_qwen_edit（同 MOSS 防嵌套）。
+    t356u: ``adapt=False`` = 已是 ComfyUI 专用提示；``width``/``height`` 或提示里的 16:9 / 9:16 → 固定输出画布。
     """
     prompt = _to_simplified(prompt)
-    adapted, adapt_neg = adapt_prompt_for_qwen_edit(prompt)
-    prompt = adapted
-    if negative is None and adapt_neg:
-        negative = adapt_neg
+    images = list(images or [])
+    if adapt:
+        size_hint = _moss_latent_size_from_prompt(prompt)
+        adapted, adapt_neg, new_base = _adapt_extract_step(prompt, images[0] if images else "", "qn", crop=True)
+        if new_base and images:
+            images[0] = new_base
+        prompt = adapted if adapt_neg else prompt
+        if negative is None and adapt_neg:
+            negative = adapt_neg
+        if not (width and height) and size_hint:
+            width, height = size_hint
+    size = (int(width), int(height)) if (width and height) else _moss_latent_size_from_prompt(prompt)
     import io
     import random
     import time
@@ -1736,9 +1806,18 @@ def generate_image_qwen_edit(prompt: str, images, *, server=None, seed=None,
         say(f"参考图超过 {QN_EDIT_MAX_REFS} 张，只用前 {QN_EDIT_MAX_REFS} 张")
     say(f"图像槽位：底图 + {len(ref_names)} 张参考（不垫空槽）")
 
+    base_size = None
+    if size:
+        say(f"输出画布固定 {size[0]}x{size[1]}")
+        try:
+            with Image.open(paths[0]) as _im:
+                base_size = _im.size
+        except Exception:  # noqa: BLE001
+            base_size = None
     wf = build_qwen_edit_prompt(
         workflow, base_name=base_name, ref_names=ref_names, prompt=prompt, seed=seed,
         filename_prefix=f"qwen_edit_{stamp}", negative=negative,
+        width=(size[0] if size else None), height=(size[1] if size else None), base_size=base_size,
     )
     ks = _one_node(wf, "KSampler")
     pos_id = str(wf[ks]["inputs"]["positive"][0])

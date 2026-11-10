@@ -50,6 +50,14 @@ def _actor(body, label):
     return {"role": "person", "body": body, "label": label, "name": body.split("/")[-1]}
 
 
+def _talk(scene):
+    """t357u: give every listed actor a spoken line (<1> … <N>) unless the test sets speaking itself."""
+    if isinstance(scene, dict) and "speaking" not in scene:
+        n = len(scene.get("actor_refs") or [])
+        scene["speaking"] = " ".join(f"<{i}> 台词{i}。" for i in range(1, n + 1))
+    return scene
+
+
 class ManualReextractTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="t343_")
@@ -92,7 +100,7 @@ class ManualReextractTest(unittest.TestCase):
 
         self.confirmed = set()
         return review_portraits_for_scene(
-            {"clip_image": self.scene_img, "actor_refs": [dict(x) for x in actors]}, self.avatar,
+            _talk({"clip_image": self.scene_img, "actor_refs": [dict(x) for x in actors]}), self.avatar,
             generate=generate, review=review, confirmed=self.confirmed, existing="replace",
             stop_on_failure=False, portrait_path=self._path, portrait_dest=self._dest,
         )
