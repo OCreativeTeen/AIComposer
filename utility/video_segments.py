@@ -278,8 +278,9 @@ def undo_first_segment(scenes: list, token: dict) -> bool:
     return True
 
 
-def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None) -> tuple:
+def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None, sharpen=None) -> tuple:
     """末帧 → 下一节的起始图。``upscale(path, target, style) -> PIL`` （MOSS 提高分辨率）。
+    t397u: ``sharpen`` = upscale_sharpen(后端)，颜色对齐后再轻度 USM（QN）。
 
     返回 (图路径, 是否增强了, 说明)。增强失败（ComfyUI 不通等）返回原末帧和原因，调用方照常往下做。
     """
@@ -298,7 +299,7 @@ def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None) -> tup
         img = upscale(frame_path, target, style)
         if img is None or not hasattr(img, "save"):
             raise RuntimeError("提高分辨率没有返回图")
-        img = finish_upscale(img, target, frame_path)  # t377u: 对齐尺寸 + 颜色统计对齐原末帧
+        img = finish_upscale(img, target, frame_path, sharpen=sharpen)  # t377u 对齐尺寸 + 颜色；t397u 锐化
         fd, out = tempfile.mkstemp(suffix=".png", prefix="seg_lastframe_up_")
         os.close(fd)
         img.convert("RGB").save(out)
@@ -346,18 +347,21 @@ def enhance_segment_last_frame(frame_path: str, *, mode=LAST_FRAME_ENHANCE_DEFAU
         if not frame_path or not os.path.isfile(frame_path):
             raise FileNotFoundError(f"末帧不在：{frame_path}")
         return frame_path, False, "选了不增强"
+    from utility.image_upscale import upscale_sharpen
+
     return enhance_last_frame(frame_path, style=style,
-                              upscale=last_frame_upscaler(m, status=status, account=account))
+                              upscale=last_frame_upscaler(m, status=status, account=account),
+                              sharpen=upscale_sharpen(m))  # t397u: QN 轻度 USM
 
 
 def qn_upscale(frame_path: str, target, style: str = "", *, server=None, timeout_s: float = 600.0, status=None):
     """t376u: Qwen(QN) ComfyUI 图片编辑 · 提高分辨率（同 MOSS 的提示词口吻换成 Picture 1 + 项目画风）。"""
     import config_prompt
-    from utility.image_upscale import comfy_upscale_canvas, upscale_init_denoise
+    from utility.image_upscale import comfy_upscale_canvas, upscale_init_denoise, upscale_supersample
     from utility.sd_image_processor import generate_image_qwen_edit
 
     pos, neg = config_prompt.build_comfy_upscale_prompt(target, backend="qn", style=style)
-    canvas = comfy_upscale_canvas(target)
+    canvas = comfy_upscale_canvas(target, upscale_supersample("qn"))  # t397u: 1.5 倍画布超采样，再缩回目标尺寸
     return generate_image_qwen_edit(pos, [frame_path], server=server, negative=neg, adapt=False,
                                     width=canvas[0], height=canvas[1], timeout_s=timeout_s,
                                     status=status, init_denoise=upscale_init_denoise("qn"))  # t377u

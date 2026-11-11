@@ -180,7 +180,9 @@ class WiringTest(unittest.TestCase):
 
     def test_last_frame_uses_finish_upscale(self):
         vs = self._src("utility/video_segments.py")
-        self.assertIn("img = finish_upscale(img, target, frame_path)", vs)
+        self.assertIn("img = finish_upscale(img, target, frame_path, sharpen=sharpen)", vs)
+        self.assertIn("sharpen=upscale_sharpen(m)", vs)
+        self.assertIn('comfy_upscale_canvas(target, upscale_supersample("qn"))', vs)
         self.assertIn('init_denoise=upscale_init_denoise("moss")', vs)
         self.assertIn('init_denoise=upscale_init_denoise("qn")', vs)
 

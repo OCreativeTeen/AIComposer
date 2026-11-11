@@ -148,9 +148,9 @@ class EnhanceRoutingTest(unittest.TestCase):
         self.assertEqual(images, [self.frame])
         self.assertTrue(prompt.startswith("FAITHFUL RESTORE"))  # t377u
         self.assertIn("Picture 1", prompt)
-        self.assertEqual(kw["init_denoise"], 0.4)
+        self.assertEqual(kw["init_denoise"], 0.55)  # t397u: 0.4 -> 0.55
         self.assertIn("1920x1080", prompt)
-        self.assertEqual((kw["width"], kw["height"]), (1920, 1088))
+        self.assertEqual((kw["width"], kw["height"]), (2880, 1616))  # t397u: 1.5x supersample canvas
         self.assertFalse(kw["adapt"])
         self._check_out(out)
 

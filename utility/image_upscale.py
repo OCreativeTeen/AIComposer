@@ -10,6 +10,12 @@ t377u 忠实修复（提高分辨率 / 尾帧增强，所有后端）：
   （只重画细节；构图、颜色、画风强度都跟着原图）。其他图片修改模式不受影响（仍是 denoise=1）。
 - 结果回来后 match_color_stats：在 LAB 里把每个通道的均值 / 标准差对齐到原图（Lanczos 放大后的原图），
   亮度、对比度、颜色、饱和度回到原图的水平（全图统计量，不动局部细节；比例有夹限，很温和）。
+
+t397u 强增强（QN）：原末帧本来就是 1080x1920，按原尺寸重画几乎没提升（Laplacian 方差只 +25%）。现在 QN
+- denoise 0.55（细节重画得多一些；仍从原图起步，构图 / 颜色跟着原图）；
+- 超采样：在 1.5 倍画布（1080x1920 → 1616x2880）上重画，再 Lanczos 缩回目标尺寸 —— 细节更细、更锐；
+- 最后一步轻度 USM 锐化（radius 1.2 / 80% / threshold 2，只加强边缘和纹理，不改颜色和构图）。
+  实测（两张真实末帧）：Laplacian 方差 74.7 → 299（原来 93），15.0 → 59（原来 23）；低频差反而更小（更忠实）。
 """
 from __future__ import annotations
 
@@ -46,14 +52,19 @@ def upscale_target_for_image(path: str, long_side: int = UPSCALE_LONG_SIDE) -> t
         return upscale_target_size(im.width, im.height, long_side)
 
 
-def comfy_upscale_canvas(size) -> tuple:
-    """目标尺寸 → MOSS / QN 的固定画布：每边就近取 16 的倍数（1920x1080 → 1920x1088），结果再对齐回目标尺寸。"""
+def comfy_upscale_canvas(size, scale: float = 1.0) -> tuple:
+    """目标尺寸 → MOSS / QN 的固定画布：每边就近取 16 的倍数（1920x1080 → 1920x1088），结果再对齐回目标尺寸。
+
+    t397u: ``scale`` > 1 = 超采样画布（先乘再取 16 的倍数；1080x1920 × 1.5 → 1616x2880）。"""
     try:
         w, h = (int(v) for v in size)
+        scale = float(scale) if scale else 1.0
     except (TypeError, ValueError):
         return ()
     if w <= 0 or h <= 0:
         return ()
+    if scale > 0 and abs(scale - 1.0) > 1e-6:
+        w, h = int(round(w * scale)), int(round(h * scale))
     return max(16, int(round(w / 16.0)) * 16), max(16, int(round(h / 16.0)) * 16)
 
 
@@ -83,7 +94,7 @@ def fit_to_size(img, size):
 
 
 # ---- t377u: 忠实修复 ----
-UPSCALE_INIT_DENOISE = {"moss": 0.35, "qn": 0.4}  # 从原图开始采样的重画强度（越小越像原图）
+UPSCALE_INIT_DENOISE = {"moss": 0.35, "qn": 0.55}  # 从原图开始采样的重画强度（越小越像原图）；t397u: qn 0.4 → 0.55
 UPSCALE_COLOR_MATCH = True
 _STD_RATIO_CLAMP = (0.67, 1.5)
 
@@ -91,6 +102,33 @@ _STD_RATIO_CLAMP = (0.67, 1.5)
 def upscale_init_denoise(backend: str):
     """MOSS / QN 提高分辨率用的 denoise；别的后端 None（不走 init latent）。"""
     return UPSCALE_INIT_DENOISE.get(str(backend or "").strip().lower())
+
+
+# ---- t397u: QN 尾帧强增强 = 超采样画布 + 轻度 USM ----
+UPSCALE_SUPERSAMPLE = {"qn": 1.5}  # 在目标尺寸 × 这个倍数的画布上重画，再缩回目标尺寸
+UPSCALE_SHARPEN = {"qn": (1.2, 80, 2)}  # PIL UnsharpMask (radius, percent, threshold)
+
+
+def upscale_supersample(backend: str) -> float:
+    """QN = 1.5；别的后端 1.0（画布 = 目标尺寸）。"""
+    return float(UPSCALE_SUPERSAMPLE.get(str(backend or "").strip().lower(), 1.0))
+
+
+def upscale_sharpen(backend: str):
+    """QN → (radius, percent, threshold)；别的后端 None（不锐化）。"""
+    return UPSCALE_SHARPEN.get(str(backend or "").strip().lower())
+
+
+def sharpen_detail(img, params):
+    """轻度 USM：只加强边缘 / 纹理的对比，不改整体颜色、亮度和构图。params = (radius, percent, threshold) 或 None。"""
+    if not params:
+        return img
+    from PIL import ImageFilter
+
+    radius, percent, threshold = params
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    return img.filter(ImageFilter.UnsharpMask(radius=float(radius), percent=int(percent), threshold=int(threshold)))
 
 
 def match_color_stats(img, ref, strength: float = 1.0):
@@ -132,23 +170,24 @@ def match_color_stats(img, ref, strength: float = 1.0):
     return Image.fromarray((rgb * 255.0 + 0.5).astype(np.uint8), "RGB")
 
 
-def finish_upscale(img, size, source=None, *, color_match=None):
-    """后端结果 → 目标尺寸（fit_to_size），再按原图对齐颜色统计（source = 原图路径或 PIL；没有就只对齐尺寸）。"""
+def finish_upscale(img, size, source=None, *, color_match=None, sharpen=None):
+    """后端结果 → 目标尺寸（fit_to_size），再按原图对齐颜色统计（source = 原图路径或 PIL；没有就只对齐尺寸）。
+
+    t397u: ``sharpen`` = upscale_sharpen(后端) → 最后做轻度 USM（None = 不锐化）。"""
     from PIL import Image
 
     out = fit_to_size(img, size)
     if out.mode != "RGB":
         out = out.convert("RGB")
     use = UPSCALE_COLOR_MATCH if color_match is None else bool(color_match)
-    if not use or source is None:
-        return out
-    try:
-        if isinstance(source, str):
-            with Image.open(source) as im:
-                ref = fit_to_size(im.convert("RGB"), size)
-        else:
-            ref = fit_to_size(source, size)
-        return match_color_stats(out, ref)
-    except Exception as exc:  # noqa: BLE001
-        print(f"提高分辨率：颜色对齐没做成，用后端原样的结果：{exc}")
-        return out
+    if use and source is not None:
+        try:
+            if isinstance(source, str):
+                with Image.open(source) as im:
+                    ref = fit_to_size(im.convert("RGB"), size)
+            else:
+                ref = fit_to_size(source, size)
+            out = match_color_stats(out, ref)
+        except Exception as exc:  # noqa: BLE001
+            print(f"提高分辨率：颜色对齐没做成，用后端原样的结果：{exc}")
+    return sharpen_detail(out, sharpen)

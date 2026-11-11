@@ -5177,14 +5177,19 @@ VIDEO_NO_SUBTITLE_CRITICAL_LINE = (
 IMAGE_TEXT_KEEP_CHOICES = ("keep", "keywords")
 # t369u: 以前写「the only words are … the scene's keywords」，模型 / Strata 会去 visual、讲话里找关键字往画面上加。
 # 现在写清：只是起始图里已经嵌在背景里的字——保留、不删、可以灵动；绝不新加任何字。
+# t398u: 再强调：关键字只描述起始图里已经看得见的东西；有的才保持；图里没有的一律不加；模型 / Strata 不得添加关键字。
 VIDEO_IMAGE_KEYWORDS_RULE = (
-    "Image keywords: any lettering already drawn in the start picture (for example a keyword set into the background) "
-    "stays there and is never erased; it may gently come alive with the scene (a soft glow, shimmer, sway or light "
-    "moving across it) while keeping the same characters in the same place. No new text is ever added: no word is "
-    "taken from the visual description, the speaking lines or the scene title and put on screen; it is not the "
-    "speaking content, not subtitles and not captions; if the start picture has no lettering, the video has none. "
-    "（关键字作背景 = 起始图里已经嵌在背景里的关键字：保留、不删除，可以灵动起来；绝不再加任何字，"
-    "不从场景描述或讲话里取字加到画面上。）"
+    "Image keywords: the keywords only describe lettering already drawn in the start picture "
+    "(for example a keyword already set into the background); keep those as they are and they are never erased; "
+    "they may gently come alive with the scene (a soft glow, shimmer, sway or light "
+    "moving across it) while keeping the same characters in the same place. "
+    "Anything in the keywords that is not already visible in the start picture must not be added. "
+    "Nothing new appears. No new text is ever added: no word is taken from the visual description, the speaking lines "
+    "or the scene title and put on screen; it is not the speaking content, not subtitles and not captions; "
+    "if the start picture has no lettering, the video has none. "
+    "（关键字作背景 = 只描述起始图里已经看得见、已经嵌在背景里的关键字：保留、不删除，可以灵动起来；"
+    "关键字里有但图里没有的，一律不加；绝不再加任何字，不从场景描述或讲话里取字加到画面上；"
+    "图里本来没有字，视频里就没有字。）"
 )
 VIDEO_IMAGE_KEYWORDS_PREFIX = "Image keywords:"
 
