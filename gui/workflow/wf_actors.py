@@ -14,14 +14,17 @@ import project_manager
 from utility.file_util import safe_copy_overwrite, show_auto_close_popup
 from utility.voicebox_speech_service import VoiceboxService, _VB_SPEAKER_MARK_RE
 from gui.choice_dialog import askchoice
+from utility.actor_edit_fields import (
+    ACTOR_AGES as _ACTOR_AGES,
+    ACTOR_GENDERS as _ACTOR_GENDERS,
+    ACTOR_RACES as _ACTOR_RACES,
+    actor_edit_combo_values,
+    actor_paren_is_motion,
+    format_actor_edit_fields,
+    parse_actor_edit_fields,
+)
 
 ACTOR_ROWS = 4  # t164u: 本场内容 人物 固定 4 行，一个人一行
-
-
-# t116u: 人物编辑可选值（与 project_manager._ACTOR_AGE / config_prompt.ACTOR_VOICE_NAMES 一致）
-_ACTOR_GENDERS = ("man", "woman")
-_ACTOR_AGES = ("kids", "teenager", "youth", "mature", "senior")
-_ACTOR_RACES = ("chinese", "english")
 
 
 class ActorsMixin:
@@ -750,7 +753,8 @@ class ActorsMixin:
         )
 
     def _review_actor_person(self, body: str) -> None:
-        body, _motion = project_manager.split_actor_motion((body or "").strip())
+        raw = (body or "").strip()
+        body, _motion = project_manager.split_actor_motion(raw)
         if not body:
             return
         names = self._project_person_names()
@@ -765,7 +769,7 @@ class ActorsMixin:
             hint="Ctrl+V 把剪贴板图片存成这个人物。没有就显示没有。人物已经在画面里，拷贝图案直接拷这张图。",
             allow_empty=False,
             ask_motion=False,
-            actor_entry={"role": "person", "label": "人物", "body": body},
+            actor_entry={"role": "person", "label": "人物", "body": raw},
         )
         if result == "deleted" and callable(getattr(self, "_forget_portrait_confirmed", None)):
             self._forget_portrait_confirmed(body)  # t329u: 删了肖像就不再算已确认
@@ -826,23 +830,33 @@ class ActorsMixin:
         voice_box.pack(side=tk.LEFT)
         hear_btn = ttk.Button(voice_row, text="听声音")
         hear_btn.pack(side=tk.LEFT, padx=(8, 0))
-        # t116u: 人物可编辑：性别 / 年龄段 / 民族 / 名字（只在人物模式显示）
-        edit_row = ttk.Frame(dlg)
-        edit_row.pack(pady=(0, 8), before=voice_row)
+        # t116u / t400u: 人物可编辑：性别 / 年龄段 / 民族 / 名字，下一行是括号描述
+        edit_block = ttk.Frame(dlg)
+        edit_block.pack(pady=(0, 8), before=voice_row)
+        edit_row = ttk.Frame(edit_block)
+        edit_row.pack()
         edit_g = tk.StringVar()
         edit_a = tk.StringVar()
         edit_r = tk.StringVar()
         edit_n = tk.StringVar()
+        edit_note = tk.StringVar()
         _edit_guard = {"on": False}
-        for lab, var, vals, w in (
-            ("性别", edit_g, _ACTOR_GENDERS, 7),
-            ("年龄", edit_a, _ACTOR_AGES, 9),
-            ("民族", edit_r, _ACTOR_RACES, 8),
+        edit_boxes = {}
+        for lab, var, vals, w, key in (
+            ("性别", edit_g, _ACTOR_GENDERS, 8, "g"),
+            ("年龄", edit_a, _ACTOR_AGES, 12, "a"),
+            ("民族", edit_r, _ACTOR_RACES, 10, "r"),
         ):
             ttk.Label(edit_row, text=lab).pack(side=tk.LEFT, padx=(0, 4))
-            ttk.Combobox(edit_row, textvariable=var, values=vals, state="readonly", width=w).pack(side=tk.LEFT, padx=(0, 10))
+            box = ttk.Combobox(edit_row, textvariable=var, values=vals, state="normal", width=w)
+            box.pack(side=tk.LEFT, padx=(0, 10))
+            edit_boxes[key] = box
         ttk.Label(edit_row, text="名字").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Entry(edit_row, textvariable=edit_n, width=14).pack(side=tk.LEFT)
+        edit_note_row = ttk.Frame(edit_block)
+        edit_note_row.pack(pady=(4, 0), fill=tk.X)
+        ttk.Label(edit_note_row, text="括号描述").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(edit_note_row, textvariable=edit_note, width=52).pack(side=tk.LEFT, fill=tk.X, expand=True)
         hint_var = tk.StringVar(value=hint)
         ttk.Label(dlg, textvariable=hint_var, wraplength=640).pack(pady=(0, 8))
         holder = {
@@ -854,6 +868,7 @@ class ActorsMixin:
             "mode": "host" if ask_motion else "person",
             "override_name": "",
             "voice_ready": False,
+            "voice_ident": "",
             "result": "ok",  # t329u: 关窗 = 留下
             "deleted": False,
         }
@@ -861,32 +876,62 @@ class ActorsMixin:
         person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时不拷贝。Ctrl+V 可以贴上形象。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。"
 
         def _fill_edit(name: str) -> None:
-            bits = [x.strip() for x in (name or "").split("/")]
+            fields = parse_actor_edit_fields(name)
             _edit_guard["on"] = True
             try:
-                g = (bits[0].lower() if bits else "")
-                g = {"girl": "woman", "female": "woman", "boy": "man", "male": "man"}.get(g, g)
-                edit_g.set(g if g in _ACTOR_GENDERS else "woman")
-                a = project_manager._ACTOR_AGE.get(bits[1].lower(), "") if len(bits) > 1 else ""
-                edit_a.set(a if a in _ACTOR_AGES else "mature")
-                r = bits[2].lower() if len(bits) > 2 else ""
-                edit_r.set(r if r in _ACTOR_RACES else "chinese")
-                edit_n.set("/".join(bits[3:]) if len(bits) > 3 else "")
+                edit_g.set(fields["gender"])
+                edit_a.set(fields["age"])
+                edit_r.set(fields["race"])
+                edit_n.set(fields["name"])
+                edit_note.set(fields["note"])
+                edit_boxes["g"].configure(values=actor_edit_combo_values(_ACTOR_GENDERS, fields["gender"]))
+                edit_boxes["a"].configure(values=actor_edit_combo_values(_ACTOR_AGES, fields["age"]))
+                edit_boxes["r"].configure(values=actor_edit_combo_values(_ACTOR_RACES, fields["race"]))
+                shown = format_actor_edit_fields(
+                    fields["gender"], fields["age"], fields["race"], fields["name"], fields["note"]
+                )
+                if shown:
+                    name_var.set(shown)
             finally:
                 _edit_guard["on"] = False
+
+        def _person_body_from_fields() -> str:
+            """按当前编辑栏拼回人物字符串；原来是进出方式且没写描述时，进出方式原样保留。"""
+            body = format_actor_edit_fields(
+                edit_g.get(), edit_a.get(), edit_r.get(), edit_n.get(), edit_note.get()
+            )
+            if actor_entry:
+                _base, orig = project_manager.split_actor_motion(
+                    (actor_entry.get("body") or "").strip()
+                )
+                if body and actor_paren_is_motion(orig) and not parse_actor_edit_fields(body)["note"]:
+                    body = project_manager._with_actor_motion(
+                        project_manager.split_actor_motion(body)[0], orig
+                    )
+            return body
 
         def _on_edit_change(*_a) -> None:
             if _edit_guard["on"] or holder.get("mode") != "person" or not holder["names"]:
                 return
-            nm = (edit_n.get() or "").strip().replace("/", "")
-            body = "/".join(x for x in (edit_g.get(), edit_a.get(), edit_r.get()) if x) + (f"/{nm}" if nm else "")
-            if body == holder["names"][holder["index"]]:
-                holder["override_name"] = ""
-            else:
-                holder["override_name"] = body
-            name_var.set(body)
-            # 属性一改就换成这一档的默认声音（和提示词用的同一张表：这一档的第一个）；之后还可以再选
-            options = list(config_prompt.voice_choices_for_actor(body))
+            ident = format_actor_edit_fields(
+                edit_g.get(), edit_a.get(), edit_r.get(), edit_n.get(), ""
+            )
+            body = _person_body_from_fields()
+            original = holder["names"][holder["index"]]
+            if actor_entry and actor_entry.get("role") == "person":
+                opened, _p = project_manager.split_actor_motion(
+                    (actor_entry.get("body") or "").strip()
+                )
+                if opened == original:
+                    original = (actor_entry.get("body") or "").strip() or original
+            holder["override_name"] = "" if body == original else body
+            if body:
+                name_var.set(body)
+            # 只有身份变了才换默认声音；改括号描述不重置已选的声音
+            if ident == holder.get("voice_ident"):
+                return
+            holder["voice_ident"] = ident
+            options = list(config_prompt.voice_choices_for_actor(ident or body))
             voice_box.configure(values=options)
             if options:
                 voice_box.state(["!disabled"])
@@ -896,7 +941,7 @@ class ActorsMixin:
                 voice_var.set("")
                 voice_box.state(["disabled"])
 
-        for _v in (edit_g, edit_a, edit_r, edit_n):
+        for _v in (edit_g, edit_a, edit_r, edit_n, edit_note):
             _v.trace_add("write", _on_edit_change)
 
         def remember_voice(name: str, voice: str) -> None:
@@ -1014,7 +1059,17 @@ class ActorsMixin:
             name_var.set(name)
             show_voice(name)
             if holder.get("mode") == "person":
-                _fill_edit(name)
+                fill = name
+                if actor_entry and actor_entry.get("role") == "person":
+                    opened, _p = project_manager.split_actor_motion(
+                        (actor_entry.get("body") or "").strip()
+                    )
+                    if opened == name:
+                        fill = (actor_entry.get("body") or "").strip() or name
+                _fill_edit(fill)
+                holder["voice_ident"] = format_actor_edit_fields(
+                    edit_g.get(), edit_a.get(), edit_r.get(), edit_n.get(), ""
+                )
             path = holder["path_for"](name)
             if not path:
                 holder["photo"] = None
@@ -1074,11 +1129,23 @@ class ActorsMixin:
                 elif on_confirm is not None and role == "host":
                     on_confirm("")
                 return
-            body = project_manager.actor_body_with_default_age(bare)
-            if motion:
-                base, _old = project_manager.split_actor_motion(body)
-                body = project_manager._with_actor_motion(base, motion)
-            if role == "person" and self._scene_has_person(body):
+            if role == "person":
+                body = bare
+                base, existing = project_manager.split_actor_motion(body)
+                if motion and not existing:
+                    body = project_manager._with_actor_motion(base, motion)
+            else:
+                body = project_manager.actor_body_with_default_age(bare)
+                if motion:
+                    base, _old = project_manager.split_actor_motion(body)
+                    body = project_manager._with_actor_motion(base, motion)
+            opened_id = ""
+            if actor_entry and actor_entry.get("role") == "person":
+                opened_id, _m = project_manager.split_actor_motion(
+                    (actor_entry.get("body") or "").strip()
+                )
+            new_id, _m = project_manager.split_actor_motion(body)
+            if role == "person" and new_id != opened_id and self._scene_has_person(body):
                 return
             if actor_entry:
                 self._replace_opened_actor(actor_entry, role, body)
@@ -1087,17 +1154,30 @@ class ActorsMixin:
                 on_confirm(bare)
 
         def finish() -> None:
+            if holder.get("mode") == "person":
+                name = _person_body_from_fields()
+                if not name:
+                    messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
+                    return
+                old = holder["names"][holder["index"]] if holder["names"] else ""
+                new_id = project_manager.split_actor_motion(name)[0]
+                if new_id != old:
+                    holder["override_name"] = name
+                    _commit_edited_person(name)
+                portrait = holder["path_for"](name) or ""
+                if portrait:
+                    self.copy_image_to_clipboard(portrait, silent=True)
+                elif name and not project_manager.actor_is_absent(name):
+                    show_auto_close_popup(self.root, "剪贴板", f"{name} 没有参考图，没有拷贝", duration_ms=1000)
+                apply_choice(name, "")
+                holder["result"] = "ok"
+                dlg.destroy()
+                return
             if holder.get("override_name"):
                 name = holder["override_name"]
             else:
                 names_now = holder["names"]
-                if holder.get("mode") == "person" and not names_now:
-                    messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
-                    return
                 name = (names_now[holder["index"]] if names_now else "") or ""
-            if holder.get("mode") == "person" and not name:
-                messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
-                return
             motion = ""
             _kept_body, kept_motion = ("", "")
             if actor_entry:
@@ -1165,19 +1245,28 @@ class ActorsMixin:
 
         def confirm() -> None:
             """确认：照现在选的这一位写进这一场（声音换了就已经存过），不拷贝图，然后关掉。"""
+            if holder.get("mode") == "person":
+                name = _person_body_from_fields()
+                if not name:
+                    messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
+                    return
+                old = holder["names"][holder["index"]] if holder["names"] else ""
+                new_id = project_manager.split_actor_motion(name)[0]
+                if new_id != old:
+                    holder["override_name"] = name
+                    _commit_edited_person(name)
+                apply_choice(name, "")
+                holder["result"] = "ok"
+                dlg.destroy()
+                return
             if holder.get("override_name"):
                 name = holder["override_name"]
             else:
                 names_now = holder["names"]
                 name = (names_now[holder["index"]] if names_now else "") or ""
-            if holder.get("mode") == "person" and not name:
-                messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
-                return
             kept_motion = ""
             if actor_entry:
                 _b, kept_motion = project_manager.split_actor_motion((actor_entry.get("body") or "").strip())
-            if holder.get("override_name") and holder.get("mode") == "person":
-                _commit_edited_person(name)
             apply_choice(name, kept_motion)
             holder["result"] = "ok"
             dlg.destroy()
@@ -1245,9 +1334,9 @@ class ActorsMixin:
 
         def apply_domain_chrome() -> None:
             if holder["mode"] == "host":
-                edit_row.pack_forget()
-            elif not edit_row.winfo_ismapped():
-                edit_row.pack(pady=(0, 8), before=voice_row)
+                edit_block.pack_forget()
+            elif not edit_block.winfo_ismapped():
+                edit_block.pack(pady=(0, 8), before=voice_row)
             if holder["mode"] == "host":
                 dlg.title("讲员")
                 hint_var.set(host_hint)
