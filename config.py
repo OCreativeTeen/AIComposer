@@ -933,7 +933,7 @@ def _env_list(name: str, default: str, sep: str = ",") -> list:
 
 
 # 本机 Strata（OpenAI 兼容）
-STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.30:8080/v1")
+STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.186:8080/v1") # "http://192.168.1.30:8080/v1")
 # Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
 VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://127.0.0.1:17493")  # t195u: Voicebox 装在本机
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
