@@ -125,10 +125,11 @@ def minimax_generate(prompt, image_path, image_paths, extra, dest_dir, backend, 
     if not image_path and _imgs:
         image_path = _imgs[0]
     _last = _imgs[1] if extra.get("frames") == "two" and len(_imgs) > 1 else None
-    # t216u: 「参考图工作流（人物肖像）」：换 R2V 工作流，起始图后面的图是人物肖像（最多 8 张）
+    # t216u/t395u: 参考图工作流（只剩 8 步快速 / Pika 6 步；旧的 i2v / r2v / 没选 = 8 步快速），
+    # 起始图后面的图是人物肖像（t392u：只有场景图里没有的人，最多 8 张）
     _refs = None
     _wf_choice = str(extra.get("h3_workflow") or "")
-    if _sdp.minimax_workflow_for(_wf_choice):  # t228u: r2v / r2v_fast8（FastH3 8 步）
+    if _sdp.minimax_workflow_for(_wf_choice):  # t395u: 总是 r2v_fast8 / r2v_pika6
         v = dict(v)
         v["workflow"] = _sdp.minimax_workflow_for(_wf_choice)
         if extra.get("frames") != "two":

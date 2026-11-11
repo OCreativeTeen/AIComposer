@@ -465,7 +465,7 @@ def open_video_prompt_dialog(
             "backend": backend_var.get(),
             "audio_mode": audio_mode_var.get(),
             "strata_polish": bool(polish_var.get()),  # t166u
-            "h3_workflow": h3_wf_var.get(),  # t216u: MiniMax 工作流 i2v / r2v
+            "h3_workflow": h3_wf_var.get(),  # t216u/t395u: MiniMax 工作流 r2v_fast8 / r2v_pika6
             "last_frame_enhance": enhance_var.get(),  # t376u: 分节尾帧增强 none / moss / qn / grok
         }
 
@@ -675,7 +675,8 @@ def open_video_prompt_dialog(
         # t123u: Grok 单画面：场景图后面按说话人顺序附上有形象图的人，提示词里说明每张图是谁。
         portrait_refs = []
         # t216u: MiniMax 选了「参考图工作流」时也附肖像（最多 8 张；场景图 + 8 = R2V 的 9 张上限）
-        _mm_r2v = _cfg_mm.is_minimax(backend) and h3_wf_var.get() in ("r2v", "r2v_fast8", "r2v_pika6")  # t228u: FastH3 同样附肖像
+        # t395u: MiniMax 只剩两个参考图工作流（8 步快速 / Pika 6 步），都附肖像（t392u：只给场景图里没有的人）
+        _mm_r2v = _cfg_mm.is_minimax(backend) and _sdp_wf.normalize_h3_workflow(h3_wf_var.get()) in ("r2v_fast8", "r2v_pika6")
         if (backend == "grok" or _mm_r2v) and frames != "two" and images and callable(get_actor_portraits):
             try:
                 portrait_refs = list(get_actor_portraits(scenes[0]) or [])[: (8 if _mm_r2v else 4)]  # Grok 最多 5 张输入图
@@ -1059,14 +1060,15 @@ def open_video_prompt_dialog(
     backend_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     for value, label in (("grok", "Grok"), ("gemini", "Gemini")) + _cfg_prefs.minimax_backend_options():
         ttk.Radiobutton(backend_box, text=label, value=value, variable=backend_var).pack(anchor=tk.W)
-    # t216u: MiniMax 工作流：原工作流（无参考图，FL2VA）/ 参考图工作流（人物肖像，Ref2VA），记在项目 video_prompt
-    h3_wf_var = tk.StringVar(master=dlg, value=_sv.get("h3_workflow") if _sv.get("h3_workflow") in ("i2v", "r2v", "r2v_fast8", "r2v_pika6") else "r2v_fast8")  # t229u: 没记过就默认 FastH3
+    # t216u/t395u: MiniMax 工作流：参考图·8步快速（FastH3，默认）/ 参考图·Pika 6步（备选），记在项目 video_prompt；
+    # 原工作流和完整参考图工作流太慢已去掉，旧项目记的 i2v / r2v 换成 8 步快速
+    from utility import sd_image_processor as _sdp_wf
+
+    h3_wf_var = tk.StringVar(master=dlg, value=_sdp_wf.normalize_h3_workflow(_sv.get("h3_workflow")))
     h3_wf_box = ttk.LabelFrame(actions, text="MiniMax 工作流", padding=(8, 4))
     h3_wf_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     h3_wf_radios = []
-    for value, label in (("i2v", "原工作流（无参考图）"), ("r2v", "参考图工作流（人物肖像）"),
-                         ("r2v_fast8", "参考图·8步快速（FastH3）"),
-                         ("r2v_pika6", "参考生视频·Pika 6步(试验)")):  # t228u
+    for value, label in _sdp_wf.MINIMAX_H3_WORKFLOW_OPTIONS:  # t395u
         _rb = ttk.Radiobutton(h3_wf_box, text=label, value=value, variable=h3_wf_var)
         _rb.pack(anchor=tk.W)
         h3_wf_radios.append(_rb)
@@ -1554,7 +1556,7 @@ def open_video_prompt_dialog(
         "Grok / Gemini 不支持。"
         "「MiniMax 双机」：单场提交轮流用 5070Ti / 5060（忙或连不上就换另一台）；全集提交两台同时跑，先做完的接下一场。"
         "分节（t370u）：讲话里的 <Ns>（自言自语那几句）和手工加在某个 <n> 前面的 <s> 会在生成时把这一场分成几节，"
-        "一节一节生成：每节做完插成前面一场，末帧按「尾帧增强」（不增强 / MOSS / Qwen / Grok Image，默认 MOSS）"
+        "一节一节生成：每节做完插成前面一场，末帧按「尾帧增强」（不增强 / MOSS / Qwen / Grok Image，默认 Qwen）"
         "提高分辨率后作为下一节的起始图，增强失败就用原末帧（有分节时双机也按顺序做）。"
         + ("" if _has_audio else "（这一场没有音频）"),
         foreground="#b05a00", wraplength=900, justify=tk.LEFT,

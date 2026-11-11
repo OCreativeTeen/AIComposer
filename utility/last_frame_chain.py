@@ -4,7 +4,7 @@
 而且有下一场，``MediaScanner.last_image_replacement`` 都会：
 
 1. 先把原末帧（缩到项目尺寸）写进下一场 zero_image_last（立刻能用，和以前一样）；
-2. 再在后台线程按项目记下的「尾帧增强」（video_prompt.last_frame_enhance：不增强 / MOSS / Qwen / Grok Image）
+2. 再在后台线程按项目记下的「尾帧增强」（video_prompt.last_frame_enhance：不增强 / MOSS / Qwen / Grok Image；没记过 = Qwen，t395u）
    用图片编辑「提高分辨率」（t377u 忠实还原：不改画风、不改颜色）；
 3. 增强好了，且下一场 zero_image_last 还是第 1 步写的那张（期间没有更新的导入 / 项目没切换），
    就用 ``write_chained_next_zero_image_last`` 换成增强后的图；否则丢掉这次结果。

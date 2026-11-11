@@ -333,7 +333,7 @@ class PromptFlowsMixin:
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ 分节退回后保存 / 刷新失败：{exc}")
 
-    def _chain_video_segment(self, token, style, status, done, enhance="moss", account="") -> None:
+    def _chain_video_segment(self, token, style, status, done, enhance="qn", account="") -> None:  # t395u
         """克隆那一节的视频末帧 → 尾帧增强（t376u：none / moss / qn / grok，保持原画风 + 项目画风）
         → 原场景 zero_image_last。后台线程跑；不增强或增强失败就用原末帧（缩到项目尺寸）。
         完成后在主线程 ``done(起始图, 是否增强, 说明)``。"""

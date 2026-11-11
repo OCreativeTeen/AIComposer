@@ -5,7 +5,7 @@
 
 1. 第 1 节：把这一场克隆一份插在它前面，克隆只留第 1 节的讲话（场景音频 / 时间轴也只留这一段），
    用这一场现在的起始图生成、导入到克隆上。原场景去掉这一节的讲话。
-2. 克隆视频的最后一帧临时取出来，按「尾帧增强」选项（t376u：不增强 / MOSS / Qwen / Grok Image，默认 MOSS）
+2. 克隆视频的最后一帧临时取出来，按「尾帧增强」选项（t376u：不增强 / MOSS / Qwen / Grok Image，t395u 默认 Qwen）
    「提高分辨率」（保持原画风 + 项目画风）增强，写进原场景的 zero_image_last，作为下一节的起始图。
    增强失败（ComfyUI 不通、Grok 出错等）就用原末帧（打印警告）。
 3. 原场景剩下的讲话如果还能分，就重复 1–2；最后一节不再克隆，直接用新的 zero_image_last 生成原场景的视频。
@@ -310,13 +310,13 @@ def enhance_last_frame(frame_path: str, *, style: str = "", upscale=None) -> tup
 
 # ---- t376u: 尾帧增强选项 ----
 LAST_FRAME_ENHANCE_OPTIONS = (("none", "不增强"), ("moss", "MOSS"), ("qn", "Qwen"), ("grok", "Grok Image"))
-LAST_FRAME_ENHANCE_DEFAULT = "moss"
+LAST_FRAME_ENHANCE_DEFAULT = "qn"  # t395u: 默认 Qwen（记过选项的项目照旧）
 _ENHANCE_ALIASES = {"": LAST_FRAME_ENHANCE_DEFAULT, "off": "none", "raw": "none", "no": "none",
                     "qwen": "qn", "grok_image": "grok", "grokimage": "grok"}
 
 
 def normalize_last_frame_enhance(value) -> str:
-    """记下的选项 → none / moss / qn / grok；不认得的（含没记过）= 默认 MOSS。"""
+    """记下的选项 → none / moss / qn / grok；不认得的（含没记过）= 默认 Qwen（t395u）。"""
     v = str(value or "").strip().lower().replace(" ", "")
     v = _ENHANCE_ALIASES.get(v, v)
     return v if v in dict(LAST_FRAME_ENHANCE_OPTIONS) else LAST_FRAME_ENHANCE_DEFAULT

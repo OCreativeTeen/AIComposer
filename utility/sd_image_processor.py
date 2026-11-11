@@ -1185,8 +1185,7 @@ def h3_audio_seconds(path: str) -> float:
 # ---------------------------------------------------------------------------
 # t216u: MiniMax H3 参考图工作流（R2V，Ref2VA 权重）
 R2V_MAX_REFS = 9  # MiniMaxH3ReferenceToVideo 的 ref_images 最多 9 张（场景图 + 8 张肖像）
-MINIMAX_H3_R2V_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                       "workflow", "MiniMax_H3_R2V_5070.json")
+# t395u: 原工作流（i2v）和完整参考图工作流（r2v，MiniMax_H3_R2V_5070.json）太慢，不再提供；只剩下面两个
 # t228u: FastH3 OmniRef（FastVideo 8 步蒸馏的 Ref2VA，euler / simple，SigmaShift 12/3），参考图接法和 R2V 一样
 MINIMAX_H3_FAST8_WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                          "workflow", "MiniMax_H3_FastH3_8step_5070.json")
@@ -1201,10 +1200,21 @@ MINIMAX_MODEL_SOURCE_HINT = {  # 缺模型时提示：从 5070Ti（.36）这个�
 }
 
 
+# t395u: 生场视频窗口里的 MiniMax 工作流（第一个 = 默认）。旧项目记的 i2v / r2v / 没记过 → r2v_fast8。
+MINIMAX_H3_WORKFLOW_OPTIONS = (("r2v_fast8", "参考图·8步快速（FastH3）"), ("r2v_pika6", "参考图·Pika 6步"))
+MINIMAX_H3_WORKFLOW_DEFAULT = MINIMAX_H3_WORKFLOW_OPTIONS[0][0]
+
+
+def normalize_h3_workflow(choice) -> str:
+    """t395u: 记下的 h3_workflow → r2v_fast8 / r2v_pika6；别的（旧的 i2v / r2v、空）= 默认 8 步快速。"""
+    v = str(choice or "").strip()
+    return v if v in dict(MINIMAX_H3_WORKFLOW_OPTIONS) else MINIMAX_H3_WORKFLOW_DEFAULT
+
+
 def minimax_workflow_for(choice: str) -> str:
-    """t228u: h3_workflow 选项 → 工作流文件（i2v 返回空 = 用服务器选项里的原工作流）。"""
-    return {"r2v": MINIMAX_H3_R2V_WORKFLOW, "r2v_fast8": MINIMAX_H3_FAST8_WORKFLOW,
-            "r2v_pika6": MINIMAX_H3_PIKA6_WORKFLOW}.get(str(choice or ""), "")
+    """t228u/t395u: h3_workflow 选项 → 工作流文件；旧值 / 没选 = 8 步快速（FastH3）。"""
+    return {"r2v_fast8": MINIMAX_H3_FAST8_WORKFLOW,
+            "r2v_pika6": MINIMAX_H3_PIKA6_WORKFLOW}[normalize_h3_workflow(choice)]
 
 
 def _build_minimax_h3_r2v(wf, *, image_name, prompt, seconds, width, height, seed, fps, filename_prefix,
@@ -1288,7 +1298,7 @@ def check_comfy_unet_available(base: str, workflow, get=None) -> None:
             f"这台 ComfyUI（{base}）没有这个工作流要的模型：{', '.join(missing)}。\n"
             "请把这个文件拷到这台服务器的 ComfyUI\\models\\diffusion_models\\ 文件夹（拷完在 ComfyUI 里刷新或重启）"
             + (f"。来源：{src}" if src else "")
-            + "；或者在生场视频窗口选「原工作流（无参考图）」/ 另一台机器。")
+            + "；或者在生场视频窗口换另一个 MiniMax 工作流（8步快速 / Pika 6步）/ 另一台机器。")
 
 # ---------------------------------------------------------------------------
 # t229u / t231u: MOSS 图片编辑（ComfyUI · workflow/moss_edit_3ref_api.json）

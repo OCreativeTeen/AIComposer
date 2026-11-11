@@ -28,8 +28,8 @@ class EnhanceOptionTest(unittest.TestCase):
 
         self.assertEqual([k for k, _ in vs.LAST_FRAME_ENHANCE_OPTIONS], ["none", "moss", "qn", "grok"])
         self.assertEqual([l for _, l in vs.LAST_FRAME_ENHANCE_OPTIONS], ["不增强", "MOSS", "Qwen", "Grok Image"])
-        self.assertEqual(vs.LAST_FRAME_ENHANCE_DEFAULT, "moss")
-        for raw, want in ((None, "moss"), ("", "moss"), ("bogus", "moss"), ("MOSS", "moss"), ("none", "none"),
+        self.assertEqual(vs.LAST_FRAME_ENHANCE_DEFAULT, "qn")  # t395u
+        for raw, want in ((None, "qn"), ("", "qn"), ("bogus", "qn"), ("MOSS", "moss"), ("none", "none"),
                           ("qwen", "qn"), ("QN", "qn"), ("Grok Image", "grok"), ("grok", "grok")):
             self.assertEqual(vs.normalize_last_frame_enhance(raw), want, raw)
         self.assertEqual(vs.last_frame_enhance_label("qn"), "Qwen")
@@ -211,7 +211,7 @@ class DialogWiringTest(unittest.TestCase):
 
     def test_flow_chain_takes_enhance(self):
         flows = _src("gui/workflow/wf_prompt_flows.py")
-        self.assertIn('def _chain_video_segment(self, token, style, status, done, enhance="moss", account="")', flows)
+        self.assertIn('def _chain_video_segment(self, token, style, status, done, enhance="qn", account="")', flows)
         self.assertIn("vs.enhance_segment_last_frame(", flows)
         self.assertIn("mode=enhance", flows)
 

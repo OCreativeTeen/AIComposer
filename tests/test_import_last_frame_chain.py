@@ -154,8 +154,8 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(lfc.saved_enhance_mode({"video_prompt": {"last_frame_enhance": "qn"}}), "qn")
         self.assertEqual(lfc.saved_enhance_mode({"video_prompt": {"last_frame_enhance": "Qwen"}}), "qn")
         self.assertEqual(lfc.saved_enhance_mode({"video_prompt": {"last_frame_enhance": "none"}}), "none")
-        self.assertEqual(lfc.saved_enhance_mode({"video_prompt": {}}), "moss")
-        self.assertEqual(lfc.saved_enhance_mode({}), "moss")
+        self.assertEqual(lfc.saved_enhance_mode({"video_prompt": {}}), "qn")
+        self.assertEqual(lfc.saved_enhance_mode({}), "qn")  # t395u
 
     def test_saved_visual_style(self):
         self.assertEqual(lfc.saved_visual_style({"visual_style": " 梦幻 "}), "梦幻")
