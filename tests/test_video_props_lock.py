@@ -1,9 +1,10 @@
-"""t388u offline tests: every object in the base picture stays the same for the whole video (what people hold, what is
-on the table, every prop: same kind, count and place; a tablet never turns into a phone, nothing appears or
-disappears). The rule is in every video prompt (H3, MiniMax, Grok / Gemini flow, FYI-only) and survives Strata 精简
+"""t388u/t390u offline tests: every object in the base picture stays the same for the whole video (empty hands stay
+empty, held things stay held; nothing appears, changes or disappears). t390u: the rule and the Strata bullets never
+name a concrete object (naming one made the model draw it). The rule is in every video prompt (H3, MiniMax, Grok / Gemini flow, FYI-only) and survives Strata 精简
 (system prompts, restore, validate)."""
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -43,6 +44,19 @@ def _fyi(evolve="keep"):
     return cp.build_video_fyi_only_prompt(frames="one", evolve=evolve, visual_style=PIXAR, fyi="走过来")
 
 
+# t390u: 规则 / Strata 说明里不许出现的具体物品词（点名会让模型画出来）
+FORBIDDEN_EN = ("tablet", "phone", "pad", "ipad", "cup", "mug", "table", "desk", "book", "laptop", "computer",
+                "screen", "device", "glass", "bottle", "notebook", "pen", "paper", "bag")
+FORBIDDEN_ZH = ("平板", "手机", "手機", "杯", "桌", "书", "書", "电脑", "電腦", "屏", "笔记本", "筆記本", "瓶", "包", "纸")
+PRIMING = ("tablet", "phone", "ipad", "cup", "laptop", "手机", "手機", "平板", "杯")  # 整段视频提示词里都不该有
+
+
+def _object_nouns(text):
+    low = text.lower()
+    hits = [w for w in FORBIDDEN_EN if re.search(rf"\b{w}(?:e?s)?\b", low)]
+    return hits + [w for w in FORBIDDEN_ZH if w in text]
+
+
 def _rule(prompt):
     sp = cp._rule_span(prompt, cp.VIDEO_PROPS_LOCK_PREFIX)
     return prompt[sp[0]:sp[1]] if sp else ""
@@ -55,11 +69,11 @@ class PropsLockRuleTest(unittest.TestCase):
     def test_rule_text(self):
         r = cp.video_props_lock_rule("picture 1")
         self.assertTrue(r.startswith(cp.VIDEO_PROPS_LOCK_PREFIX))
-        for must in ("every object in picture 1 stays exactly as it is", "holds in the hands", "on the table",
-                     "same kind", "count and place", "A tablet stays a tablet", "nothing new appears",
-                     "disappears", "keeps holding that same thing", "empty hand stays empty",
-                     "物品锁定", "平板不会变成手机", "不凭空多出东西", "空手一直空手"):
+        for must in ("keep every object exactly as in picture 1", "Empty hands stay empty",
+                     "keep holding the same thing", "No new object appears", "disappears",
+                     "物品锁定", "空手一直空手", "拿着东西的一直拿着同一件", "不凭空多出东西"):
             self.assertIn(must, r)
+        self.assertEqual(_object_nouns(r), [])  # t390u: 一个具体物品都不点名
         self.assertEqual(_rule(r), r)  # 整句（到中文括号结束）就是一条锁定句
         low = r.lower()
         for w in cp._CUT_WORDS + cp._REALISM_WORDS:  # 不会让切镜头 / 写实检查误报
@@ -97,8 +111,23 @@ class PropsLockRuleTest(unittest.TestCase):
                 self.assertNotIn(w, body)
         line = cp.in_scene_direction_lines("林小雨把平板遞給王明", ["林小雨", "王明"])[0]
         self.assertIn("stays in the same hands", line)
+        self.assertNotIn("screen", line)  # t390u
         self.assertIn(cp.IN_SCENE_FACING_MARK, line)
         self.assertNotIn("handed", line)
+
+    def test_no_hardcoded_objects_in_video_prompts(self):
+        """t390u: 视频提示词（含说话镜头那句、Strata 说明）里不写死手机 / 平板 / 杯子之类。"""
+        for name, p in (("h3", _h3()), ("flow", _flow()), ("minimax", _mm()), ("fyi", _fyi()),
+                        ("on_camera", cp.h3_on_camera_line(["林小雨", "王明"])),
+                        ("no_music", cp.NOTEBOOKLM_VIDEO_NO_MUSIC)):
+            low = p.lower()
+            for w in PRIMING:
+                hit = re.search(rf"\b{w}s?\b", low) if w.isascii() else (w in p)
+                self.assertFalse(hit, (name, w))
+        from utility import visual_remix
+        src = (Path(ROOT) / "utility" / "visual_remix.py").read_text(encoding="utf-8")
+        self.assertNotIn("手机", src)
+        self.assertTrue(visual_remix)
 
     def test_transition_prompt_not_forced(self):
         src = (Path(ROOT) / "config_prompt.py").read_text(encoding="utf-8")
@@ -117,8 +146,11 @@ class StrataKeepsPropsLockTest(unittest.TestCase):
             self.assertIn('"Objects lock:"', s)
             self.assertEqual(s.count("Objects lock (t388u)"), 1)
             self.assertIn("copy it verbatim, once", s)
-            self.assertIn("never write that an object changes into another", s)
+            self.assertIn("Never write that an object changes into another", s)
             self.assertIn("disappears", s)
+            self.assertIn("Never name any object that the original prompt does not already name", s)
+            bullet = s.split("Objects lock (t388u)", 1)[1].split("\n", 1)[0]
+            self.assertEqual(_object_nouns(bullet), [])  # t390u
 
     def test_restore_after_drop_or_rewrite(self):
         for original in (_h3(), cp.ensure_video_no_subtitle_first_line(_flow()), _mm(),
@@ -145,6 +177,23 @@ class StrataKeepsPropsLockTest(unittest.TestCase):
         flow = cp.ensure_video_no_subtitle_first_line(_flow())
         self.assertEqual(validate(flow, flow, "grok"), "")
         self.assertIn("物品锁定", validate(flow, flow.replace(_rule(flow), ""), "grok"))
+
+    def test_added_object_words(self):
+        """t390u: Strata 写出原文没有的物品名就不通过；原文本来就有的不算。"""
+        from utility.prompt_polish import validate
+
+        original = _h3()
+        self.assertEqual(cp.added_object_words(original, original), "")
+        self.assertEqual(cp.added_object_words(original, original + " 林小雨手里拿着手机。"), "手机")
+        self.assertEqual(cp.added_object_words(original, original + " She holds a tablet."), "tablet")
+        self.assertEqual(cp.added_object_words(original, original + " She looks at her iPad."), "ipad")
+        self.assertEqual(cp.added_object_words("no lock here", "a phone"), "")  # 没有物品锁定句就不查
+        with_phone = original + " 林小雨手里拿着手机。"
+        self.assertEqual(cp.added_object_words(with_phone, with_phone), "")  # 原文有的不算
+        self.assertIn("物品", validate(original, original + " Two phones lie nearby.", "minimax_5070ti"))
+        flow = cp.ensure_video_no_subtitle_first_line(_flow())
+        self.assertIn("phone", validate(flow, flow + " He picks up his phone.", "grok"))
+        self.assertEqual(validate(flow, flow, "grok"), "")
 
 
 if __name__ == "__main__":

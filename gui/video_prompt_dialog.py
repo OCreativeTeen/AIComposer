@@ -693,6 +693,8 @@ def open_video_prompt_dialog(
             else:
                 prompt = block + "\n\n" + prompt
         _h3_build = None  # t150u: MiniMax：带人物描述重做提示词
+        _pres = None  # t392u: {"pics", "refs"}：后台看过场景图后只留不在图里的人的肖像
+        _presence_people = []  # t392u: [(序号, 名字, 外貌/位置, 肖像)] 给 Strata 判断谁在场景图里
         _h3_people = None
         _h3_visual = ""
         _timeline = []
@@ -740,11 +742,24 @@ def open_video_prompt_dialog(
             )
             _h3_refs = list(portrait_refs) if (portrait_refs and _mm_r2v) else []
 
-            def _h3_build(notes=None, _scenes=scenes, _args=_h3_args, _pics=_pics, _refs=_h3_refs):
-                p = config_prompt.build_h3_prompt(_scenes, speaker_notes=notes, portrait_pictures=_pics, **_args)
-                if _refs:  # t216u: <Picture k> = 谁的肖像
-                    p = config_prompt.h3_portrait_reference_block(_refs) + "\n\n" + p
+            _pres = {"pics": _pics, "refs": _h3_refs}
+
+            def _h3_build(notes=None, _scenes=scenes, _args=_h3_args, _pres=_pres):
+                p = config_prompt.build_h3_prompt(_scenes, speaker_notes=notes, portrait_pictures=_pres["pics"], **_args)
+                if _pres["refs"]:  # t216u: <Picture k> = 谁的肖像（t392u: 只有不在场景图里的人）
+                    p = config_prompt.h3_portrait_reference_block(_pres["refs"]) + "\n\n" + p
                 return p
+
+            if _h3_refs:  # t392u: 准备「谁在场景图里」的说话人名单（判断在后台线程里做）
+                try:
+                    _pmap = {n: p for n, _nm, p in portrait_refs}
+                    for _k, _row in enumerate(config_prompt.h3_speaker_map(scenes[0])[0] if scenes else [], 1):
+                        _nm, _ident, _tone = config_prompt._speaker_identity(_row)
+                        _presence_people.append((_k, _nm, ", ".join(
+                            x for x in (_ident, config_prompt.actor_scene_note(_row)) if x), _pmap.get(_k, "")))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 人物在场名单没准备好（{exc}），只用有肖像的人")
+                    _presence_people = [(n, nm, "", p) for n, nm, p in portrait_refs]
 
             prompt = _h3_build(None)
             if _amode == "talk":  # t150u: 每句台词的起止秒（分段时每段只留这段里的台词和说话人）
@@ -840,7 +855,9 @@ def open_video_prompt_dialog(
                 print(f"⚠️ 提示词记录没写成：{exc}")
 
         _episode_state["started"] = True
-        if not polish_var.get():
+        _need_presence = bool(_pres is not None and _pres["refs"])  # t392u: 参考图工作流有肖像 → 先看谁在场景图里
+        _polish_on = bool(polish_var.get())
+        if not _polish_on and not _need_presence:
             _log_prompt(prompt, prompt, "没用 Strata")
             _deliver(prompt)
             return
@@ -849,14 +866,45 @@ def open_video_prompt_dialog(
 
         from utility.prompt_polish import polish_h3_with_people, polish_video_prompt
 
-        hint.config(text="Strata 精简提示词…（几秒钟，失败会自动用原提示词）", foreground="#1f5fbf")
+        hint.config(text=("Strata 精简提示词…（几秒钟，失败会自动用原提示词）" if _polish_on
+                          else "Strata 看场景图里有哪些说话人…"), foreground="#1f5fbf")
         try:
             go.state(["disabled"])
         except tk.TclError:
             pass
         box = {}
 
+        def _presence() -> str:
+            """t392u: 场景图里已经有的说话人不发肖像（肖像会被切成镜头）；全都在就一张也不发、提示词里也没有肖像段。
+            改 images / extra 本身（_deliver 用的就是它们），返回按新肖像名单重做的提示词。"""
+            from utility import speaker_presence as _spres
+
+            try:
+                kept = _spres.portraits_for_missing(scenes[0] if scenes else None, _start, list(_pres["refs"]),
+                                                    _presence_people)
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ [人物在场] 判断出错（{exc}），这一场不发肖像")
+                kept = []
+            _pres["refs"] = list(kept)
+            _pres["pics"] = {n: k for k, (n, _nm, _p) in enumerate(kept, 2)} or None
+            images[1:] = [p for _n, _nm, p in kept]
+            extra["portrait_refs"] = len(kept)
+            return _h3_build(None)
+
+        _orig_images, _orig_nrefs = list(images), extra.get("portrait_refs")
+
         def _work() -> None:
+            try:
+                base = _presence() if _need_presence else prompt
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ [人物在场] 提示词没重做（{exc}），用原提示词和原来的图")
+                images[:] = _orig_images
+                extra["portrait_refs"] = _orig_nrefs
+                base = prompt
+            box["pre"] = base
+            if not _polish_on:
+                box["v"] = (base, "没用 Strata 精简")
+                return
             if _h3_build is not None and _h3_people:  # t150u: 先看图写人物描述，再打磨
                 def _rb(notes):
                     box["pre"] = _h3_build(notes)  # t156u: 打磨前的那版（带人物描述）
@@ -864,7 +912,7 @@ def open_video_prompt_dialog(
 
                 box["v"] = polish_h3_with_people(_rb, _h3_people, _start, _h3_visual, backend)
             else:
-                box["v"] = polish_video_prompt(prompt, backend)
+                box["v"] = polish_video_prompt(base, backend)
 
         threading.Thread(target=_work, daemon=True).start()
 

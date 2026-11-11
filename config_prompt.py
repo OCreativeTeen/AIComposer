@@ -1774,7 +1774,7 @@ def in_scene_direction_lines(visual: str, names) -> list:
     for nm in facing_targets(visual, names):
         lines.append(
             f"Whatever is turned or shown to {nm} stays in the same hands and only turns sideways inside the scene "
-            f"toward {nm}, the other person in the scene, {IN_SCENE_FACING_MARK}: its screen or front faces {nm} and "
+            f"toward {nm}, the other person in the scene, {IN_SCENE_FACING_MARK}: its front faces {nm} and "
             f"turns away from the viewer."  # t388u: 不写 handed（东西不换手）
         )
     if names:
@@ -5025,10 +5025,11 @@ def h3_on_camera_line(names: list, *, inner_vo: bool = False, mixed_mono: bool =
     return (f"On camera: {who} " + ("speak" if many else "speaks") + " on camera inside the frame, visibly moving "
             + ("their" if many else "the") + " lips with every word (spoken dialogue, not a voice-over or inner monologue); "
             "while speaking, " + ("each speaker" if many else "the speaker") + " stays where they are in <Picture 1>, "
-            "faces the camera or the person they talk to, and keeps the mouth clearly visible and uncovered, with no hand, "
-            "phone, cup or hair in front of it; " + names[0] + " is already inside the frame at 0.0 s with the face and mouth "
-            "visible (no walking in, no turning around first), and any hand, cup or phone near a speaker's mouth in "
-            "<Picture 1> drops away in the first instant; the actions in the description happen while they say their lines.")
+            "turns the face toward the person they talk to (t391u: not toward the camera), and keeps the mouth visible and "
+            "uncovered, with no hand "
+            "or hair in front of it; " + names[0] + " is already inside the frame at 0.0 s with the face and mouth "
+            "visible (no walking in, no turning around first), and a hand near a speaker's mouth in "
+            "<Picture 1> lowers in the first instant; the actions in the description happen while they say their lines.")
 
 
 def h3_speech_pace_line(speed: float, seconds: float) -> str:
@@ -5238,15 +5239,21 @@ VIDEO_ONE_SHOT_PREFIX = "One base shot:"
 
 
 def video_one_shot_rule(pic: str = "the start picture") -> str:
+    # t391u: 摄像机可以慢慢移动 / 转动 / 调整方位，光线可以柔和变化；场景和人一直在画面里、人物大小和位置跟起始图一样，
+    # 绝不推到一个人的脸、绝不切到肖像。不点名任何物品（t390u）。
     return (f"{VIDEO_ONE_SHOT_PREFIX} the whole video stays inside the base scene of {pic} from the first frame to the "
-            f"last, with the same place, background, composition and framing; it never cuts, never switches shots or "
-            f"scenes, and never cuts to a portrait, a close-up or a single-person shot of whoever is speaking. Each "
+            f"last: the same place, background and people stay in view, each person at about the size and place they "
+            f"have in {pic}. The camera may move slowly (pan, turn, drift or reposition a little within this same "
+            f"place) and the light may shift softly without changing the time of day, but the video never cuts, never "
+            f"switches shots or scenes, never zooms in to one face, and never cuts to a portrait, a close-up or a "
+            f"single-person shot of whoever is speaking. Each "
             f"person speaks right where they are in {pic}: the speaker's lips move in sync with their line, and "
             f"everyone who is not speaking keeps the mouth closed and may only make small natural movements (a nod, "
             f"a glance, a gesture). When two or more people talk, they talk with each other inside this same frame. "
-            f"Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene; any "
-            f"camera move is one slow, gentle move within this same shot. （基础画面：整段一直在原来的基础画面里，"
-            f"绝不切镜头、绝不切到任何人的肖像或单人特写；谁说话谁在画面里原位置对口型，不说话的人闭嘴，可以做小动作；"
+            f"Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene. "
+            f"（基础画面：整段一直在原来的基础画面里，场景和人一直在画面里、人物大小和位置跟起始图一样；"
+            f"摄像机可以慢慢移动、转动、调整方位，光线可以柔和变化，但绝不切镜头、绝不换场景、绝不推到一个人的脸、"
+            f"绝不切到任何人的肖像或单人特写；谁说话谁在画面里原位置对口型，不说话的人闭嘴，可以做小动作；"
             f"只有缓慢的局部变化，不换整个场景。）")
 
 
@@ -5284,21 +5291,40 @@ def restore_one_shot_rule(original: str, polished: str) -> str:
     return _restore_rule(original, polished, VIDEO_ONE_SHOT_PREFIX)
 
 
-# t388u: 视频里手上拿的东西、桌上的东西经常变（平板变手机、东西凭空消失 / 多出来）。整段视频里起始图的所有物品都不变：
-# 种类、形状、颜色、数量、位置都一样；拿着的手一直拿着同一件，空手一直空手。Grok / Gemini / MiniMax 都写；
-# Strata 精简后原样补回（restore_video_locked_rules），丢了 validate 不通过。
+# t388u/t390u: 视频里手上的东西会变、会凭空多出来或消失。整段视频里起始图的所有东西都不变：空手一直空手，
+# 拿着东西的手一直拿着同一件。t390u: 规则里一个具体物品都不点名（点了名模型反而会把它画出来）。
+# Grok / Gemini / MiniMax 都写；Strata 精简后原样补回（restore_video_locked_rules），丢了 validate 不通过。
 VIDEO_PROPS_LOCK_PREFIX = "Objects lock:"
 
 
 def video_props_lock_rule(pic: str = "the start picture") -> str:
-    return (f"{VIDEO_PROPS_LOCK_PREFIX} every object in {pic} stays exactly as it is from the first frame to the last: "
-            f"what each person holds in the hands, what lies on the table, and every other prop keep the same kind, "
-            f"shape, colour, size, count and place. A tablet stays a tablet and a cup stays a cup; nothing turns into a "
-            f"different object, nothing new appears in anyone's hands or on the table, and nothing that is in {pic} "
-            f"disappears, is put away or is dropped. A hand that holds something keeps holding that same thing; an "
-            f"empty hand stays empty. （物品锁定：起始画面里的所有东西整段都不变——手里拿的、桌上放的、其他道具，"
-            f"种类、形状、颜色、数量、位置都一样；平板不会变成手机，不凭空多出东西，也不会消失或被拿走；"
-            f"拿着东西的手一直拿着同一件，空手一直空手。）")
+    return (f"{VIDEO_PROPS_LOCK_PREFIX} keep every object exactly as in {pic}, from the first frame to the last. "
+            f"Empty hands stay empty the whole time; hands that hold something keep holding the same thing. "
+            f"No new object appears, and nothing changes into something else or disappears. "
+            f"（物品锁定：东西全程和起始画面一样；空手一直空手，拿着东西的一直拿着同一件；"
+            f"不凭空多出东西，也不变成别的、不消失。）")
+
+
+# t390u: Strata 不许写出原提示词里没有的物品名（尤其是手里的东西），否则模型会凭空画出来。
+_OBJECT_WORDS = ("phone", "smartphone", "cellphone", "tablet", "ipad", "pad", "laptop", "computer", "device",
+                 "cup", "mug", "手机", "手機", "平板", "电脑", "電腦", "笔记本", "筆記本", "杯")
+
+
+def _object_count(text: str, w: str) -> int:
+    if w.isascii():
+        return len(re.findall(rf"\b{re.escape(w)}(?:e?s)?\b", text))
+    return text.count(w)
+
+
+def added_object_words(original: str, polished: str) -> str:
+    """t390u: 原文有「Objects lock:」时，Strata 多写了原文没有的物品名（手机 / 平板 / 杯子……）就返回那个词（不通过）。"""
+    if VIDEO_PROPS_LOCK_PREFIX not in (original or ""):
+        return ""
+    lo, lp = (original or "").lower(), (polished or "").lower()
+    for w in _OBJECT_WORDS:
+        if _object_count(lp, w) > _object_count(lo, w):
+            return w
+    return ""
 
 
 def restore_props_lock_rule(original: str, polished: str) -> str:
@@ -6203,7 +6229,7 @@ VIDEO_NARRATION_SILENT_AUDIO = """
 NOTEBOOKLM_VIDEO_NO_MUSIC = """
 ** No music in this clip. No score, no song, no melody, no background music, no musical sting, no mood track.
 ** Music for the finished film is added later, across the whole piece. A music bed inside one scene cannot be taken out.
-** Sound effects that belong to this place are welcome: birds, wind, rain, water, footsteps, a door, a cup set down, cloth, leaves, a street, a room.
+** Sound effects that belong to this place are welcome: birds, wind, rain, water, footsteps, a door, cloth, leaves, a street, a room.
 ** If there is speech in this clip, keep those effects under the voices. If this clip is silent of speech, ambient sound alone is fine. Do not turn effects into a tune.
 """
 
@@ -8208,9 +8234,11 @@ def h3_portrait_reference_block(refs: list) -> str:
                      "clothing), never shown as a shot.")
     lines += [
         PORTRAIT_REFERENCE_ONLY_RULE,  # t340u: 一句说清：整个视频就是 <Picture 1>，肖像只认人
-        "Each speaker looks exactly like their portrait (same face, hair and clothes), even if their face is hidden "
-        "or unclear in <Picture 1>. Do not paste a portrait into the frame, do not copy a portrait's background or "
-        "pose, and do not add anyone else.",
+        # t391u: 原来写「即使脸在 <Picture 1> 里看不清也要和肖像一模一样」，模型就把人拉近、切到肖像那样的单人脸。
+        "The portraits only tell who is who: each person has the face, hair and clothes of their portrait but stays at "
+        "the size, place, pose and distance from the camera they have in <Picture 1>; a portrait never fills the frame "
+        "and is never shown on its own. Do not paste a portrait into the frame, do not copy a portrait's background, "
+        "pose or framing, and do not add anyone else.",
         "Each spoken line is delivered by the person marked by its (S1)/(S2)/(S#) id, the same person as in their "
         "portrait: lip movement and voice on that exact person; the others keep their lips closed while someone else speaks.",
     ]
