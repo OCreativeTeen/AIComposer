@@ -8677,6 +8677,41 @@ def recorded_speech_speed(scene, path: str):
         return None
     return s
 
+# t419u: 生成时没有讲话（勾了「讲话当故事内容」，或「讲话」没勾且场景音频不加）记在 video_speech_speed["no_speech"]。
+# t420u: 导入这个文件时声音一律用本场原来的音频（配声），视频自带的声音（音效）不用；
+# 固定 6 / 9 / 12 秒的视频按「配声」变速对齐到本场音频长度（同手动导入默认），本场音频和时间轴不变。
+NO_SPEECH_RECORD_KEY = "no_speech"
+
+
+def video_no_speech_mode(story_on: bool, speaking: bool, audio_mode: str = "none") -> bool:
+    """t419u: 提交时这一场是不是「没有讲话」：讲话当故事内容，或讲话没勾且场景音频不作为说话 / 唱歌送去。"""
+    if story_on:
+        return True
+    return (not speaking) and str(audio_mode or "none") == "none"
+
+
+def recorded_no_speech(scene, path: str) -> bool:
+    """t419u: 这一场提交时记下的「没有讲话」是否适用于这个视频文件（认文件的规则同 recorded_speech_speed）。"""
+    import os as _os
+
+    rec = scene.get("video_speech_speed") if isinstance(scene, dict) else None
+    if not isinstance(rec, dict) or not path or not rec.get(NO_SPEECH_RECORD_KEY):
+        return False
+    fn = str(rec.get("file") or "")
+    if fn:
+        return _os.path.basename(fn).lower() == _os.path.basename(str(path)).lower()
+    try:
+        at = float(rec.get("at") or 0)
+    except (TypeError, ValueError):
+        at = 0.0
+    try:
+        if at and _os.path.getmtime(path) < at - 2:
+            return False
+    except OSError:
+        return False
+    return True
+
+
 VIDEO_PROMPT_LOG_KEEP = 5
 
 

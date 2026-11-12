@@ -219,6 +219,9 @@ class PromptFlowsMixin:
             rec["file"] = os.path.basename(path)  # t151u: 这一场的语速档只给这个文件
         config_prompt.attach_video_prompt_file(scene, path)  # t156u
         spd = config_prompt.recorded_speech_speed(scene, path) or 1.0
+        no_speech = config_prompt.recorded_no_speech(scene, path)  # t419u
+        if no_speech:
+            spd = 1.0
 
         def build_pair() -> None:
             try:
@@ -226,7 +229,8 @@ class PromptFlowsMixin:
                 pair = self._build_volume_adjusted_mp4_wav_pair(path, 1.0, start=start, end=end, speed=spd)
                 err = ""
                 print(f"🎚️ 全集提交自动导入：区间 {start:.3f}–{end:.3f} 秒，速度 {spd:g}"
-                      + ("（生成时说快了，按语速档放慢）" if spd < 0.999 else "") + "，音量 1 倍")
+                      + ("（生成时说快了，按语速档放慢）" if spd < 0.999 else "") + "，音量 1 倍"
+                      + ("；没有讲话：声音用本场原来的音频，视频变速对齐它（配声）" if no_speech else ""))
             except Exception as exc:  # noqa: BLE001
                 pair, err = None, f"裁剪失败：{exc}"
             self.root.after(0, lambda: stage(pair, err))
@@ -246,6 +250,9 @@ class PromptFlowsMixin:
                 "folder": folder, "dest": "clip", "audio": None,
                 "video_fade_in": 0.0, "video_fade_out": 0.0, "audio_fade": False,
             }
+            if no_speech:  # t420u: 没有讲话：配声（本场音频替换，视频变速对齐），不留视频自带声音
+                pick["radio"] = "replace_speed"
+                pick["no_speech"] = True
             try:
                 self._apply_editor_pick(pick, stage_download=True, on_done=on_done)
             except Exception as exc:  # noqa: BLE001

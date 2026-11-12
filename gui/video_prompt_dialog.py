@@ -241,6 +241,32 @@ def ask_video_submit_confirm(
     return res["v"]
 
 
+# t418u: MiniMax 没有讲话（勾了「讲话当故事内容」，或「讲话」没勾）时长度不能自动，要从 6 / 9 / 12 秒里选。
+# 帧数沿用 sd_image_processor.minimax_submit_seconds（24fps、17n+5 帧）：6秒=158帧，9秒=226帧，12秒=294帧。
+MINIMAX_FIXED_LENGTHS = (("6s", "6秒"), ("9s", "9秒"), ("12s", "12秒"))
+DEFAULT_MINIMAX_FIXED_LENGTH = "6s"
+MINIMAX_FIXED_LENGTH_KEY = "minimax_fixed_duration"
+
+
+def minimax_fixed_length(value) -> str:
+    """t418u: 记下的值 → 6s / 9s / 12s；认不出用默认 6 秒。"""
+    v = str(value or "").strip().lower()
+    return v if v in {k for k, _l in MINIMAX_FIXED_LENGTHS} else DEFAULT_MINIMAX_FIXED_LENGTH
+
+
+def minimax_fixed_length_mode(is_minimax: bool, speaking: bool, story: bool, audio_mode: str = "none",
+                              has_audio: bool = False) -> bool:
+    """t418u: MiniMax 且没有讲话（讲话当故事内容，或讲话没勾）→ 长度要选 6/9/12 秒。
+    讲话勾着 → 照旧自动；讲话没勾但选了场景音频（作为说话 / 唱歌）且这一场有音频 → 长度跟音频（照旧）。"""
+    if not is_minimax:
+        return False
+    if speaking and not story:
+        return False
+    if not story and audio_mode in ("talk", "sing") and has_audio:
+        return False
+    return True
+
+
 def open_video_prompt_dialog(
     parent,
     anchor,
@@ -333,6 +359,7 @@ def open_video_prompt_dialog(
             saved_actor = bool(saved_choice["actor"])
     # t416u: 讲话当故事内容（和「讲话」互斥；旧设置两个都开时这个优先）
     saved_story = bool(saved_choice.get(config_prompt.SPEAKING_STORY_KEY)) if isinstance(saved_choice, dict) else False
+    _sv_len = saved_choice if isinstance(saved_choice, dict) else {}
     if saved_story:
         saved_speaking = False
         if saved_choice.get("actor_override") in {
@@ -353,6 +380,7 @@ def open_video_prompt_dialog(
                 pass
         return _f
 
+    mm_fixed_var = tk.StringVar(value=minimax_fixed_length(_sv_len.get(MINIMAX_FIXED_LENGTH_KEY)))  # t418u
     speaking_var.trace_add("write", _exclusive(speaking_var, story_var))
     story_var.trace_add("write", _exclusive(story_var, speaking_var))
     override_var = tk.StringVar(value=saved_override)
@@ -465,6 +493,7 @@ def open_video_prompt_dialog(
     def current_choice() -> dict:
         return {
             "duration": duration_var.get(),
+            MINIMAX_FIXED_LENGTH_KEY: minimax_fixed_length(mm_fixed_var.get()),  # t418u
             "text": text_var.get(),
             "visual": bool(visual_var.get()),
             "speaking": bool(speaking_var.get()) and not bool(story_var.get()),
@@ -524,7 +553,13 @@ def open_video_prompt_dialog(
     _seg_start = {"path": ""}  # t370u: 分节：这一节的起始图（上一节末帧，已提高分辨率）
 
     def _seg_count(sc) -> int:
-        """t370u: 这一场讲话按 <Ns> / <s> 分成几节（1 = 不分）。"""
+        """t370u: 这一场讲话按 <Ns> / <s> 分成几节（1 = 不分）。
+        t418u: MiniMax 没有讲话（讲话当故事内容 / 讲话没勾）不分节：选的长度最多 12 秒，一段就够。"""
+        try:
+            if _cfg_mm.is_minimax(backend_var.get()) and (story_var.get() or not speaking_var.get()):
+                return 1
+        except (NameError, tk.TclError):
+            pass
         fn = episode.get("segments") if isinstance(episode, dict) else None
         if not callable(fn) or not isinstance(sc, dict):
             return 1
@@ -557,6 +592,11 @@ def open_video_prompt_dialog(
             return
         # t225u: 长度「自动」：每一场按自己的 speaking 估算（全集 / 本集从这一场起也是一场一场算）
         _dur = duration_var.get()
+        if minimax_fixed_length_mode(  # t418u: MiniMax 没有讲话：用选定的 6 / 9 / 12 秒，不自动
+                _cfg_mm.is_minimax(backend), bool(speaking_var.get()), story_on, audio_mode_var.get(),
+                bool(get_image("clip_audio")) if get_image is not None else False):
+            _dur = minimax_fixed_length(mm_fixed_var.get())
+            print(f"⏱ MiniMax 没有讲话：长度用选定的 {_dur[:-1]} 秒")
         _speech_speed, _speech_normal = 1.0, 0.0  # t151u: 语速档（MiniMax 不加音频的「自动」才会 < 1）
         if _dur == "auto":
             _opts = _LEN_STD
@@ -850,6 +890,8 @@ def open_video_prompt_dialog(
             scenes[0]["video_speech_speed"] = {
                 "speed": _eff_speed, "length": _dur, "normal_seconds": _speech_normal,
                 "backend": backend, "at": round(_time.time(), 1),
+                # t419u/t420u: 提交时就记下没有讲话；导入时用本场音频（不看对话框现在的勾选）
+                config_prompt.NO_SPEECH_RECORD_KEY: config_prompt.video_no_speech_mode(story_on, use_sp, _amode),
             }
             if callable(on_scene_record):
                 on_scene_record()
@@ -1066,6 +1108,9 @@ def open_video_prompt_dialog(
     length_radios.append(_rb)
     auto_info_lbl = ttk.Label(length_box, text="", foreground="#0a5", wraplength=170, justify=tk.LEFT)  # t169u
     auto_info_lbl.pack(anchor=tk.W)
+    # t418u: MiniMax 没有讲话时只显示这三个（不自动）；平时不显示
+    mm_fixed_radios = [ttk.Radiobutton(length_box, text=label, value=value, variable=mm_fixed_var)
+                       for value, label in MINIMAX_FIXED_LENGTHS]
 
     # t161u/t163u: 后端选在对话框里（Grok / Gemini / MiniMax）；场景音频：不加 / 作为说话 / 作为唱歌（只有 MiniMax）
     import config as _cfg_prefs
@@ -1124,7 +1169,22 @@ def open_video_prompt_dialog(
 
     def _sync_backend(*_a) -> None:
         mm = _cfg_prefs.is_minimax(backend_var.get())
-        if mm:
+        fixed = minimax_fixed_length_mode(mm, bool(speaking_var.get()), bool(story_var.get()),
+                                          audio_mode_var.get(), _has_audio)  # t418u
+        if fixed:
+            for rb in length_radios:
+                rb.pack_forget()
+            for rb in mm_fixed_radios:
+                if not rb.winfo_manager():
+                    rb.pack(anchor=tk.W, before=auto_info_lbl)
+        else:
+            for rb in mm_fixed_radios:
+                rb.pack_forget()
+            if not length_radios[3].winfo_manager():
+                length_radios[3].pack(anchor=tk.W, before=auto_info_lbl)
+        if fixed:
+            pass
+        elif mm:
             for rb in length_radios[:3]:
                 rb.pack_forget()
             length_radios[3].configure(text="自动（范围）")
@@ -1149,6 +1209,14 @@ def open_video_prompt_dialog(
         with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing") and not _story
         for rb in length_radios:  # 带音频时长度跟音频走
             rb.state(["disabled"] if with_audio else ["!disabled"])
+        if fixed:  # t418u
+            try:
+                frames = {v: _sdp_wf.minimax_h3_frames(_sdp_wf.minimax_submit_seconds(v)) for v, _l in MINIMAX_FIXED_LENGTHS}
+                auto_info_lbl.config(text="没有讲话：MiniMax 长度要选（不自动）\n"
+                                          + "，".join(f"{v[:-1]}秒={frames[v]}帧" for v, _l in MINIMAX_FIXED_LENGTHS))
+            except Exception:  # noqa: BLE001
+                auto_info_lbl.config(text="没有讲话：MiniMax 长度要选（不自动）")
+            return
         _refresh_auto_info(mm, with_audio)
 
     def _refresh_auto_info(mm, with_audio) -> None:
@@ -1173,6 +1241,7 @@ def open_video_prompt_dialog(
     backend_var.trace_add("write", _sync_backend)
     audio_mode_var.trace_add("write", _sync_backend)
     story_var.trace_add("write", _sync_backend)  # t416u
+    speaking_var.trace_add("write", _sync_backend)  # t418u: 讲话勾 / 不勾 → 长度自动 / 要选
     _sync_backend()
     from gui.slide_prompt_dialog import big_submit_button
 
@@ -1606,7 +1675,7 @@ def open_video_prompt_dialog(
     actor_var.trace_add("write", refresh_choices)
     refresh_choices()
     # t163u: 每个单选 / 勾选一改就记到项目 video_prompt（下次、换场景打开都保持）
-    for _v in (duration_var, text_var, visual_var, speaking_var, story_var, actor_var, override_var, frame_var, bg_var,
+    for _v in (duration_var, mm_fixed_var, text_var, visual_var, speaking_var, story_var, actor_var, override_var, frame_var, bg_var,
                evolve_var, camera_var, fyi_include_var, bg_include_var, backend_var, audio_mode_var, polish_var):
         _v.trace_add("write", lambda *_a: remember())
     # t203u: 交给 LLM 的图、注意 / FYI 文字也是一改就记（原来只在关窗 / 提交时记）
