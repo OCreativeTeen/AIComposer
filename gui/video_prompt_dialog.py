@@ -331,13 +331,30 @@ def open_video_prompt_dialog(
             saved_speaking = bool(saved_choice["speaking"])
         if "actor" in saved_choice:
             saved_actor = bool(saved_choice["actor"])
+    # t416u: 讲话当故事内容（和「讲话」互斥；旧设置两个都开时这个优先）
+    saved_story = bool(saved_choice.get(config_prompt.SPEAKING_STORY_KEY)) if isinstance(saved_choice, dict) else False
+    if saved_story:
+        saved_speaking = False
         if saved_choice.get("actor_override") in {
             label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES
         }:
             saved_override = saved_choice["actor_override"]
     visual_var = tk.BooleanVar(value=saved_visual)
     speaking_var = tk.BooleanVar(value=saved_speaking)
+    story_var = tk.BooleanVar(value=saved_story)  # t416u
     actor_var = tk.BooleanVar(value=saved_actor)
+
+    def _exclusive(on_var, off_var):
+        def _f(*_a):
+            try:
+                if on_var.get() and off_var.get():
+                    off_var.set(False)
+            except tk.TclError:
+                pass
+        return _f
+
+    speaking_var.trace_add("write", _exclusive(speaking_var, story_var))
+    story_var.trace_add("write", _exclusive(story_var, speaking_var))
     override_var = tk.StringVar(value=saved_override)
     # t163u: 画面 / 背景 / 演进 / 运镜 也记在项目 video_prompt 里；对这一场不能用时退回默认，但不覆盖记下的值
     _sv = saved_choice if isinstance(saved_choice, dict) else {}
@@ -397,7 +414,7 @@ def open_video_prompt_dialog(
     for value, label in config_prompt.FLOW_CAPTION_CHOICES:
         ttk.Radiobutton(text_box, text=label, value=value, variable=text_var).pack(anchor=tk.W)
     pack_scene_field_choices(
-        narrative_row, visual_var, speaking_var, actor_var, override_var, anchor=tk.N
+        narrative_row, visual_var, speaking_var, actor_var, override_var, anchor=tk.N, story_var=story_var
     )
 
     # t322u: 画面 / 背景 / 演进 / 运镜 放在同一行，接在「写进提示词的内容」右边（不再单占一行，省出高度给下面）
@@ -450,7 +467,8 @@ def open_video_prompt_dialog(
             "duration": duration_var.get(),
             "text": text_var.get(),
             "visual": bool(visual_var.get()),
-            "speaking": bool(speaking_var.get()),
+            "speaking": bool(speaking_var.get()) and not bool(story_var.get()),
+            config_prompt.SPEAKING_STORY_KEY: bool(story_var.get()),  # t416u
             "actor": bool(actor_var.get()),
             "actor_override": override_var.get(),
             "image": image_to_save(),
@@ -494,6 +512,7 @@ def open_video_prompt_dialog(
             )
             + "下面选 Grok / Gemini / MiniMax 再点「提交」：Grok / Gemini 会再问 Chrome 账户，MiniMax 直接提交。"
             + "所有选择都记在项目里，换场景再打开也一样。场景音频（作为说话 / 作为唱歌）只有 MiniMax 能用。"
+            + "勾「讲话当故事内容」：讲话不说出来，用画面演；视频里没人说话，只有音效、没有音乐，场景音频不加。"
         )
         hint.config(text=base)
 
@@ -523,8 +542,10 @@ def open_video_prompt_dialog(
 
     def on_go(backend: str = "grok", account: str = "", deliver=None, quiet: bool = False) -> None:
         fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
+        story_on = bool(story_var.get())  # t416u: 讲话当故事内容（优先于「讲话」）
+        use_sp = bool(speaking_var.get()) and not story_on
         # 什么都没勾、但写了注意 / FYI：只按 FYI 让图动起来（同图片提示「仅修改」）。
-        fyi_only = not (visual_var.get() or speaking_var.get() or actor_var.get())
+        fyi_only = not (visual_var.get() or use_sp or story_on or actor_var.get())
         if fyi_only and fyi_now:
             fyi_now = config_prompt.strip_caption_lines(fyi_now) or fyi_now  # t163u
         if fyi_only and not fyi_now:
@@ -541,7 +562,7 @@ def open_video_prompt_dialog(
             _opts = _LEN_STD
             _sp = " ".join(str(s.get("speaking") or "") for s in scenes)
             _will_audio = (_cfg_mm.is_minimax(backend) and audio_mode_var.get() in ("talk", "sing")
-                           and get_image is not None and bool(get_image("clip_audio")))
+                           and get_image is not None and bool(get_image("clip_audio")) and not story_on)
             if _cfg_mm.is_minimax(backend):
                 _norm = None
                 if not _will_audio:
@@ -569,6 +590,8 @@ def open_video_prompt_dialog(
                     _tl0 = config_prompt.h3_speaker_timeline(scenes[0]) if len(scenes) == 1 else []
                     _norm = _tl0[-1][1] if _tl0 else None
                 _dur, _speech_speed, _speech_normal, _why = config_prompt.auto_length_speed_choice(_sp, _opts, _norm)
+            if story_on:  # t416u: 没人说话，不说快
+                _speech_speed = 1.0
             _cap = str(scenes[0].get("caption") or scenes[0].get("title") or "").strip()
             print(f"⏱ 自动长度：{_cap[:20] or '这一场'} {_why}")
         style = (_look.get("visual_style") or get_style() or "").strip()  # t235u
@@ -580,7 +603,8 @@ def open_video_prompt_dialog(
         frames = "two" if is_transition else frame_var.get()
         field_kw = dict(
             use_visual=bool(visual_var.get()),
-            use_speaking=bool(speaking_var.get()),
+            use_speaking=use_sp,
+            speaking_as_story=story_on,  # t416u
             use_actor=bool(actor_var.get()),
             actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(
                 override_var.get(), ""
@@ -702,9 +726,14 @@ def open_video_prompt_dialog(
         # t163u: 三个后端同一份提示词。要点放最前（OUTPUT FORMAT 之后），结尾再强调一次画面干净和光线。
         _scene_audio = bool(get_image("clip_audio")) if get_image is not None else False  # t172u: 每一场自己判断
         _amode = audio_mode_var.get() if (_cfg_mm.is_minimax(backend) and _scene_audio) else "none"
+        if story_on:  # t416u: 讲话当故事内容：场景音频（作为说话 / 唱歌）不加
+            if _amode != "none":
+                print("ℹ️ 讲话当故事内容：场景音频不加（视频里没人说话）")
+            _amode = "none"
         _tr = transition if is_transition else None
         _start = images[0] if images else ""
-        guard = config_prompt.video_guard_block(scenes, _tr, _start, audio_mode=_amode)
+        _guard_scenes = config_prompt.speaking_story_scenes(scenes) if story_on else scenes  # t416u
+        guard = config_prompt.video_guard_block(_guard_scenes, _tr, _start, audio_mode=_amode)
         if prompt.startswith("OUTPUT FORMAT"):
             head, sep, rest = prompt.partition("\n\n")
             prompt = head + "\n\n" + guard + ("\n\n" + rest if sep else "")
@@ -714,7 +743,7 @@ def open_video_prompt_dialog(
             prompt = prompt.replace(
                 "Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).",
                 "Sound: the given song.")
-        _closing = config_prompt.video_closing_block(scenes, _tr, _start)
+        _closing = config_prompt.video_closing_block(_guard_scenes, _tr, _start)
         if _closing:  # t321u: 结尾只有光线；禁字幕 / 画面干净不重复
             prompt = prompt + "\n\n" + _closing
         if _cfg_mm.is_minimax(backend):
@@ -735,7 +764,8 @@ def open_video_prompt_dialog(
                 frames=frames, transition=_tr, style=style,
                 region=bg_region if bg_include_var.get() else "", era=bg_era if bg_include_var.get() else "",
                 language=language or "", camera=camera_var.get(), audio_mode=_amode, start_image=_start,
-                seconds=_secs, use_visual=bool(visual_var.get()), use_speaking=bool(speaking_var.get()),
+                seconds=_secs, use_visual=bool(visual_var.get()), use_speaking=use_sp,
+                speaking_as_story=story_on,  # t416u
                 fyi=get_fyi_text() if fyi_include_var.get() else "",
                 stage=bg_stage if bg_include_var.get() else None,
                 speech_speed=_speech_speed if _amode == "none" else 1.0,
@@ -1113,9 +1143,10 @@ def open_video_prompt_dialog(
                 duration_var.set(_cur)
         for rb in h3_wf_radios:  # t216u: 只有 MiniMax 能选工作流
             rb.state(["!disabled"] if mm else ["disabled"])
+        _story = bool(story_var.get())  # t416u: 讲话当故事内容时场景音频灰掉（选的值照样记着，提交时不加）
         for rb in audio_radios:  # 只有 MiniMax 且这一场有音频才能选（选的值照样记着）
-            rb.state(["!disabled"] if (mm and _has_audio) else ["disabled"])
-        with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing")
+            rb.state(["!disabled"] if (mm and _has_audio and not _story) else ["disabled"])
+        with_audio = mm and _has_audio and audio_mode_var.get() in ("talk", "sing") and not _story
         for rb in length_radios:  # 带音频时长度跟音频走
             rb.state(["disabled"] if with_audio else ["!disabled"])
         _refresh_auto_info(mm, with_audio)
@@ -1141,6 +1172,7 @@ def open_video_prompt_dialog(
 
     backend_var.trace_add("write", _sync_backend)
     audio_mode_var.trace_add("write", _sync_backend)
+    story_var.trace_add("write", _sync_backend)  # t416u
     _sync_backend()
     from gui.slide_prompt_dialog import big_submit_button
 
@@ -1574,7 +1606,7 @@ def open_video_prompt_dialog(
     actor_var.trace_add("write", refresh_choices)
     refresh_choices()
     # t163u: 每个单选 / 勾选一改就记到项目 video_prompt（下次、换场景打开都保持）
-    for _v in (duration_var, text_var, visual_var, speaking_var, actor_var, override_var, frame_var, bg_var,
+    for _v in (duration_var, text_var, visual_var, speaking_var, story_var, actor_var, override_var, frame_var, bg_var,
                evolve_var, camera_var, fyi_include_var, bg_include_var, backend_var, audio_mode_var, polish_var):
         _v.trace_add("write", lambda *_a: remember())
     # t203u: 交给 LLM 的图、注意 / FYI 文字也是一改就记（原来只在关窗 / 提交时记）

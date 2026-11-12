@@ -132,8 +132,10 @@ def pack_scene_field_choices(
     title: str = "写进提示词的内容",
     anchor=tk.S,
     image_var=None,
+    story_var=None,
 ):
-    """visual / speaking / actor 勾选，外加「换成」人物覆盖。两个提示窗用这一份。"""
+    """visual / speaking / actor 勾选，外加「换成」人物覆盖。两个提示窗用这一份。
+    t416u: ``story_var`` 给了就在「讲话」下面加「讲话当故事内容」（生场视频用）。"""
     options = ttk.LabelFrame(parent, text=title, padding=(8, 4))
     options.pack(side=tk.LEFT, anchor=anchor, padx=((8, 0) if anchor == tk.N else 0))
     buttons = []
@@ -146,6 +148,10 @@ def pack_scene_field_choices(
         ("讲话 (speaking)", speaking_var),
     ):
         btn = ttk.Checkbutton(options, text=text, variable=var)
+        btn.pack(anchor=tk.W)
+        buttons.append(btn)
+    if story_var is not None:  # t416u
+        btn = ttk.Checkbutton(options, text="讲话当故事内容", variable=story_var)
         btn.pack(anchor=tk.W)
         buttons.append(btn)
     # 换成别的人物：不选就用故事里原来的人物；选了就把画面里的人物族裔和年代覆盖掉。

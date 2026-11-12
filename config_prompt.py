@@ -5474,11 +5474,132 @@ def restore_art_style_rule(original: str, polished: str) -> str:
     return _restore_rule(original, polished, ART_STYLE_LOCK_PREFIX)
 
 
+# ---------------------------------------------------------------------------
+# t416u: 生场视频「讲话当故事内容」：讲话不说出来，当作这一场要用画面演出来的故事内容；视频里没人说话，
+# 只有音效（环境声 / 动作声），不要音乐。和「讲话」互斥（两个都记着时这个优先）。
+# 三条锁定句 Strata 精简后原样换回（restore_video_locked_rules），Strata 多写了讲话 / 音乐的词就不通过（prompt_polish.validate）。
+# ---------------------------------------------------------------------------
+SPEAKING_STORY_KEY = "speaking_story"
+SPEAKING_STORY_LABEL = "Story content"
+SPEAKING_STORY_SILENT_PREFIX = "No speech:"
+SPEAKING_STORY_SILENT_RULE = (
+    "No speech: nobody speaks in this scene, so there is no dialogue, no lip movement or lip-sync, no narration, "
+    "no voice-over, no singing and no voice of any kind."
+)
+SPEAKING_STORY_SHOW_PREFIX = "Tell the story in pictures:"
+SPEAKING_STORY_SHOW_RULE = (
+    "Tell the story in pictures: the story content is what happens in this scene; express it only through the "
+    "picture and the action (movement, gestures, facial expressions, what the people do), never by saying, "
+    "reading or writing it."
+)
+SPEAKING_STORY_SOUND_PREFIX = "Sound effects only:"
+SPEAKING_STORY_SOUND_RULE = (
+    "Sound effects only: ambient sound of the place and foley of the action (footsteps, cloth, objects), "
+    "with no music, no background music and no voice."
+)
+_PLAIN_SOUND_LINE = "Sound: natural sound of the place only. No music of any kind (music is added to the whole film later)."
+
+
+def speaking_story_text(scene) -> str:
+    """t416u: 这一场的讲话（去掉 <N> / <Ns> / 停顿标记，连同 voiceover）当作故事内容；没有讲话时用 story_content。"""
+    if not isinstance(scene, dict):
+        return ""
+    sp = str(scene.get("speaking") or "").strip()
+    vo = str(scene.get("voiceover") or "").strip()
+    text = _strip_speech_marks(" ".join(p for p in (sp, vo) if p)) if (sp or vo) else ""
+    if not text.strip():
+        text = _strip_speech_marks(str(scene.get("story_content") or ""))
+    return " ".join(str(text or "").split())
+
+
+def speaking_story_scenes(scenes) -> list:
+    """t416u: 场景副本：讲话 / voiceover 清空、story_content 去掉，后面的提示词里就不会再有人说话（原场景不动）。"""
+    out = []
+    for s in scenes or []:
+        if not isinstance(s, dict):
+            continue
+        c = dict(s)
+        c["speaking"] = ""
+        c["voiceover"] = ""
+        c.pop("story_content", None)
+        out.append(c)
+    return out
+
+
+def apply_speaking_story(prompt: str, story_texts) -> str:
+    """t416u: 一般格式（Grok / Gemini / 过渡）提示词：说明最前面加三条规则（换掉原来那句声音规则），
+    Story_Scene_Content 前面加 Story_Content 一段。没有故事内容时只加「没人说话」和「只有音效」。"""
+    texts = [str(t).strip() for t in (story_texts or []) if str(t or "").strip()]
+    rules = [SPEAKING_STORY_SILENT_RULE] + ([SPEAKING_STORY_SHOW_RULE] if texts else []) + [SPEAKING_STORY_SOUND_RULE]
+    out = (prompt or "").replace("- " + _PLAIN_SOUND_LINE + "\n", "").replace("- " + _PLAIN_SOUND_LINE, "")
+    out = out.replace(_PLAIN_SOUND_LINE, "")
+    block = "\n".join(f"- {r}" for r in rules)
+    if "Instructions:\n" in out:
+        out = out.replace("Instructions:\n", "Instructions:\n" + block + "\n", 1)
+    else:
+        out = block + "\n\n" + out
+    if texts:
+        section = f"Story_Content ({SPEAKING_STORY_LABEL}, shown in the picture, never spoken):\n" + "\n".join(texts)
+        k = out.find("Story_Scene_Content:")
+        out = (out[:k] + section + "\n\n" + out[k:]) if k >= 0 else (out.rstrip() + "\n\n" + section)
+    return out
+
+
+def _field_value_span(text: str, field: str):
+    i = (text or "").find(field)
+    if i < 0:
+        return None
+    a = i + len(field)
+    b = text.find("\n\n", a)
+    return a, (len(text) if b < 0 else b)
+
+
+def restore_speaking_story_rules(original: str, polished: str) -> str:
+    """t416u: 原文是「讲话当故事内容」：H3 的 overall_soundscape / non_diegetic_music 用原文，三条规则恰好一次、原句。"""
+    if SPEAKING_STORY_SILENT_RULE not in (original or ""):
+        return polished
+    out = polished or ""
+    for field in ("overall_soundscape:", "non_diegetic_music:"):
+        a, b = _field_value_span(original, field), _field_value_span(out, field)
+        if a and b:
+            out = out[:b[0]] + original[a[0]:a[1]] + out[b[1]:]
+    for prefix in (SPEAKING_STORY_SILENT_PREFIX, SPEAKING_STORY_SHOW_PREFIX, SPEAKING_STORY_SOUND_PREFIX):
+        out = _restore_rule(original, out, prefix)
+    return out
+
+
+_SPEECH_MUSIC_WORDS = ("dialogue", "says", "said", "speaks", "talks", "narrat", "voice-over", "voiceover",
+                       "lip-sync", "lip sync", "sings", "singing", "song", "music", "melody", "soundtrack", "lyrics",
+                       "说话", "对白", "旁白", "唱", "音乐", "配乐")
+_NEGATION_RE = re.compile(r"\b(?:no|not|never|without|nobody|none|silent|n/a)\b|没有|不", re.I)
+
+
+def speaking_story_added_words(original: str, polished: str) -> str:
+    """t416u: 原文是「讲话当故事内容」时，Strata 正面写进了讲话 / 音乐类的词（比原文多）就返回那个词。
+    三条锁定句和带否定（no / never / without …）的小句不算。"""
+    if SPEAKING_STORY_SILENT_RULE not in (original or ""):
+        return ""
+
+    def _positive(s: str) -> str:
+        s = s or ""
+        for rule in (SPEAKING_STORY_SILENT_RULE, SPEAKING_STORY_SHOW_RULE, SPEAKING_STORY_SOUND_RULE):
+            s = s.replace(rule, " ")
+        parts = re.split(r"[.;,:\n。；，！？!?]", s)
+        return " ".join(p for p in parts if not _NEGATION_RE.search(p)).lower()
+
+    lo, lp = _positive(original), _positive(polished)
+    for w in _SPEECH_MUSIC_WORDS:
+        if lp.count(w) > lo.count(w):
+            return w
+    return ""
+
+
 def restore_video_locked_rules(original: str, polished: str) -> str:
     """t369u: 发送前最后核对：关键字句 + 画风锁定句都在（原文有才补）。"""
     out = restore_image_keywords_rule(original, polished)
     out = restore_one_shot_rule(original, out)  # t382u: 基础画面、不切镜头
     out = restore_props_lock_rule(original, out)  # t388u: 物品不变
+    out = restore_speaking_story_rules(original, out)  # t416u: 讲话当故事内容：没人说话、只有音效
     return restore_art_style_rule(original, out)
 
 
@@ -5676,11 +5797,18 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                     language: str = "", camera: str = "none", audio_mode: str = "none", start_image: str = "",
                     seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "",
                     stage=None, speaker_notes: dict | None = None, portrait_pictures: dict | None = None,
-                    speech_speed: float = 1.0, text: str = "") -> str:
-    """t165u: 场景内容 → MiniMax H3 官方格式提示词。t191u: stage = 故事舞台（一句 Story stage:）。
+                    speech_speed: float = 1.0, text: str = "", speaking_as_story: bool = False) -> str:
+    """t165u: 场景内容 → MiniMax H3 官方格式提示词。
+    t416u: ``speaking_as_story`` = 讲话当故事内容：讲话不说出来，用画面演；没人说话，只有音效、没有音乐。t191u: stage = 故事舞台（一句 Story stage:）。
     t150u: speaker_notes = {说话人序号: 括号描述}（Strata 看图写的；没有就用画面描述里讲这个人的小句）；
     portrait_pictures = {说话人序号: <Picture k> 的 k}（参考图工作流）。"""
     scs = [s for s in (scenes or []) if isinstance(s, dict)]
+    story_texts = []
+    if speaking_as_story:  # t416u
+        story_texts = [t for t in (speaking_story_text(s) for s in scs) if t]
+        scs = speaking_story_scenes(scs)
+        use_speaking = False
+        audio_mode = "none"
     sc = scs[0] if scs else {}
     two = frames == "two" or isinstance(transition, dict)
     lang = ""
@@ -5857,6 +5985,11 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     elif not talk:
         shot.append("Nobody speaks; the people keep their lips closed and act through small natural movements."
                     if rows else "Only gentle natural movement in the scene.")
+    if speaking_as_story:  # t416u
+        shot.append(SPEAKING_STORY_SILENT_RULE)
+        if story_texts:
+            shot.append(SPEAKING_STORY_SHOW_RULE)
+            shot.append(f"{SPEAKING_STORY_LABEL}: " + " ".join(t.rstrip("。.") + "." for t in story_texts))
     if two:
         shot.append("The shot moves continuously from <Picture 1> and ends exactly on Picture 2.")
     extra = strip_caption_lines(fyi)
@@ -5870,6 +6003,8 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         sound = ("Quiet indoor ambience with soft room tone, small movement sounds and the rustle of clothing."
                  if talk or rows else "Natural ambient sound of the place.")
         music = "N/A"
+        if speaking_as_story:  # t416u: 只有音效
+            sound = SPEAKING_STORY_SOUND_RULE
     # t321u: 禁字幕只在物理第一行说一次（ensure_video_no_subtitle_first_line），这里不再重复
     raw = (first + "\n\nintegrated_multimodal_description: " + " ".join(shot)
            + "\n\noverall_soundscape: " + sound + "\n\nnon_diegetic_music: " + music)
@@ -6018,9 +6153,11 @@ def build_video_flow_prompt(
     use_actor: bool = False,
     actor_override: str = "",
     story_style: str | None = None,
+    speaking_as_story: bool = False,
 ) -> str:
     """生场视频提示词。每一点只写一次：画面 / 风格、表现形式（叙事风格）、谁说话（故事风格）、人物、文字、运镜、声音，
-    然后是口语语言和场景内容。"""
+    然后是口语语言和场景内容。
+    t416u: ``speaking_as_story`` = 讲话当故事内容（没人说话、只有音效；讲话写成 Story_Content 用画面演）。"""
     if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
         frames = "one"
     if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
@@ -6039,7 +6176,12 @@ def build_video_flow_prompt(
     style = (visual_style or "").strip() or "realistic"
     scenes = [s for s in (scene_content if isinstance(scene_content, list) else []) if isinstance(s, dict)]
     use_visual, use_speaking, use_actor = bool(use_visual), bool(use_speaking), bool(use_actor)
-    if not (use_visual or use_speaking or use_actor):
+    story_texts = []
+    if speaking_as_story:  # t416u
+        story_texts = [t for t in (speaking_story_text(s) for s in scenes) if t]
+        scenes = speaking_story_scenes(scenes)
+        use_speaking = False
+    if not (use_visual or use_speaking or use_actor or story_texts):
         raise ValueError("场景描述、讲话、人物至少要选一项。")
     cast = _video_cast(scenes, use_actor)
     speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking)
@@ -6076,7 +6218,8 @@ def build_video_flow_prompt(
         raw, has_speaking=bool(content_key or flags["any_mono"]),
         has_monologue=flags["any_mono"], single_inner=flags["single"],
     )
-    return ensure_spoken_transcript_block(raw, scenes)
+    raw = ensure_spoken_transcript_block(raw, scenes)
+    return apply_speaking_story(raw, story_texts) if speaking_as_story else raw
 
 
 def _transition_video_choice_lines(transition: dict) -> str:
@@ -6183,13 +6326,20 @@ def build_transition_video_prompt(
     use_actor: bool = False,
     actor_override: str = "",
     story_style: str | None = None,
+    speaking_as_story: bool = False,
 ) -> str:
-    """过渡场景的视频提示：过渡选择那几行 + 与普通视频同一套谁说话 / 文字 / 声音，每点只写一次。"""
+    """过渡场景的视频提示：过渡选择那几行 + 与普通视频同一套谁说话 / 文字 / 声音，每点只写一次。
+    t416u: ``speaking_as_story`` 同 build_video_flow_prompt。"""
     style = (visual_style or "").strip() or "realistic"
     chosen = transition if isinstance(transition, dict) else {}
     scenes = [s for s in (scene_content if isinstance(scene_content, list) else []) if isinstance(s, dict)]
     use_visual, use_speaking, use_actor = bool(use_visual), bool(use_speaking), bool(use_actor)
-    if not (use_visual or use_speaking or use_actor):
+    story_texts = []
+    if speaking_as_story:  # t416u
+        story_texts = [t for t in (speaking_story_text(s) for s in scenes) if t]
+        scenes = speaking_story_scenes(scenes)
+        use_speaking = False
+    if not (use_visual or use_speaking or use_actor or story_texts):
         raise ValueError("场景描述、讲话、人物至少要选一项。")
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
@@ -6216,11 +6366,12 @@ def build_transition_video_prompt(
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     caption_label = dict(FLOW_CAPTION_CHOICES).get(text, text)
     choices = f"{story_style_label(sstyle)} · {narrative_label} · {caption_label} · 过渡 · 起始画面到终止画面"
-    return _video_prompt_assemble(
+    raw = _video_prompt_assemble(
         head_label="", style=style, choices=choices, instruction=instruction,
         language=language if (content_key in ("speaking", "narration") and not silent) else "", payload=payload,
         extra_sections={"Transition_choices": _transition_video_choice_lines(chosen) or "（这场没有记下选择）"},
     )
+    return apply_speaking_story(raw, story_texts) if speaking_as_story else raw  # t416u
 
 
 

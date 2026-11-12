@@ -29,6 +29,7 @@ Keep ALL hard facts:
 - Spoken transcript: copy the block from BEGIN_SPOKEN_TRANSCRIPT through END_SPOKEN_TRANSCRIPT verbatim. Only those lines are spoken. Visual, scene title, actor, reference, FYI and direction text are silent and must never be read, summarized, or turned into narration. Copy any sentence starting "Spoken words:" verbatim.
 - Self-talk: copy sentences starting "Self-talk:", "Entire-scene self-talk:", "Audible voices:", "Single audible voice:", and "Speak once:" verbatim. A scene with exactly one speaking turn marked <Ns> is that same actor delivering the exact supplied speaking text off-mouth (lips closed, no lip sync), audible not mute — not narration of actions or setting, not another narrator. Interactive <N> lines still have lip sync. Cast count is not speaker count: unmarked visible people stay silent and never repeat the line.
 - Directions inside the scene: when something is turned, shown or handed to a person, name that person as the target and say it turns sideways toward them inside the scene, never toward the camera or viewer. People never address the camera.
+- No speech (t416u): if the prompt has the sentence starting "No speech:", nobody speaks in this clip. Copy the sentences starting "No speech:", "Tell the story in pictures:" and "Sound effects only:" verbatim, once each. Never add dialogue, spoken lines, voices, narration, voice-over, singing or music of any kind; the story content is acted out in the picture, and the sound is only ambient sound and sound effects.
 - Cast lock: keep the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. A change of pose or place is the same person moving there (for example "小偉 himself walks over and sits down on the chair"), never a second copy.
 Remove repetition, field names, meta explanations and instructions about how to read the prompt.
 Write in positive, concrete phrasing (describe what is seen and heard). Do not write ban lists.
@@ -61,6 +62,7 @@ Rules:
 - Self-talk (t241/t250/t283/t284/t285/t286): if the prompt contains the sentence starting "Self-talk:" or "Entire-scene self-talk:" or "Speaker marks:" or "Spoken words:" or "Audible voices:" or "Single audible voice:" or "Speak once:", copy each verbatim. Copy BEGIN_SPOKEN_TRANSCRIPT ... END_SPOKEN_TRANSCRIPT verbatim. Never drop them. <N> and <Ns> are the identical actor N (lowercase s is speech mode, not another person). Self-talk lines marked <Ns> have NO lip sync (mouth closed) and are that actor's exact speaking text, not picture narration; only interactive dialogue has lip sync. Visual / "Silent picture direction" text is never spoken. Cast count is not speaker count: a visible person with no speaking turn never speaks or repeats the line. If the same words appear in a <d> tag and in the transcript, speak them once only.
 - Actor-is-truth for positioning (t223): each speaker's left/right/seat comes ONLY from the Speaker map brackets (which come from the actor parenthesis). If "What happens while they talk" (or any action sentence) puts a named person on the opposite side or in the other person's seat, ignore that positioning — do not rewrite, swap, or merge seats from the action text; keep the Speaker map seats. You may keep story actions, gestures and props from the action text.
 - Copy the sentence starting "On camera:" verbatim. If that sentence describes closed-mouth / off-mouth delivery of the exact speaking text, keep that meaning: do not rewrite it as visible lip movement and do not invent picture narration. If it describes interactive spoken dialogue, a person who speaks is seen speaking on camera with moving lips, never as a different narrator: never describe an interactive speaker with a hand on the chin or over the mouth, looking down, with the head bowed, turned away or with the face hidden, and never make a speaker walk or change place while talking. When there is interactive dialogue, write the actions as happening while they say their lines and add no silence or quiet wording; this never means more speech: no spoken words are added, repeated or continued.
+- No speech (t416u): if the prompt has the sentence starting "No speech:", nobody speaks in this clip. Copy the sentences starting "No speech:" and "Tell the story in pictures:" verbatim, once each, and keep overall_soundscape and non_diegetic_music exactly as given. Never add dialogue, <d> lines, voices, narration, singing or music; the story content is acted out in the picture.
 Output only the final prompt: no preface, no notes, no markdown fences."""
 
 
@@ -251,6 +253,19 @@ def validate(original: str, polished: str, backend: str) -> str:
     added = _added_text_words(original, polished)
     if added:
         return f"Strata 加了文字相关的词（{added}）"
+    try:  # t416u: 讲话当故事内容：锁定句要在，不许写进讲话 / 音乐
+        from config_prompt import (SPEAKING_STORY_SILENT_RULE, SPEAKING_STORY_SOUND_RULE,
+                                   speaking_story_added_words)
+
+        if SPEAKING_STORY_SILENT_RULE in original:
+            for rule in (SPEAKING_STORY_SILENT_RULE, SPEAKING_STORY_SOUND_RULE):
+                if rule not in polished:
+                    return f"讲话当故事内容：「{rule.split(':')[0]}」那句没有原样保留"
+            w = speaking_story_added_words(original, polished)
+            if w:
+                return f"讲话当故事内容：Strata 写进了讲话 / 音乐（{w}）"
+    except ImportError:
+        pass
     try:  # t369u: 非写实画风（三维动画等）时 Strata 写进了写实 / 实拍的词 → 不通过
         from config_prompt import ART_STYLE_LOCK_PREFIX, added_realism_words
         from config_prompt import VIDEO_IMAGE_KEYWORDS_PREFIX  # t398u

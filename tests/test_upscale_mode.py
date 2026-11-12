@@ -201,9 +201,10 @@ class DialogWiringTest(unittest.TestCase):
         self.assertNotIn("output_aspect_line", body)  # no project aspect line in upscale prompts
         go = self.src.split("def on_go", 1)[1].split("\n    def ", 1)[0]
         self.assertIn('if mode == "upscale":\n            _go_upscale(backend, account, comfy)', go)
-        # 提交 offers all four backends for upscale (only portrait is Grok-only)
+        # t415u: 后端在窗口里选（Grok / Gemini / MOSS / QN 四个都能用；只有提取人物肖像固定 Grok）
         sub = self.src.split("def on_submit", 1)[1].split("\n    def ", 1)[0]
-        self.assertIn('extra_backends=(("moss", "MOSS"), ("qn", "QN"))', sub)
+        self.assertIn("backend = picture_edit_backend(backend_var.get())", sub)
+        self.assertIn("on_go(backend, \"\")", sub)
 
     def test_result_is_fitted_and_written_at_target_size(self):
         om = self.flows.split("def open_manual", 1)[1].split("\n        def batch_scenes", 1)[0]

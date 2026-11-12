@@ -22,7 +22,25 @@ _DEFAULT_CHOICE = {
     "actor": False,
     "actor_override": config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0],
     "fix_cast": False,  # t197u: 补全/修正人物
+    "backend": "qn",  # t415u: 生图后端，默认 QN（Qwen 图片编辑，ComfyUI）
 }
+
+# t415u: 图片修改窗口里直接选生图后端。MOSS / QN 走本机 ComfyUI（config.COMFYUI_QN_URL / COMFYUI_MOSS_URL，
+# 和「提高分辨率」「尾帧增强」同一台），用 config_prompt.build_comfy_* 的短英文提示 + 反向提示；Grok / Gemini 走网页，要选 Chrome 账户。
+PICTURE_EDIT_BACKENDS = (
+    ("qn", "QN（Qwen 图片编辑）"),
+    ("moss", "MOSS"),
+    ("grok", "Grok"),
+    ("gemini", "Gemini"),
+)
+DEFAULT_PICTURE_EDIT_BACKEND = "qn"
+COMFY_PICTURE_BACKENDS = ("qn", "moss")
+
+
+def picture_edit_backend(value) -> str:
+    """t415u: 记下的后端 → 合法值；认不出用默认 QN。"""
+    b = str(value or "").strip().lower()
+    return b if b in {k for k, _t in PICTURE_EDIT_BACKENDS} else DEFAULT_PICTURE_EDIT_BACKEND
 
 
 def _clean_choice(saved) -> dict:
@@ -47,6 +65,7 @@ def _clean_choice(saved) -> dict:
     if saved.get("image") in IMAGE_CHOICE_KEYS:
         choice["image"] = saved["image"]
     choice["fyi_history"] = clean_fyi_history(saved)
+    choice["backend"] = picture_edit_backend(saved.get("backend"))
     choice["background"] = bool(saved.get("background", True))
     return choice
 
@@ -298,6 +317,7 @@ def open_picture_prompt_dialog(
     speaking_var = tk.BooleanVar(value=last["speaking"])
     actor_var = tk.BooleanVar(value=last["actor"])
     override_var = tk.StringVar(value=last["actor_override"])
+    backend_var = tk.StringVar(value=picture_edit_backend(last.get("backend")))  # t415u
     fix_cast_var = tk.BooleanVar(value=last.get("fix_cast", False))  # t197u
     _fix_ok = [False]
 
@@ -447,6 +467,7 @@ def open_picture_prompt_dialog(
             "fyi_history": get_fyi_history(),
             "background": bool(bg_include_var.get()),
             "fix_cast": bool(fix_cast_var.get()),
+            "backend": picture_edit_backend(backend_var.get()),  # t415u
             **{k: v for k, v in _step_saved.items()},  # t114u: 提取模式下记用户原来的勾选
             **_mode_saved,  # t216u: 封面提取 / 补全人物 强制的选项不覆盖用户原来的选择
             "mode": mode,
@@ -1104,9 +1125,15 @@ def open_picture_prompt_dialog(
             if picked:
                 _run_portrait_extract(picked[1])
             return
-        picked = ask_llm_and_account(dlg, extra_backends=(("moss", "MOSS"), ("qn", "QN")))
+        # t415u: 后端在窗口里已经选好（默认 QN）。MOSS / QN = 本机 ComfyUI，直接发；Grok / Gemini 只再问 Chrome 账户。
+        backend = picture_edit_backend(backend_var.get())
+        if backend in COMFY_PICTURE_BACKENDS:
+            print(f"图片修改：生图后端 {backend.upper()}（ComfyUI）")
+            on_go(backend, "")
+            return
+        picked = ask_llm_and_account(dlg, title=f"提交（{dict(PICTURE_EDIT_BACKENDS)[backend]}）", fixed_backend=backend)
         if picked:
-            on_go(picked[0], picked[1])
+            on_go(backend, picked[1])
 
     # t197u: 补全/修正人物 —— 每位人物都有肖像图才能勾
     def _cast_rows(scene, style=None):
@@ -1234,6 +1261,12 @@ def open_picture_prompt_dialog(
         refresh()
 
     from gui.slide_prompt_dialog import big_submit_button
+
+    if mode != "portrait":  # t415u: 生图后端（提取人物肖像固定 Grok，不显示）
+        backend_box = ttk.LabelFrame(bottom, text="生图后端", padding=(6, 2))
+        backend_box.pack(side=tk.LEFT, anchor=tk.N, padx=(12, 0))
+        for _v, _t in PICTURE_EDIT_BACKENDS:
+            ttk.Radiobutton(backend_box, text=_t, value=_v, variable=backend_var).pack(anchor=tk.W)
 
     submit_btn = big_submit_button(dlg, bottom, lambda: on_submit("scene"), text="提交")
     submit_btn.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
