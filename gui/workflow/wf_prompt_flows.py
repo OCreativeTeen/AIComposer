@@ -1493,7 +1493,8 @@ class PromptFlowsMixin:
 
         def open_slides_manual(
             prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "", actor_pdf: str = "",
-            cross_episodes: bool = False, extra_sources=None, times: int = 1,
+            cross_episodes: bool = False, extra_sources=None, times: int = 1, content_topic: str = "",
+            audio_format: str = "",
         ) -> None:
             """提交：手工 LLM 窗口 CLI自动 → NotebookLM Studio（kind）→ 下载 → 系统程序打开。"""
             import os
@@ -1534,6 +1535,8 @@ class PromptFlowsMixin:
                 extra["source_pdf"] = source_pdf  # CLI自动：先上传为笔记本来源，再生成
             if actor_pdf:
                 extra["actor_pdf"] = actor_pdf  # 本集人物：content.pdf 之后上传
+            extra["content_topic"] = (content_topic or "").strip()
+            extra["audio_format"] = (audio_format or "").strip()
             self.llm_api.show_manual_window(
                 prompt, "", auto_cli=True, cli_kind=kind or "slides",
                 file_dest_dir=working, on_file_response=_open_file, extra=extra,

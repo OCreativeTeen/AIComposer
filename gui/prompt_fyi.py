@@ -64,8 +64,11 @@ def _label(i: int, text: str) -> str:
     return f"{i + 1}. {first or '(空)'}"
 
 
-def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0)):
+def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0),
+                  title: str = "注意 / FYI"):
     """FYI history combobox + 新增 button + editor + include checkbox (default ON).
+
+    ``title`` is the LabelFrame caption. 节目生成 passes 内容主题; picture/video keep the default.
 
     Returns ``(frame, get_text, include_var, get_history)``.
     ``get_text()`` is the selected/edited note. ``get_history()`` returns the
@@ -77,7 +80,7 @@ def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0)):
         entries = [""]
     state = {"idx": 0}
 
-    box = ttk.LabelFrame(parent, text="注意 / FYI", padding=(8, 4))
+    box = ttk.LabelFrame(parent, text=title or "注意 / FYI", padding=(8, 4))
     box.pack(fill=tk.X, pady=pady)
 
     top = ttk.Frame(box)

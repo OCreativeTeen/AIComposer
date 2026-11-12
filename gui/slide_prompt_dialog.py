@@ -25,6 +25,7 @@ _DEFAULT_CHOICE = {
     "actor_override": config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0],
     "output": "slides",
     "range": "episode",
+    "audio_format": "deep_dive",
 }
 
 # 范围：本集 / 本集到结束（本集和后面各集，到项目最后一集）
@@ -64,6 +65,9 @@ def _clean_choice(saved) -> dict:
         choice["output"] = saved["output"]
     if saved.get("range") in {k for k, _ in RANGE_CHOICES}:
         choice["range"] = saved["range"]
+    from utility import notebooklm_cdp
+
+    choice["audio_format"] = notebooklm_cdp.normalize_audio_format(saved.get("audio_format"))
     return choice
 
 
@@ -205,7 +209,8 @@ def open_slide_prompt_dialog(
       ``open_manual(prompt, kind, nb_url, content_pdf, "", False, extra_sources=[material_pdf])``。
     - 下面「场景内容」：原来的场景选项（场景图片 / 场景描述 / 讲话 / 人物），规则和以前完全一样。
     魔法工作流不给 ``get_analysis``：上面一节灰掉（「只在 STORY 窗口可用」），行为和以前一样。
-    「注意 / FYI」：用户临时补充的短说明，勾上才放在提示词最前面；历史存在 ``saved_choice['fyi_history']``。
+    「注意 / FYI」（节目生成窗里标题是「内容主题」）：用户临时补充的短说明，勾上才放在提示词最前面；
+    历史存在 ``saved_choice['fyi_history']``。内容主题会另外写进 NotebookLM 自定义框，不勾也送。
     """
     story_mode = get_analysis is not None
     dlg = tk.Toplevel(parent)
@@ -235,6 +240,9 @@ def open_slide_prompt_dialog(
     image_var = tk.BooleanVar(value=last["image"])
     override_var = tk.StringVar(value=last["actor_override"])
     output_var = tk.StringVar(value=last["output"])
+    from utility import notebooklm_cdp
+
+    audio_format_var = tk.StringVar(value=notebooklm_cdp.normalize_audio_format(last.get("audio_format")))
     range_var = tk.StringVar(value=last["range"] if get_scene_range is not None else "episode")
     analysis_var = tk.BooleanVar(value=False)
     material_var = tk.BooleanVar(value=False)
@@ -455,10 +463,13 @@ def open_slide_prompt_dialog(
     _bg_box.pack(in_=lower, side=tk.LEFT, anchor=tk.N, pady=(0, 6))
 
     # 注意 / FYI：用户临时补充的短说明（和图片 / 视频提示窗同一个控件），勾上才放在提示词最前面。
+    # 节目生成：这一栏改叫「内容主题」，交给 NotebookLM 自定义框里的主题输入。
     from gui.prompt_fyi import clean_fyi_history, pack_fyi_note, prepend_fyi
 
+    _fyi_title = "内容主题" if title == "节目生成" else "注意 / FYI"
     _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
-        main, history=clean_fyi_history(saved_choice) if isinstance(saved_choice, dict) else [], pady=(0, 8)
+        main, history=clean_fyi_history(saved_choice) if isinstance(saved_choice, dict) else [], pady=(0, 8),
+        title=_fyi_title,
     )
     _fyi_box.pack_forget()
     _fyi_box.pack(fill=tk.X, pady=(0, 8), before=lower)
@@ -520,6 +531,7 @@ def open_slide_prompt_dialog(
                     "background": bool(bg_include_var.get()),
                     "output": output_var.get(),
                     "range": range_var.get(),
+                    "audio_format": audio_format_var.get(),
                     "source": current_source(),
                     "fyi_history": get_fyi_history(),
                 }
@@ -540,6 +552,10 @@ def open_slide_prompt_dialog(
         dlg.destroy()
 
     def launch_manual(prompt, kind, nb_url, source_pdf, actor_pdf="", cross=False, extra_sources=None, times=1):
+        try:
+            content_topic = get_fyi_text()
+        except tk.TclError:
+            content_topic = ""
         close()
         if not callable(open_manual):
             return
@@ -548,16 +564,28 @@ def open_slide_prompt_dialog(
         times = clamp_studio_times(times)
 
         def _go():
-            kwargs = {"times": times}
+            kwargs = {
+                "times": times,
+                "content_topic": content_topic,
+                "audio_format": audio_format_var.get(),
+            }
             if extra_sources is not None:
                 kwargs["extra_sources"] = extra_sources
             try:
                 open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, **kwargs)
             except TypeError:
-                if extra_sources is not None:
-                    open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, extra_sources=extra_sources)
-                else:
-                    open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross)
+                kwargs.pop("audio_format", None)
+                try:
+                    open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, **kwargs)
+                except TypeError:
+                    kwargs.pop("content_topic", None)
+                    try:
+                        open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, **kwargs)
+                    except TypeError:
+                        if extra_sources is not None:
+                            open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross, extra_sources=extra_sources)
+                        else:
+                            open_manual(prompt, kind, nb_url, source_pdf, actor_pdf, cross)
 
         parent.after(50, _go)
 
@@ -814,6 +842,19 @@ def open_slide_prompt_dialog(
     ttk.Label(out_row, text="生成：").pack(side=tk.LEFT)
     for value, label in OUTPUT_CHOICES:
         ttk.Radiobutton(out_row, text=label, value=value, variable=output_var).pack(side=tk.LEFT, padx=(0, 6))
+    # 节目生成 + 语音概览：显示 NotebookLM 音频格式（默认深入探究）。其他产物藏起来。
+    audio_fmt_row = ttk.Frame(pick_col)
+    ttk.Label(audio_fmt_row, text="音频格式：").pack(side=tk.LEFT)
+    for key, label in notebooklm_cdp.AUDIO_FORMAT_CHOICES:
+        ttk.Radiobutton(audio_fmt_row, text=label, value=key, variable=audio_format_var).pack(side=tk.LEFT, padx=(0, 6))
+
+    def _sync_audio_format_row(_e=None) -> None:
+        show = title == "节目生成" and output_var.get() == "audio_overview"
+        if show:
+            audio_fmt_row.pack(anchor=tk.W, pady=(6, 0), before=nb_row)
+        else:
+            audio_fmt_row.pack_forget()
+
     nb_row = ttk.Frame(pick_col)
     nb_row.pack(anchor=tk.W, pady=(6, 0))
     ttk.Label(nb_row, text="笔记本：").pack(side=tk.LEFT)
@@ -881,6 +922,8 @@ def open_slide_prompt_dialog(
     fill_notebooks([])
     refresh_notebooks()  # 打开窗口就在后台刷新（必要时启动 9222 Chrome）
     output_var.trace_add("write", refresh_choices)
+    output_var.trace_add("write", _sync_audio_format_row)
+    _sync_audio_format_row()
     analysis_var.trace_add("write", refresh_choices)
     range_var.trace_add("write", refresh_choices)
 

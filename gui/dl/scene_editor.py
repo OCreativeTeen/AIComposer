@@ -418,7 +418,8 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
                 pass
 
     def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
-                    actor_pdf: str = "", _cross: bool = False, extra_sources=None, times: int = 1) -> None:
+                    actor_pdf: str = "", _cross: bool = False, extra_sources=None, times: int = 1,
+                    content_topic: str = "", audio_format: str = "") -> None:
         from utility.program_media import settle_generated_file
 
         from utility.program_media import clamp_studio_times
@@ -502,6 +503,8 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             extra["actor_pdf"] = actor_pdf  # 场景内容带人物：content.pdf 之后上传
         if extra_sources:
             extra["extra_sources"] = list(extra_sources)  # 分析内容：原始材料 PDF，只作背景
+        extra["content_topic"] = (content_topic or "").strip()  # 内容主题：进 NotebookLM 自定义框，不勾也送
+        extra["audio_format"] = (audio_format or "").strip()  # 语音概览格式：深入探究 / 摘要 / 评论 / 辩论 / 谈话节目
         gui.llm_api.show_manual_window(
             prompt, "", auto_cli=True, cli_kind=kind or "slides",
             file_dest_dir=working, on_file_response=_open_file, extra=extra,

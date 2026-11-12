@@ -12,7 +12,8 @@ luminous UI with DOM selectors instead of UIA/ratio clicks):
 3. Click the Studio tile (``.create-artifact-button-container[aria-label=...]``).
    In this UI the click opens the 自定义 dialog (``mat-dialog-container``); it does
    NOT start generating by itself.
-4. Fill the dialog ``textarea``; click 立即生成.
+4. For 视频概览, first select 说明视频 (Explainer, not 简洁版 / Brief). Fill the topic
+   textarea (内容主题, plus a fixed FYI for audio / video / slides); click 立即生成.
 5. Wait for a new row in the Studio list (``.artifact-button-content``) that is no
    longer generating, then 更多 (``button[aria-label=更多]``) → 下载 menu item.
 6. Save to ``dest_dir`` (default ~/Downloads) as ``nblm_<kind>_<YYYYmmdd_HHMMSS><ext>``.
@@ -211,11 +212,70 @@ def _click_dialog_options(dlg, options) -> None:
 
 
 # ---- 画面比例（extra["video_size"]："1920x1080" 横屏 / "1080x1920" 竖屏）----
-# 视频概览：「格式」两张卡片，简洁版带 crop_9_16 图标（竖屏，NotebookLM 默认选它），说明视频带 crop_16_9（横屏）。
+# 视频概览的「格式」两张卡片是「说明视频 / Explainer」和「简洁版 / Brief」（默认是简洁版），
+# 不是横竖屏。说明视频要先选上，再填自定义主题。横竖屏若没有单独选项，就写进主题框。
 # 信息图：「选择屏幕方向」切换组 aria-labelledby="aspectRatio-label"（横向 / 纵向 / 方形）。
 # 演示文稿 / 音频概览：没有比例选项。演示文稿把比例写进提示词。
 VIDEO_FORMAT_RADIO_SEL = "mat-radio-button.tile-radio-button"
-VIDEO_FORMAT_ICON = {"landscape": "crop_16_9", "portrait": "crop_9_16"}
+VIDEO_FORMAT_PREFERRED = "explainer"
+VIDEO_FORMAT_LABELS = {
+    "explainer": re.compile(r"说明视频|Explainer", re.I),
+    "brief": re.compile(r"简洁版|Brief", re.I),
+}
+# 音频概览「格式」卡片（真实 UI：深入探究默认 / 摘要 / 评论 / 辩论 / 谈话节目）。
+# 不点「选择语言」和「时长」。
+AUDIO_FORMAT_DEFAULT = "deep_dive"
+AUDIO_FORMAT_CHOICES = (
+    ("deep_dive", "深入探究"),
+    ("brief", "摘要"),
+    ("critique", "评论"),
+    ("debate", "辩论"),
+    ("talk_show", "谈话节目"),
+)
+AUDIO_FORMAT_LABELS = {
+    "deep_dive": re.compile(r"深入探究|Deep Dive", re.I),
+    "brief": re.compile(r"摘要|(?<![A-Za-z])Brief(?![A-Za-z])|Summary", re.I),
+    "critique": re.compile(r"评论|Critique", re.I),
+    "debate": re.compile(r"辩论|Debate", re.I),
+    "talk_show": re.compile(r"谈话节目|Talk Show", re.I),
+}
+
+# 自定义主题框的中英文标签（按真实 UI；没对上就退回第一个 textarea）。
+# 视频：填「自定义主题」/「描述您自己的主题」，不要填带建议芯片的「视频应侧重于哪些方面?」。
+TOPIC_BOX_LABELS = {
+    "video_overview": (
+        "自定义主题",
+        "描述您自己的主题",
+        "描述你自己的主题",
+        "Describe your own topic",
+        "Custom topic",
+        "Customize your topic",
+    ),
+    "audio_overview": (
+        "AI 主持人在本集节目中应着重于哪些方面？",
+        "AI 主持人在本集节目中应着重于哪些方面?",
+        "应着重于哪些方面",
+        "视频/音频应侧重于哪些方面",
+        "应侧重于哪些方面",
+        "What should the AI hosts focus on",
+        "What should the video/audio focus on",
+    ),
+    "slides": (
+        "描述你要创作的演示文稿",
+        "描述您要创作的演示文稿",
+        "Describe the slide deck",
+        "Describe your slide deck",
+        "Describe the presentation you want to create",
+        "Describe your presentation",
+    ),
+    "infographic": (
+        "描述你要创建的信息图",
+        "描述您要创建的信息图",
+        "Describe the infographic",
+        "Describe your infographic",
+        "Describe the infographic you want to create",
+    ),
+}
 INFOGRAPHIC_ORIENT_SEL = 'mat-button-toggle-group[aria-labelledby="aspectRatio-label"]'
 INFOGRAPHIC_ORIENT_RE = {
     "landscape": re.compile(r"^\s*(横向|Landscape)\s*$", re.I),
@@ -259,30 +319,106 @@ def _radio_is_checked(card) -> bool:
         return False
 
 
-def _video_format_card(dlg, icon: str):
-    """视频概览「格式」卡片：图标名 crop_16_9 / crop_9_16 写在 mat-icon 里。"""
-    exact = re.compile(rf"^\s*{re.escape(icon)}\s*$")
-    card = dlg.locator("mat-radio-button", has_text=exact)
+def _video_format_card(dlg, format_key: str):
+    """视频概览「格式」卡片：按「说明视频 / Explainer」或「简洁版 / Brief」的可见文字找。"""
+    pat = VIDEO_FORMAT_LABELS.get(format_key)
+    if pat is None:
+        return None
+    card = dlg.locator("mat-radio-button", has_text=pat)
     if not card.count():
-        card = dlg.locator("mat-radio-button").filter(has=dlg.locator("mat-icon", has_text=exact))
+        card = dlg.locator(VIDEO_FORMAT_RADIO_SEL, has_text=pat)
     if not card.count():
-        card = dlg.locator(VIDEO_FORMAT_RADIO_SEL, has_text=icon)
+        card = dlg.get_by_text(pat)
     return card.first if card.count() else None
 
 
+def pick_video_format_label(texts, preferred: str = VIDEO_FORMAT_PREFERRED) -> str:
+    """从一组可见文字里挑出要点的格式标签（测试用，不碰页面）。"""
+    pat = VIDEO_FORMAT_LABELS.get(preferred) or VIDEO_FORMAT_LABELS["explainer"]
+    for text in texts or []:
+        label = str(text or "").strip()
+        if label and pat.search(label):
+            return label
+    return ""
+
+
+def normalize_audio_format(value) -> str:
+    """把用户选择或 extra 里的值收成 AUDIO_FORMAT_CHOICES 的 key，不认识则用深入探究。"""
+    raw = str(value or "").strip()
+    if raw in AUDIO_FORMAT_LABELS:
+        return raw
+    for key, zh in AUDIO_FORMAT_CHOICES:
+        if raw == zh:
+            return key
+    for key, pat in AUDIO_FORMAT_LABELS.items():
+        if raw and pat.search(raw):
+            return key
+    return AUDIO_FORMAT_DEFAULT
+
+
+def pick_audio_format_label(texts, preferred: str = AUDIO_FORMAT_DEFAULT) -> str:
+    """从一组可见文字里挑出要点的音频格式标签（测试用，不碰页面）。"""
+    key = normalize_audio_format(preferred)
+    pat = AUDIO_FORMAT_LABELS.get(key) or AUDIO_FORMAT_LABELS[AUDIO_FORMAT_DEFAULT]
+    for text in texts or []:
+        label = str(text or "").strip()
+        if label and pat.search(label):
+            return label
+    return ""
+
+
+def _audio_format_card(dlg, format_key: str):
+    """音频概览「格式」卡片：按中英文标签找。"""
+    key = normalize_audio_format(format_key)
+    pat = AUDIO_FORMAT_LABELS.get(key)
+    if pat is None:
+        return None
+    card = dlg.locator("mat-radio-button", has_text=pat)
+    if not card.count():
+        card = dlg.locator(VIDEO_FORMAT_RADIO_SEL, has_text=pat)
+    if not card.count():
+        card = dlg.get_by_text(pat)
+    return card.first if card.count() else None
+
+
+def _select_audio_format(page, dlg, format_key: str) -> bool:
+    """在自定义音频概览窗里点选格式，不改语言和时长。"""
+    key = normalize_audio_format(format_key)
+    card = _audio_format_card(dlg, key)
+    if card is None:
+        zh = dict(AUDIO_FORMAT_CHOICES).get(key, key)
+        print(f"[notebooklm_cdp] 没有找到音频格式「{zh}」")
+        return False
+    if not _radio_is_checked(card):
+        card.click(timeout=5000)
+        page.wait_for_timeout(500)
+    if not _radio_is_checked(card):
+        zh = dict(AUDIO_FORMAT_CHOICES).get(key, key)
+        raise RuntimeError(f"点了「{zh}」，但没有选上")
+    return True
+
+
+def _select_video_explainer(page, dlg) -> bool:
+    """视频概览必须先选「说明视频」（详细版），不要用默认的「简洁版」。"""
+    card = _video_format_card(dlg, VIDEO_FORMAT_PREFERRED)
+    if card is None:
+        print("[notebooklm_cdp] 没有找到「说明视频 / Explainer」格式选项")
+        return False
+    if not _radio_is_checked(card):
+        card.click(timeout=5000)
+        page.wait_for_timeout(500)
+    if not _radio_is_checked(card):
+        raise RuntimeError("点了「说明视频」，但没有选上")
+    return True
+
+
 def _set_orientation(page, dlg, kind: str, orientation: str):
-    """在自定义窗里选画面比例。True=已选好，False=这个窗口里找不到比例选项，None=这一类本来就没有比例选项。"""
+    """在自定义窗里选画面比例。True=已选好，False=找不到比例选项，None=这一类本来就没有。
+
+    视频概览的格式卡片不再当横竖屏用（那是说明视频 / 简洁版）。
+    """
     if kind == "video_overview":
-        icon = VIDEO_FORMAT_ICON[orientation]
-        card = _video_format_card(dlg, icon)
-        if card is None:
-            return False
-        if not _radio_is_checked(card):
-            card.click(timeout=5000)
-            page.wait_for_timeout(500)
-        if not _radio_is_checked(card):
-            raise RuntimeError(f"点了「{icon}」格式，但没有选上")
-        return True
+        return None
     if kind == "infographic":
         group = dlg.locator(INFOGRAPHIC_ORIENT_SEL)
         if not group.count():
@@ -321,13 +457,38 @@ def _apply_video_size(page, dlg, kind: str, video_size, prompt: str, status: Sta
     return with_orientation_line(prompt, orientation)
 
 
-def _fill_prompt(page, dlg, prompt: str) -> None:
-    box = dlg.locator("textarea").first
+def _topic_textarea(dlg, kind: str):
+    """按各产物自定义框的标签找 textarea；找不到就用第一个。"""
+    for lab in TOPIC_BOX_LABELS.get(kind) or ():
+        lab = str(lab or "").strip()
+        if not lab:
+            continue
+        try:
+            loc = dlg.get_by_label(re.compile(re.escape(lab), re.I))
+            if loc.count():
+                return loc.first
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            loc = dlg.locator("textarea").filter(has=dlg.get_by_text(re.compile(re.escape(lab), re.I)))
+            if loc.count():
+                return loc.first
+        except Exception:  # noqa: BLE001
+            pass
+        escaped = lab.replace("\\", "\\\\").replace('"', '\\"')
+        loc = dlg.locator(f'textarea[aria-label*="{escaped}" i], textarea[placeholder*="{escaped}" i]')
+        if loc.count():
+            return loc.first
+    return dlg.locator("textarea").first
+
+
+def _fill_prompt(page, dlg, prompt: str, kind: str = "") -> None:
+    box = _topic_textarea(dlg, kind) if kind else dlg.locator("textarea").first
     box.click()
     box.fill(prompt)
     page.wait_for_timeout(400)
     got = box.input_value() or ""
-    if len(got.strip()) < min(20, len(prompt.strip())):
+    if len(got.strip()) < min(20, len((prompt or "").strip())):
         raise RuntimeError("提示词没有填进 NotebookLM 的描述框")
 
 
@@ -715,11 +876,43 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
             _step("关闭弹窗", lambda: _clear_overlays(page, status))
             before = {r.get("key") for r in _rows(page)}
             dlg = _step(f"打开「{spec['name']}」自定义窗", lambda: _open_customize(page, spec, status))
-            # 先选比例（视频概览的「格式」会换卡片），再点其他选项、填提示词。
+            # 视频概览：先选说明视频。音频概览：先选用户指定的格式（默认深入探究）。再填主题。
+            if kind == "video_overview":
+                def _pick_explainer():
+                    ok = _select_video_explainer(page, dlg)
+                    if ok:
+                        _say(status, "格式：说明视频")
+                    else:
+                        _say(status, "⚠️ 没有选上「说明视频」，请在窗口里确认格式")
+                    return ok
+
+                _step("选择说明视频", _pick_explainer)
+            if kind == "audio_overview":
+                audio_fmt = normalize_audio_format(extra.get("audio_format"))
+                zh = dict(AUDIO_FORMAT_CHOICES).get(audio_fmt, audio_fmt)
+
+                def _pick_audio():
+                    ok = _select_audio_format(page, dlg, audio_fmt)
+                    if ok:
+                        _say(status, f"音频格式：{zh}")
+                    else:
+                        _say(status, f"⚠️ 没有选上音频格式「{zh}」，请在窗口里确认")
+                    return ok
+
+                _step("选择音频格式", _pick_audio)
             prompt = _step("设置画面比例", lambda: _apply_video_size(page, dlg, kind, extra.get("video_size"), prompt, status))
             _click_dialog_options(dlg, extra.get("nblm_options"))
-            _say(status, "填提示词 …")
-            _step("填提示词", lambda: _fill_prompt(page, dlg, prompt))
+            import config_prompt
+
+            topic = str(extra.get("content_topic") or extra.get("nblm_topic") or "").strip()
+            fill = config_prompt.notebooklm_topic_box_text(kind, topic, prompt=prompt)
+            if kind != "audio_overview":
+                # 格式卡片不是横竖屏；没有单独比例选项时，把比例写进主题框。
+                fill = with_orientation_line(fill, orientation_of(extra.get("video_size")))
+            if not fill.strip():
+                fill = prompt
+            _say(status, "填主题 …")
+            _step("填主题", lambda: _fill_prompt(page, dlg, fill, kind))
             _say(status, "立即生成 …")
             _step("立即生成", lambda: _click_generate_now(page, dlg))
             idx = _step("等待生成", lambda: _wait_new_row(page, before, spec, status, timeout_s))

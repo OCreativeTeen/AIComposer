@@ -9077,3 +9077,43 @@ def build_comfy_upscale_prompt(size, *, backend: str = "moss", fyi: str = "", st
         "edges and clean textures in hair, fabric and surfaces.",
     ]
     return "\n".join(lines), COMFY_UPSCALE_NEGATIVE
+
+# t402u / t403u: NotebookLM Studio 自定义框里的固定 FYI（音频概览 / 视频概览 / 演示文稿）。
+# 信息图不用这段。改这里的措辞即可，不必动生成流程。
+NOTEBOOKLM_STUDIO_FYI = (
+    "用第一人称、以自己的观点来讲，不要提到「文献」「资料」「这篇文章」「来源」「作者说」之类，"
+    "直接说自己的事和想法。像聊天一样娓娓道来、一气呵成，不要分点罗列，"
+    "不说「第一、第二」「我们分三点」「首先其次最后」，不要八股文式的清单。"
+)
+NOTEBOOKLM_STUDIO_FYI_KINDS = frozenset({"slides", "audio_overview", "video_overview"})
+# NotebookLM 自定义主题框偏短；只截用户的内容主题，不截 FYI。
+NOTEBOOKLM_TOPIC_MAX_CHARS = 1500
+
+
+def notebooklm_topic_box_text(kind: str, topic: str, *, prompt: str = "", max_chars: int | None = None) -> str:
+    """拼进 NotebookLM 自定义框的文字。
+
+    演示文稿 / 音频概览 / 视频概览：固定 FYI，后面才是用户的内容主题；
+    主题是空的也只发 FYI。信息图没有固定 FYI：有主题用主题，没有就用提示词（原来的行为）。
+    """
+    kind = str(kind or "").strip()
+    topic = (topic or "").strip()
+    prompt = (prompt or "").strip()
+    try:
+        limit = int(NOTEBOOKLM_TOPIC_MAX_CHARS if max_chars is None else max_chars)
+    except (TypeError, ValueError):
+        limit = NOTEBOOKLM_TOPIC_MAX_CHARS
+    if limit < 1:
+        limit = NOTEBOOKLM_TOPIC_MAX_CHARS
+    if kind not in NOTEBOOKLM_STUDIO_FYI_KINDS:
+        return topic or prompt
+    fyi = (NOTEBOOKLM_STUDIO_FYI or "").strip()
+    if not topic:
+        return "FYI：\n" + fyi if fyi else ""
+    prefix = "FYI：\n" + fyi + "\n\n内容主题：\n"
+    room = limit - len(prefix)
+    if len(prefix) + len(topic) <= limit:
+        return prefix + topic
+    if room <= 1:
+        return ("FYI：\n" + fyi) if fyi else topic[:limit]
+    return prefix + topic[: max(1, room - 1)].rstrip() + "…"

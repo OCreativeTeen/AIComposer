@@ -1900,6 +1900,15 @@ def write_channel_list_json(list_json_path: str, data) -> None:
         os.makedirs(parent, exist_ok=True)
     if os.path.isfile(list_json_path) and is_channel_list_json_path(list_json_path):
         backup_channel_list_json_before_write(list_json_path)
+        # t402u: 别的保存若漏掉语音概览 / 视频概览字段，从磁盘上的旧条目补回。
+        try:
+            with open(list_json_path, encoding="utf-8") as _old:
+                old_data = json.load(_old)
+            from utility.program_media import merge_program_media_into_list
+
+            data = merge_program_media_into_list(data, old_data)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 合并节目产物字段失败，按原样写入：{exc}")
     with open(list_json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 

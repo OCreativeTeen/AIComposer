@@ -115,10 +115,9 @@ def remove_program_media(item: dict, kind: str, path: str) -> list[str]:
     if not field:
         return []
     current = [p for p in get_program_media_list(item, kind) if not same_media_path(p, path)]
-    if current:
-        item[field] = current
-    else:
-        item.pop(field, None)
+    # 空列表表示「用户删光了」，和「字段根本没写」（旧数据被别的保存冲掉）要分开：
+    # 写入列表时，缺了的字段会从磁盘补回，空列表则按删除处理。
+    item[field] = current
     return current
 
 
@@ -282,3 +281,49 @@ def studio_times_from_extra(extra) -> int:
     if not isinstance(extra, dict):
         return 1
     return clamp_studio_times(extra.get("studio_times"))
+
+def merge_missing_program_media(incoming: dict, existing: dict) -> dict:
+    """incoming 里没有的节目产物字段（幻灯片 / 语音概览 / 视频概览）从 existing 补回。
+
+    字段在 incoming 里出现过（包括空列表）就以 incoming 为准，这样用户手动删掉才能保住。
+    """
+    if not isinstance(incoming, dict) or not isinstance(existing, dict):
+        return incoming if isinstance(incoming, dict) else {}
+    for kind in (KIND_SLIDES, KIND_AUDIO_OVERVIEW, KIND_VIDEO_OVERVIEW):
+        field = field_for_kind(kind)
+        if not field or field in incoming:
+            continue
+        if field in existing:
+            incoming[field] = existing[field]
+    return incoming
+
+
+def _program_media_item_key(item: dict) -> tuple[str, str] | None:
+    if not isinstance(item, dict):
+        return None
+    return (str(item.get("id") or "").strip(), str(item.get("url") or "").strip())
+
+
+def merge_program_media_into_list(new_data, old_data):
+    """把旧列表里还在的节目产物字段补进即将写入的新列表（只补完全缺失的键）。"""
+    old_items = old_data if isinstance(old_data, list) else None
+    new_items = new_data if isinstance(new_data, list) else None
+    if not old_items or not new_items:
+        return new_data
+    by_pair: dict[tuple[str, str], dict] = {}
+    by_id: dict[str, dict] = {}
+    for item in old_items:
+        key = _program_media_item_key(item)
+        if not key or not (key[0] or key[1]):
+            continue
+        by_pair[key] = item
+        if key[0]:
+            by_id[key[0]] = item
+    for item in new_items:
+        key = _program_media_item_key(item)
+        if not key:
+            continue
+        existing = by_pair.get(key) or (by_id.get(key[0]) if key[0] else None)
+        if existing is not None and existing is not item:
+            merge_missing_program_media(item, existing)
+    return new_data
