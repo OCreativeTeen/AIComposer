@@ -134,7 +134,18 @@ class EpisodeOpsMixin:
         return out
 
     # ---- 挪文件 ---------------------------------------------------------------------
-    def _move_scene_pages(self, moving: list, src_ep: str, dest_ep: str) -> dict:
+    def _staying_ref_paths(self, moving: list) -> set:
+        """t410u: 不搬走的场景 ref_images 里用着的文件（规范化路径）。这些文件只能复制，不能搬。"""
+        from utility.project_ref_images import scene_ref_paths
+
+        moving_ids = {id(s) for s in moving}
+        out: set = set()
+        for sc in self.scenes or []:
+            if isinstance(sc, dict) and id(sc) not in moving_ids:
+                out.update(_norm(p) for p in scene_ref_paths(sc, existing_only=False))
+        return out
+
+    def _move_scene_pages(self, moving: list, src_ep: str, dest_ep: str, *, copy_only: bool = False) -> dict:
         """moving 里的场景（还在 src_ep）记着的页图搬到 dest_ep 的图片库，接在最大编号后面，不覆盖。
 
         同一页还被 src_ep 里留下的场景用着时只复制。返回 {"moved": [(旧, 新)], "copied": [...],
@@ -146,6 +157,7 @@ class EpisodeOpsMixin:
             for s in self.scenes or []
             if isinstance(s, dict) and id(s) not in moving_ids and self.scene_group(s) == src_ep
         }
+        stay_refs = self._staying_ref_paths(moving)
         used = self._episode_used_pages(dest_ep)
         nxt = (max(used) if used else 0) + 1
         dest_dir = self.episode_media_dir(dest_ep)
@@ -164,7 +176,7 @@ class EpisodeOpsMixin:
                     new = nxt
                     nxt += 1
                     os.makedirs(dest_dir, exist_ok=True)
-                    keep = old in stay_pages
+                    keep = copy_only or old in stay_pages or any(_norm(f) in stay_refs for f in files)
                     for f in files:
                         d = _free_path(os.path.join(dest_dir, f"{new}{os.path.splitext(f)[1].lower()}"))
                         if keep:
@@ -181,14 +193,18 @@ class EpisodeOpsMixin:
                 sc["episode_page"] = new
         return res
 
-    def _move_folder_refs(self, moving: list, src_dir: str, dest_dir: str, already: dict) -> int:
+    def _move_folder_refs(self, moving: list, src_dir: str, dest_dir: str, already: dict, *,
+                          copy_only: bool = False) -> int:
         """moving 场景里指向 src_dir 里面的文件路径：文件搬进 dest_dir（重名就改名），路径跟着改。"""
         src = _norm(src_dir)
         moving_ids = {id(s) for s in moving}
-        done: dict[str, str] = dict(already or {})
+        done: dict[str, str] = already if already is not None else {}
         count = 0
+        stay_refs = self._staying_ref_paths(moving)
 
         def still_used_elsewhere(pn: str) -> bool:
+            if copy_only or pn in stay_refs:  # t410u: 分集一律复制；留下的场景 ref_images 里还用着也复制
+                return True
             for other in self.scenes or []:
                 if not isinstance(other, dict) or id(other) in moving_ids:
                     continue
@@ -229,11 +245,14 @@ class EpisodeOpsMixin:
 
     def _rename_folder_refs(self, old_dir: str, new_dir: str) -> int:
         """文件夹整个改名后：所有场景里指向旧文件夹里面的路径改成新文件夹。"""
+        from utility.project_ref_images import rename_ref_dir
+
         old = _norm(old_dir)
         n = 0
         for sc in self.scenes or []:
             if not isinstance(sc, dict):
                 continue
+            n += rename_ref_dir(sc, old_dir, new_dir)
             for k, v in list(sc.items()):
                 if not isinstance(v, str) or not v.strip():
                     continue
@@ -274,11 +293,14 @@ class EpisodeOpsMixin:
                 if ref.get(key):
                     sc[key] = ref[key]
 
-    def _transfer_scenes(self, moving: list, src_ep: str, dest_ep: str) -> dict:
-        pages = self._move_scene_pages(moving, src_ep, dest_ep)
-        refs = self._move_folder_refs(
-            moving, self.episode_media_dir(src_ep), self.episode_media_dir(dest_ep), pages["files"]
-        )
+    def _transfer_scenes(self, moving: list, src_ep: str, dest_ep: str, *, copy_only: bool = False) -> dict:
+        """搬场景到别的集。copy_only（t410u 分集用）：文件一律复制，不移动、不删，原集文件夹原样留着。"""
+        pages = self._move_scene_pages(moving, src_ep, dest_ep, copy_only=copy_only)
+        done = dict(pages["files"])
+        src_dir = self.episode_media_dir(src_ep)
+        dest_dir = self.episode_media_dir(dest_ep)
+        refs = self._move_folder_refs(moving, src_dir, dest_dir, done, copy_only=copy_only)
+        ref_copied = self._copy_scene_ref_images(moving, src_dir, dest_dir, dest_ep, done)
         self._share_target_zero(moving, dest_ep)
         self._relabel_scenes(moving, src_ep, dest_ep)
         return {
@@ -286,7 +308,27 @@ class EpisodeOpsMixin:
             "pages_copied": pages["copied"],
             "pages_missing": pages["missing"],
             "other_files_moved": refs,
+            "ref_images_copied": ref_copied,
         }
+
+    def _copy_scene_ref_images(self, moving: list, src_dir: str, dest_dir: str, dest_ep: str, done: dict) -> int:
+        """t410u: 搬走的场景 ref_images 里在本集文件夹的图：一律复制进新集文件夹（不移动、不删），路径跟着改。
+
+        已经随页图搬过去的文件直接用新路径；编号页图接着新集的页号走；<场>_<序号> 等其它图保留原名（重名加 _2）。"""
+        from utility.project_ref_images import transfer_ref_images
+
+        used = self._episode_used_pages(dest_ep)
+        nxt = [max(used) if used else 0]
+
+        def next_page() -> int:
+            nxt[0] += 1
+            return nxt[0]
+
+        n = 0
+        for sc in moving:
+            if isinstance(sc, dict):
+                n += transfer_ref_images(sc, src_dir, dest_dir, done, next_page=next_page)
+        return n
 
     # ---- 一集没有场景了：并记录、挪开剩下的文件、后面的集号往前补 ----------------------------
     def _merge_pdf_imports(self, kept: str, absorbed: str) -> int:
@@ -500,7 +542,7 @@ class EpisodeOpsMixin:
         """当前场景和它前面的留在本集；后面的场景成为新的一集，紧接在本集后面（scenes.json 顺序不变）。
 
         新集号 = 用过的最大集号 + 1（``next_group_name``），别的集一律不改号，文件夹不动。
-        搬走的场景的页图和本集文件夹里的其他文件搬进新集文件夹（还被留下的场景用着就复制），路径跟着改。
+        搬走的场景的页图、ref_images 和本集文件夹里的其他文件复制进新集文件夹（t410u: 一律复制，不移动不删），路径跟着改。
         成功返回 (新集号, "")，否则 ("", 原因)。细节在 self.last_episode_op。
         """
         scenes = self.scenes or []
@@ -518,7 +560,8 @@ class EpisodeOpsMixin:
         moving = scenes[index + 1 : end + 1]
         os.makedirs(new_dir, exist_ok=True)
         try:
-            info = self._transfer_scenes(moving, cur, new_ep)
+            # t410u: 分集只复制文件（一张图可能好几场在用），不移动不删，免得哪一场缺图。
+            info = self._transfer_scenes(moving, cur, new_ep, copy_only=True)
         except OSError as e:
             return "", f"搬文件到新集文件夹时失败（{e}）。scenes.json 还没保存，可以用 _backup 里的备份对照。"
         hist = self.pdf_import_history_path(new_ep)
@@ -543,6 +586,7 @@ class EpisodeOpsMixin:
             "op": "split_after", "source": cur, "new": new_ep, "scenes": len(moving),
             "pages_moved": info.get("pages_moved"), "pages_copied": info.get("pages_copied"),
             "pages_missing": info.get("pages_missing"), "other_files_moved": info.get("other_files_moved"),
+            "ref_images_copied": info.get("ref_images_copied"),
             "renamed": [], "backups": backups,
         }
         return new_ep, ""

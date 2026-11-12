@@ -401,6 +401,38 @@ def write_edited_scene_images(scene: dict, source: str) -> dict:
     return write_independent_slots(scene, EDIT_OUTPUT_SLOTS, source, mark_frozen=False)
 
 
+def write_edited_scene_images_with_backup(scene: dict, source: str) -> tuple:
+    """t413u: 图片修改写回，先留备份：原来的 clip_image 另存一份当 clip_image_last（结束图），
+    改好的图写成 clip_image 和 zero_image（各自独立的新文件；冻结的 zero_image_last 不动）。
+
+    原来没有 clip_image 文件时同 ``write_edited_scene_images``（三格都写新图）。
+    返回 (written: {slot: path}, backed_up: bool)。任何一步失败：场景字段退回原样，新文件删掉。
+    """
+    if not isinstance(scene, dict):
+        raise ValueError("scene 必须是字典")
+    old = scene.get("clip_image")
+    old = old if isinstance(old, str) and old and os.path.isfile(old) else ""
+    if not old:
+        return write_edited_scene_images(scene, source), False
+    if not source or not os.path.isfile(source):
+        raise FileNotFoundError(f"没有可写入的源图：{source}")
+    prev_last = scene.get("clip_image_last")
+    had_last = "clip_image_last" in scene
+    backup = write_independent_slots(scene, ("clip_image_last",), old)
+    try:
+        written = write_independent_slots(scene, ("clip_image", "zero_image"), source)
+    except Exception:
+        for p in backup.values():
+            safe_remove(p)
+        if had_last:
+            scene["clip_image_last"] = prev_last
+        else:
+            scene.pop("clip_image_last", None)
+        raise
+    written.update(backup)
+    return written, True
+
+
 def write_chained_next_zero_image_last(next_scene: dict, source: str) -> str:
     """Copy a clip last-frame into the next scene's ``zero_image_last``.
 

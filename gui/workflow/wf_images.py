@@ -578,11 +578,28 @@ class ImagesMixin:
         show_auto_close_popup(self.root, "对调", f"{name} 起始图和结束图已对调。", duration_ms=1500)
 
     def _open_clip_image_pdf_review(self, scene: dict) -> None:
-        """本集 PDF 已拆则直接审阅；还没拆就先拆进 media/<episode>/ 再审阅。"""
+        """t410u: 双击 clip 图选图，不再要求本集有 PDF。
+
+        先把各场 ref_images 整理进项目（项目外的图复制进 media/<集>/ 改名 <场>_<序号>，旧的 episode_page 并进来），
+        打开时停在这一场自己的第一张图，左右键按场景顺序一直翻，也能翻到别的场景的图。
+        一张图都没有时照旧：本集有 PDF 就先拆进 media/<episode>/ 再看。"""
+        from utility.project_ref_images import start_index
+
         pdf_path = self._resolve_scene_episode_pdf(scene)
         group_name = self.workflow.scene_group(scene)
-        pages = self._episode_page_pngs(group_name)
         folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        try:
+            if self.workflow.sync_project_ref_images(legacy_first=True):
+                self.workflow.save_scenes_to_json()
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 整理场景参考图失败：{e}")
+        pages = self.workflow.ref_image_pool(group_name)
+        if pages:
+            self._open_pdf_page_review(
+                folder, pages, group_name, os.path.basename(pdf_path or ""),
+                initial_index=start_index(pages, scene),
+            )
+            return
         has_history = bool(self.workflow.pdf_import_history(group_name))
         if not pdf_path and not pages and has_history:
             # 本集文件夹还没有页图，但导入过 PDF：打开预览，在「来源」里选那个 PDF
@@ -615,7 +632,7 @@ class ImagesMixin:
             messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
             return
         # 只是翻页查看，不整理页码：PDF 有几页就能看几页，不受本集场数限制。
-        pages = self._episode_page_pngs(group_name)
+        pages = self.workflow.ref_image_pool(group_name)
         start_idx = 0
         try:
             page_no = int(scene.get("episode_page") or 0)
@@ -1169,7 +1186,9 @@ class ImagesMixin:
 
     def _replace_current_clip_image_from_pil(self, pil_img, scene=None, *, defer_video: bool = False,
                                             exact_size=None) -> None:
-        """图片修改返回了一张图：独立写成这一场的 clip_image、clip_image_last 和 zero_image。
+        """图片修改返回了一张图：独立写成这一场的 clip_image 和 zero_image。
+        t413u: 写之前原来的 clip_image 另存一份当 clip_image_last（结束图）做备份（双击结束图可以对调回来）；
+        原来没有起始图时结束图也写新图。新起始图照 t412u 存进 media/<集>/<场>_<序号>、放到 ref_images 最前面。
 
         冻结的 zero_image_last（封面原图）不动。是当前场景时刷新预览。
         t366u: ``exact_size=(w, h)``（提高分辨率）按这个尺寸写，不再缩 / 裁到项目尺寸（保持原图比例）。"""
@@ -1209,10 +1228,10 @@ class ImagesMixin:
                 raise RuntimeError("返回的图没有写成文件")
             messagebox.showerror("图片修改", "返回的图没有写成文件。", parent=self.root)
             return
-        from utility.scene_image_slots import write_edited_scene_images
+        from utility.scene_image_slots import write_edited_scene_images_with_backup
 
         try:
-            written = write_edited_scene_images(scene, file_path)
+            written, backed_up = write_edited_scene_images_with_backup(scene, file_path)
         except Exception as exc:
             if scene is not current:
                 raise
@@ -1224,8 +1243,10 @@ class ImagesMixin:
             messagebox.showerror("图片修改", "返回的图没有写入场景图。", parent=self.root)
             return
         for slot in ("clip_image", "clip_image_last"):
-            if slot in written:
+            if slot in written and not (slot == "clip_image_last" and backed_up):  # 备份的旧图不再进图片库
                 self._pool_clip_slot_image(scene, slot, written[slot])
+        if backed_up:
+            print(f"图片修改：原来的起始图已拷到结束图（Clip Last）做备份：{os.path.basename(written['clip_image_last'])}")
         self.workflow.save_scenes_to_json()
         names = "、".join(os.path.basename(written[s]) for s in ("clip_image", "clip_image_last", "zero_image") if s in written)
         if scene is not current:
@@ -1239,7 +1260,11 @@ class ImagesMixin:
             print(f"✅ 图片修改已更新 clip_image / clip_image_last / zero_image: {names}")
             return
         print(f"✅ 图片修改已更新 clip_image / clip_image_last / zero_image: {names}")
-        self._after_clip_image_changed(scene, "图片修改返回的图已写成这一场的起始图、结束图和 Zero 起始图，并加进了本集图片库。")
+        self._after_clip_image_changed(
+            scene,
+            ("图片修改返回的图已写成这一场的起始图和 Zero 起始图（原来的起始图拷到了结束图做备份），并加进了本集图片库。"
+             if backed_up else "图片修改返回的图已写成这一场的起始图、结束图和 Zero 起始图，并加进了本集图片库。"),
+        )
 
     def _frame_or_fallback(self, video_path: str, first: bool):
         img = self.workflow.ffmpeg_processor.extract_frame(video_path, first)

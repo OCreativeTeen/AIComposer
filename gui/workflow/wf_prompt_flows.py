@@ -1091,10 +1091,22 @@ class PromptFlowsMixin:
         done.wait()
         return box["answer"]
 
+    def _video_source_project(self) -> bool:
+        """t413u: 这个项目的场景按视频生成（clip 是原视频切的）。查不到当不是。"""
+        wf = getattr(self, "workflow", None)
+        fn = getattr(wf, "scene_source_is_video", None)
+        try:
+            return bool(callable(fn) and fn())
+        except Exception:  # noqa: BLE001
+            return False
+
     def _stale_still_clip_scenes(self, scenes: list) -> list:
-        """clip 视频比 clip_image 旧（或没有 clip 视频）、且有 clip 音频的场景：需要用新图重做静态视频。"""
+        """clip 视频比 clip_image 旧（或没有 clip 视频）、且有 clip 音频的场景：需要用新图重做静态视频。
+        t413u: 视频来源的项目不算（clip 是原视频切出来的，换图不重做成静态画面）。"""
         from utility.file_util import get_file_path
 
+        if self._video_source_project():
+            return []
         out = []
         for s in scenes or []:
             if not isinstance(s, dict):
@@ -1110,6 +1122,8 @@ class PromptFlowsMixin:
 
     def _rebuild_still_clips_after_batch(self, updated: list, jobs: list, tries: int = 0, *, quiet: bool = False) -> None:
         """批量换图之后：换了图的场景，加上这一段里 clip 视频比图旧的场景（修复以前漏做的），一起重做静态 clip 视频。"""
+        if self._video_source_project():  # t413u: 视频来源：clip 还是原视频那一段
+            return
         pool = [job[0] for job in jobs]
         targets = list(updated)
         for s in self._stale_still_clip_scenes(pool):

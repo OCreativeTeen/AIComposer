@@ -188,7 +188,7 @@ class MediaDropMixin:
             fp = self.workflow.ffmpeg_processor
             file_path = fp.resize_image_smart(image_path)
             refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
-            self.workflow.write_scene_page_png(scene, file_path)
+            self.workflow.add_scene_image_to_library(scene, file_path)  # t412u: media/<集>/<场>_<序号>
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
             self.display_image_on_canvas_for_track("clip_image")
@@ -209,7 +209,7 @@ class MediaDropMixin:
 
             file_path0 = fp.resize_image_smart(image_paths[0])
             refresh_scene_media(scene0, "clip_image", ".webp", file_path0, True)
-            self.workflow.write_scene_page_png(scene0, file_path0)
+            self.workflow.add_scene_image_to_library(scene0, file_path0)
 
             for i in range(1, len(image_paths)):
                 dup = template.copy()
@@ -217,7 +217,7 @@ class MediaDropMixin:
                 self.workflow.scenes.insert(k + i, dup)
                 file_i = fp.resize_image_smart(image_paths[i])
                 refresh_scene_media(dup, "clip_image", ".webp", file_i, True)
-                self.workflow.write_scene_page_png(dup, file_i, force_new_page=True)
+                self.workflow.add_scene_image_to_library(dup, file_i)
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
@@ -246,7 +246,7 @@ class MediaDropMixin:
                 file_i = fp.resize_image_smart(img_path)
                 refresh_scene_media(dup, "clip_image", ".webp", file_i, True)
                 self.workflow.scenes.insert(k + i, dup)
-                self.workflow.write_scene_page_png(dup, file_i, force_new_page=(i > 0))
+                self.workflow.add_scene_image_to_library(dup, file_i)
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()

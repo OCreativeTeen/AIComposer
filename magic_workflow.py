@@ -957,6 +957,8 @@ class MagicWorkflow(EpisodeOpsMixin):
         where = f" ({os.path.basename(path)})" if path else ""
         print(f"SOURCE: scene source = {kind}{where}")
         self._apply_cover_media_to_scenes(scene_list)
+        # t409u: 场景上记了 ref_images（PDF / 视频配的图）→ 第一张作这一场的图；音频来源接着用它合成 clip
+        self._apply_ref_images_to_scenes(kind)
         if kind in (project_manager.SCENE_SOURCE_AUDIO, project_manager.SCENE_SOURCE_VIDEO):
             self._apply_item_media_as_shared_zero()
             self._apply_item_media_as_scene_clips()
@@ -1222,10 +1224,13 @@ class MagicWorkflow(EpisodeOpsMixin):
         """场景上有 start 时，按原媒体的起止把每一场切成自己的 clip。
 
         视频：切出的一段就是 clip，抽出的声音是 clip_audio，这一段的首帧和尾帧是
-        clip_image、clip_image_last。音频：按同样的起止切出 clip_audio，再用这一场
+        clip_image、clip_image_last（t411u: 这一场有 ref_images 时 clip_image 用那张图，不拿首帧盖掉）。
+        音频：按同样的起止切出 clip_audio，再用这一场
         已有的 clip_image 和这段声音合成 clip。最后一场从它的 start 接到媒体结尾。
         start/end 是项目里保存的那份原始媒体上的位置。
         """
+        from utility.material_image_matcher import first_ref_image
+
         media = self._original_media_path()
         scenes = [s for s in (self.scenes or []) if isinstance(s, dict)]
         if not media or not scenes:
@@ -1278,9 +1283,13 @@ class MagicWorkflow(EpisodeOpsMixin):
             if end - start <= 0.01:
                 continue
             key = (round(start, 2), round(end, 2))
+            # t411u: 有参考图（选的图）的场景，场景图就是它，切视频不拿首帧覆盖
+            keep_image = bool(first_ref_image(scene))
             ready = span_ready.get(key)
             if ready:
                 for slot, ext, src in ready:
+                    if slot == "clip_image" and keep_image:
+                        continue
                     if src and os.path.isfile(src):
                         refresh_scene_media(scene, slot, ext, src, True)
                 reused += 1
@@ -1300,7 +1309,8 @@ class MagicWorkflow(EpisodeOpsMixin):
                 first = fp.extract_frame(trimmed, True)
                 last_frame = fp.extract_frame(trimmed, False)
                 if first and os.path.isfile(first):
-                    refresh_scene_media(scene, "clip_image", ".webp", first, True)
+                    if not keep_image:
+                        refresh_scene_media(scene, "clip_image", ".webp", first, True)
                     made.append(("clip_image", ".webp", first))
                 if last_frame and os.path.isfile(last_frame):
                     refresh_scene_media(scene, "clip_image_last", ".webp", last_frame, True)
@@ -2159,14 +2169,129 @@ class MagicWorkflow(EpisodeOpsMixin):
     # move_to_adjacent_episode / merge_adjacent_episode 在 magic_workflow_episodes.EpisodeOpsMixin 里。
 
     def _source_warning(self, title: str, text: str) -> None:
-        print(f"⚠️ {title}: {text}")
-        root = tk._default_root
-        if root is None:
-            return
+        """t409u: 建项目时不弹窗（来源在生成场景时已经选好），只在控制台说明。"""
+        print(f"⚠️ {title}: " + " ".join(str(text or "").split()))
+
+    def _apply_ref_images_to_scenes(self, kind: str) -> int:
+        """t409u: 不是信息图来源时，每场 ref_images 里第一张还在的图 → 这一场的 clip_image（默认图放的那一格）。
+        没有 ref_images 的场保持默认。音频来源随后用这张图 + 这一场的声音合成 clip；
+        视频来源之后照旧按原视频切 clip（clip_image 会换成切出来那段的首帧）。
+        t410u: 先把 ref_images 复制进 media/<集>/，改名 <本集第几场>_<序号>（见 sync_project_ref_images）。"""
+        if kind == project_manager.SCENE_SOURCE_INFOGRAPHIC:
+            return 0
+        from utility.material_image_matcher import first_ref_image
+
+        self.sync_project_ref_images(legacy_first=False)
+        written = 0
+        for index, scene in enumerate([s for s in (self.scenes or []) if isinstance(s, dict)]):
+            image = first_ref_image(scene)
+            if not image:
+                continue
+            try:
+                sized = self.ffmpeg_processor.resize_image_smart(image) or image
+                refresh_scene_media(scene, "clip_image", ".webp", sized, True)
+                written += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠️ 场景 {index + 1} 用 ref_images 设 clip_image 失败: {e}")
+        if written:
+            print(f"REF: {written} 场用 ref_images 第一张作 clip_image")
+        return written
+
+    def sync_project_ref_images(self, *, legacy_first: bool) -> int:
+        """t410u: 各场 ref_images 里还在项目外面的图复制进 media/<集>/，改名 <本集第几场>_<序号><扩展名>，路径改成新文件。
+
+        已经在项目 media 里的图不动、不改名（名字第一次进来时就定了）。旧记录 episode_page 指着的页图也并进
+        ref_images：建项目时（legacy_first=False）接在最后，选图时（True）放最前面（那就是这一场现在的图）。
+        返回改动了几场。"""
+        from utility import project_ref_images as pri
+
+        media_root = config.get_media_path(self.pid)
+        counters: dict = {}
+        changed = 0
+        copied = 0
+        for scene in self.scenes or []:
+            if not isinstance(scene, dict):
+                continue
+            episode = self.scene_group(scene)
+            counters[episode] = counters.get(episode, 0) + 1
+            folder = self.episode_media_dir(episode)
+            before = json.dumps(scene.get(pri.REF_FIELD), ensure_ascii=False, sort_keys=True, default=str)
+            try:
+                copied += pri.import_scene_ref_images(scene, folder, counters[episode], media_root=media_root)
+            except OSError as e:
+                print(f"⚠️ 本集第 {counters[episode]} 场参考图复制进项目失败: {e}")
+            pri.merge_legacy_page(scene, folder, first=legacy_first)
+            if json.dumps(scene.get(pri.REF_FIELD), ensure_ascii=False, sort_keys=True, default=str) != before:
+                changed += 1
+        if copied:
+            print(f"REF: {copied} 张参考图复制进项目 media/<集>/（<场>_<序号>）")
+        return changed
+
+    def ref_image_pool(self, episode: str) -> list:
+        """t410u: 选图翻页用：按场景顺序每一场的 ref_images，再接本集文件夹里还没出现过的图（编号页图、<场>_<序号>）。"""
+        from utility import project_ref_images as pri
+
+        return pri.image_pool(self.scenes, [self.episode_media_dir(episode)])
+
+    def scene_number_in_episode(self, scene) -> int:
+        """这一场是本集第几场（从 1 起）。找不到就当接在本集最后。"""
+        episode = self.scene_group(scene)
+        n = 0
+        for s in self.scenes or []:
+            if isinstance(s, dict) and self.scene_group(s) == episode:
+                n += 1
+                if s is scene:
+                    return n
+        return n + 1
+
+    def add_scene_image_to_library(self, scene: dict, image_path: str, *, source: str = "drop") -> str:
+        """t412u: 拖进 / 粘贴 / 换上的场景图另存一份到 media/<集>/<本集第几场>_<序号><扩展名>，
+        序号 = 这一场已有序号的最大值 + 1；放到这一场 ref_images 最前面（就是现在的场景图）。
+
+        不再写编号页图，清掉旧的 episode_page（场景图记在 ref_images 里）。返回新文件路径，没写成返回 ""。"""
+        from utility import project_ref_images as pri
+
+        if not isinstance(scene, dict) or not image_path or not os.path.isfile(image_path):
+            return ""
+        folder = self.episode_media_dir(self.scene_group(scene))
+        os.makedirs(folder, exist_ok=True)
+        ext = os.path.splitext(image_path)[1].lower() or ".webp"
+        dest, _k = pri.next_scene_image_path(folder, self.scene_number_in_episode(scene), ext)
+        shutil.copy2(image_path, dest)
+        dest = os.path.abspath(dest)
+        pri.select_ref_image(scene, dest, source=source)
+        scene.pop("episode_page", None)
+        return dest
+
+    def scene_source_is_video(self) -> bool:
+        """t411u: 这个项目的场景是按视频生成的（clip 是原视频切出来的）。"""
         try:
-            messagebox.showwarning(title, text, parent=root)
-        except tk.TclError:
-            pass
+            kind, _path = self._story_scene_source()
+        except Exception:  # noqa: BLE001
+            kind = getattr(self, "_scene_source_kind", "") or ""
+        return kind == project_manager.SCENE_SOURCE_VIDEO
+
+    def select_scene_ref_image(self, scene: dict, path: str) -> int:
+        """t410u: 选中这张图：放到这一场 ref_images 最前面并作 clip_image。不改名、不复制（别的场景的图也一样）。
+
+        是本集图片库里的编号页图就记 episode_page，否则清掉旧页码（免得拷场时又拿旧页）。返回页码，0 = 不是编号页图。"""
+        from utility import project_ref_images as pri
+
+        if not isinstance(scene, dict) or not path or not os.path.isfile(path):
+            raise FileNotFoundError(path or "")
+        pri.select_ref_image(scene, path)
+        ext = os.path.splitext(path)[1].lower() or ".webp"
+        refresh_scene_media(scene, "clip_image", ext, path, True)
+        episode = self.scene_group(scene)
+        page = pri.page_number_in_folder(path, self.episode_media_dir(episode))
+        if page:
+            scene["episode"] = episode
+            scene["episode_page"] = page
+            if not scene.get("episode_pdf"):
+                scene["episode_pdf"] = f"{episode}.pdf"
+        else:
+            scene.pop("episode_page", None)
+        return page
 
     def _apply_cover_media_to_scenes(self, scene_list: list) -> None:
         """按记下的 scene_source 配图。文字 / 音频 / 视频不在这里改图。
@@ -2599,7 +2724,7 @@ class MagicWorkflow(EpisodeOpsMixin):
     def replace_scene_image(self, current_scene, source_image_path, vertical_line_position, target_field):
         oldi, image_path = refresh_scene_media(current_scene, target_field, ".webp", source_image_path)
         if target_field == "clip_image" and image_path:
-            self.write_scene_page_png(current_scene, image_path)
+            self.add_scene_image_to_library(current_scene, image_path)  # t412u
 
         current_scene[target_field + "_split"] = vertical_line_position
         from utility.scene_image_slots import is_frozen_zero_last_write

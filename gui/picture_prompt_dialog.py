@@ -243,8 +243,10 @@ def open_picture_prompt_dialog(
 
     t249: 「修改图片」模式下：
     - 内容来源（visual/speaking/actor）临时默认全部 False，不使用也不覆盖 saved_choice
-    - 不弹出「是/否/取消」scope 对话框，始终只处理当前场景
     - 关闭时不保存 modify 模式的临时内容来源设置，原 saved_choice 保持不变
+
+    t413u: 底下两个按钮：「提交」只做当前这一场；「全集提交」从当前场景到本集结束，每一场用同样的类型和设置
+    逐场处理（失败的场跳过，最后一起报告）。「提取人物肖像」只有「提交」（肖像按人物、要人一位一位确认）。
     """
     step_no = 0
     if callable(get_step_no):
@@ -607,27 +609,11 @@ def open_picture_prompt_dialog(
                     prompt = aspect + "\n\n" + prompt
                 return prompt
 
-            scope = "scene"
-            batch_list, k_no, m_no = [], 0, 0
-            if callable(batch_scenes) and callable(run_batch):
-                got = batch_scenes()
-                if isinstance(got, tuple):
-                    batch_list, k_no, m_no = got
-                else:
-                    batch_list = list(got or [])
-                n_batch = len(batch_list)
-                here = f"（第{k_no}场）" if k_no else ""
-                span = f"（第{k_no}–{m_no}场，共{n_batch}场；前面的场不动）" if k_no else f"（共{n_batch}场）"
-                answer = messagebox.askyesnocancel(
-                    "图片修改",
-                    f"是 = 只处理当前这一场{here}\n"
-                    f"否 = 从当前第{k_no}场到本集结束{span}，每一场都用同一张项目封面提取各自的步骤\n"
-                    "取消 = 不处理",
-                    parent=dlg,
-                )
-                if answer is None:
-                    return
-                scope = "scene" if answer else "episode"
+            # t413u: 「提交」= 只做当前这一场；「全集提交」= 从当前场景到本集结束，每一场同样处理
+            got_scope = _resolve_scope("每一场都用同一张项目封面提取各自的步骤")
+            if got_scope is None:
+                return
+            scope, batch_list, k_no, m_no = got_scope
             if scope == "episode":
                 jobs, skipped = [], []
                 scene = get_scene() if get_scene is not None else None
@@ -864,29 +850,11 @@ def open_picture_prompt_dialog(
             meta = {"aspect": aspect, "actors": actor_images, "base": images[0] if images else ""}
             return prompt, images, meta
 
-        # t249: 「修改图片」模式下始终只处理当前场景，不弹 scope 对话框
-        # 「从封面提取」和「补全/修正人物」模式保留原有 batch 逻辑
-        scope = "scene"
-        batch_list, k_no, m_no = [], 0, 0
-        if mode != "modify" and callable(batch_scenes) and callable(run_batch):
-            got = batch_scenes()
-            if isinstance(got, tuple):
-                batch_list, k_no, m_no = got
-            else:
-                batch_list = list(got or [])
-            n_batch = len(batch_list)
-            here = f"（第{k_no}场）" if k_no else ""
-            span = f"（第{k_no}–{m_no}场，共{n_batch}场；前面的场不动）" if k_no else f"（共{n_batch}场）"
-            answer = messagebox.askyesnocancel(
-                "图片修改",
-                f"是 = 只处理当前这一场{here}\n"
-                f"否 = 从当前第{k_no}场到本集结束{span}，每一场用自己的图和内容分别发出\n"
-                "取消 = 不处理",
-                parent=dlg,
-            )
-            if answer is None:
-                return
-            scope = "scene" if answer else "episode"
+        # t413u: 所有类型（含「修改图片」）都可以全集提交（以前 t249「修改图片」只能做当前场景）
+        got_scope = _resolve_scope("每一场用自己的图和内容分别发出")
+        if got_scope is None:
+            return
+        scope, batch_list, k_no, m_no = got_scope
         if scope == "episode":
             jobs, skipped = [], []
             for sc in batch_list:
@@ -953,27 +921,11 @@ def open_picture_prompt_dialog(
             prompt = prepend_fyi(config_prompt.build_upscale_prompt(target, style_up), fyi_up, include=bool(fyi_up))
             return prompt, [path], {"aspect": "", "actors": [], "base": path, "upscale_size": target}
 
-        scope = "scene"
-        batch_list, k_no, m_no = [], 0, 0
-        if callable(batch_scenes) and callable(run_batch):
-            got = batch_scenes()
-            if isinstance(got, tuple):
-                batch_list, k_no, m_no = got
-            else:
-                batch_list = list(got or [])
-            n_batch = len(batch_list)
-            here = f"（第{k_no}场）" if k_no else ""
-            span = f"（第{k_no}–{m_no}场，共{n_batch}场；前面的场不动）" if k_no else f"（共{n_batch}场）"
-            answer = messagebox.askyesnocancel(
-                "图片修改",
-                f"是 = 只处理当前这一场{here}\n"
-                f"否 = 从当前第{k_no}场到本集结束{span}，每一场用自己的图分别提高分辨率\n"
-                "取消 = 不处理",
-                parent=dlg,
-            )
-            if answer is None:
-                return
-            scope = "scene" if answer else "episode"
+        # t413u: 「提交」= 只做当前这一场；「全集提交」= 从当前场景到本集结束，每一场同样处理
+        got_scope = _resolve_scope("每一场用自己的图分别提高分辨率")
+        if got_scope is None:
+            return
+        scope, batch_list, k_no, m_no = got_scope
         if scope == "episode":
             jobs, skipped = [], []
             for sc in batch_list:
@@ -1113,8 +1065,40 @@ def open_picture_prompt_dialog(
 
         threading.Thread(target=work, daemon=True).start()
 
-    def on_submit() -> None:
-        """t129u / t229u: 「提交」先问后端（Grok / Gemini / MOSS / QN）和 Chrome 账户；MOSS/QN 本机 ComfyUI，不用账户。"""
+    _submit_scope = {"v": "scene"}  # t413u: 按的是「提交」(scene) 还是「全集提交」(episode)
+
+    def _resolve_scope(note: str):
+        """t413u: 按按钮定范围。返回 (scope, 场景列表, 当前是本集第 k 场, 本集共 m 场)；不做了返回 None。"""
+        if _submit_scope.get("v") != "episode":
+            return "scene", [], 0, 0
+        if not (callable(batch_scenes) and callable(run_batch)):
+            messagebox.showwarning("图片修改", "这里不能全集提交。", parent=dlg)
+            return None
+        got = batch_scenes()
+        if isinstance(got, tuple):
+            batch_list, k_no, m_no = got
+        else:
+            batch_list, k_no, m_no = list(got or []), 0, 0
+        n_batch = len(batch_list)
+        if not n_batch:
+            messagebox.showinfo("图片修改", "本集从当前场景起没有场景。", parent=dlg)
+            return None
+        span = f"第{k_no}–{m_no}场，共{n_batch}场；前面的场不动" if k_no else f"共{n_batch}场"
+        if not messagebox.askokcancel(
+            "图片修改 · 全集提交",
+            f"从当前场景到本集结束（{span}），{note}。\n"
+            "每一场原来的起始图先拷到结束图（Clip Last）做备份，改好的图当起始图。\n"
+            "某一场失败就跳过，最后一起报告。",
+            parent=dlg,
+        ):
+            return None
+        print(f"图片修改 · 全集提交：{span}")
+        return "episode", list(batch_list), k_no, m_no
+
+    def on_submit(scope: str = "scene") -> None:
+        """t129u / t229u: 「提交」先问后端（Grok / Gemini / MOSS / QN）和 Chrome 账户；MOSS/QN 本机 ComfyUI，不用账户。
+        t413u: ``scope`` = "scene"（提交）/ "episode"（全集提交）。"""
+        _submit_scope["v"] = "episode" if scope == "episode" and mode != "portrait" else "scene"
         if mode == "portrait":
             picked = ask_llm_and_account(dlg, title="提取人物肖像（Grok）", fixed_backend="grok")
             if picked:
@@ -1251,16 +1235,23 @@ def open_picture_prompt_dialog(
 
     from gui.slide_prompt_dialog import big_submit_button
 
-    submit_btn = big_submit_button(dlg, bottom, on_submit, text="提交")
+    submit_btn = big_submit_button(dlg, bottom, lambda: on_submit("scene"), text="提交")
     submit_btn.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
+    _buttons = [submit_btn]
+    if mode != "portrait" and callable(batch_scenes) and callable(run_batch):
+        # t413u: 从当前场景到本集结束，每一场同样处理（提取人物肖像按人物、要逐位确认，只做当前场景）
+        episode_btn = big_submit_button(dlg, bottom, lambda: on_submit("episode"), text="全集提交")
+        episode_btn.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
+        _buttons.append(episode_btn)
     if mode == "cover" and not (_cover_path and os.path.isfile(_cover_path)):
-        try:
-            submit_btn.state(["disabled"])
-        except Exception:
+        for _b in _buttons:
             try:
-                submit_btn.configure(state="disabled")
+                _b.state(["disabled"])
             except Exception:
-                pass
+                try:
+                    _b.configure(state="disabled")
+                except Exception:
+                    pass
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
     narrative_var.trace_add("write", refresh)

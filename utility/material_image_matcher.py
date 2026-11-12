@@ -509,3 +509,209 @@ def summary_text(result: dict, added: int, lost: int = 0) -> str:
     lines.append(f"图片在：{result.get('out_dir') or ''}")
     lines.append(f"记在每一场的「{REF_FIELD}」里。")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- t409u: 生成场景后自动配图
+SCENE_FRAME_FRACS = (0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)  # 只在一场的中段取样，不要首尾帧
+SCENE_FRAME_MOTION_DT = 0.3   # 和 0.3 秒后的画面比，差得多 = 还在动 / 转场
+SCENE_FRAME_DARK = 12.0       # 平均亮度低于这个 = 黑场
+
+
+def parse_time(value):
+    """场景的 start / end → 秒。认数字、"83.5"、"01:23.5"、"00:01:23.5"、"[00:01:23.5]"。认不出返回 None。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().strip("[]").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    parts = text.split(":")
+    if not 2 <= len(parts) <= 3:
+        return None
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    secs = 0.0
+    for n in nums:
+        secs = secs * 60 + n
+    return secs
+
+
+def scene_spans(scenes: list, duration: float = 0.0) -> list:
+    """[(场景下标, 起, 止)]：只算有 start 的场。没 end 用下一场的 start；最后一场没 end 用片长。"""
+    rows = []
+    for i, s in enumerate(scenes or []):
+        if isinstance(s, dict):
+            st = parse_time(s.get("start"))
+            if st is not None:
+                rows.append([i, st, parse_time(s.get("end"))])
+    for k, row in enumerate(rows):
+        if row[2] is None:
+            row[2] = rows[k + 1][1] if k + 1 < len(rows) else (duration or row[1])
+        if duration:
+            row[1] = max(0.0, min(row[1], duration))
+            row[2] = max(row[1], min(row[2], duration))
+    return [(i, st, en) for i, st, en in rows if en >= st]
+
+
+def frame_score(frac: float, brightness: float, sharpness: float, motion: float):
+    """一帧的分：黑场不要（None）；越清楚越好，在动（转场）扣分，越靠中间越好。"""
+    if brightness < SCENE_FRAME_DARK:
+        return None
+    return float(sharpness) / (1.0 + float(motion)) * (1.0 - abs(float(frac) - 0.5))
+
+
+def choose_frame(cands: list):
+    """cands = [(frac, brightness, sharpness, motion)] → 最好那一个的下标；全是黑场返回 None。"""
+    best, best_score = None, None
+    for k, c in enumerate(cands):
+        sc = frame_score(*c)
+        if sc is not None and (best_score is None or sc > best_score):
+            best, best_score = k, sc
+    return best
+
+
+def _read_at(cap, t: float):
+    import cv2
+
+    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t) * 1000.0)
+    ok, frame = cap.read()
+    return frame if ok and frame is not None else None
+
+
+def extract_scene_frames(video_path: str, scenes: list, out_dir: str = "", *, log=print, progress=None) -> dict:
+    """视频来源：每场在自己的起止时间中段取几帧，挑最清楚、不在转场、不是黑场的一帧，存 scene_NNN.png。
+    返回 {场景下标: [{"path", "source": "video", "time", "material"}]}。不用 Strata。"""
+    import cv2
+    import numpy as np
+
+    out_dir = out_dir or working_dir_for(video_path)
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"打不开视频：{video_path}")
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        duration = float(total / fps) if total and fps else 0.0
+        spans = scene_spans(scenes, duration)
+        if not spans:
+            log(f"[场景配图] {os.path.basename(video_path)}：场景没有起止时间，不取帧")
+            return {}
+        os.makedirs(out_dir, exist_ok=True)
+        _clear_old_outputs(out_dir, r"^scene_\d{3,}\.png$")
+        out = {}
+        for n, (idx, st, en) in enumerate(spans, 1):
+            if progress:
+                progress(f"取场景帧 {n}/{len(spans)}")
+            length = max(0.0, en - st)
+            fracs = SCENE_FRAME_FRACS if length >= 1.0 else (0.5,)
+            cands, frames = [], []
+            for frac in fracs:
+                t = st + length * frac
+                frame = _read_at(cap, t)
+                if frame is None:
+                    continue
+                g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                sharp = float(cv2.Laplacian(g, cv2.CV_64F).var())
+                later = _read_at(cap, min(t + SCENE_FRAME_MOTION_DT, en if en > t else t))
+                motion = float(np.mean(np.abs(_small(frame) - _small(later)))) if later is not None else 0.0
+                cands.append((frac, float(np.mean(g)), sharp, motion))
+                frames.append((t, frame))
+            k = choose_frame(cands)
+            if k is None:
+                log(f"[场景配图] 第 {idx + 1} 场（{st:.1f}–{en:.1f} 秒）中段都是黑场，不取")
+                continue
+            t, frame = frames[k]
+            path = os.path.join(out_dir, f"scene_{idx + 1:03d}.png")
+            ok_w, buf = cv2.imencode(".png", frame)
+            if not ok_w:
+                continue
+            buf.tofile(path)
+            out[idx] = [{"path": path, "source": "video", "time": round(t, 1), "material": video_path}]
+        log(f"[场景配图] {os.path.basename(video_path)}：{len(out)}/{len(spans)} 场取到中段画面 → {out_dir}")
+        return out
+    finally:
+        cap.release()
+
+
+def auto_ref_matches(kind: str, path: str, scenes: list, *, log=print, progress=None, pdf_run=None, video_run=None) -> dict:
+    """生成场景以后按来源自动配图，返回 {场景下标: [image]}（不改 scenes）。
+    PDF：抽图 + Strata 顺序匹配；视频：按每场起止取中段一帧；其他来源（文字 / 音频 / 信息图）不动。"""
+    kind = str(kind or "").strip().lower()
+    if not path or not os.path.isfile(path) or not scenes:
+        return {}
+    if kind == "pdf":
+        res = (pdf_run or run_match)(path, "pdf", scenes, log=log, progress=progress)
+        if not res.get("images"):
+            log(f"[场景配图] PDF {os.path.basename(path)} 里没有图片，不配图")
+        return res.get("matches") or {}
+    if kind == "video":
+        return (video_run or extract_scene_frames)(path, scenes, log=log, progress=progress)
+    return {}
+
+
+def start_auto_attach(after, kind: str, path: str, scenes: list, *, get_current, commit, log=print,
+                      matcher=None, thread=True) -> bool:
+    """后台算 ``auto_ref_matches``，算完在 Tk 线程（``after(ms, fn)`` 轮询）里：
+    current = get_current() → apply_matches → 有新图就 commit(current, added)。不需要做的来源返回 False。"""
+    import copy
+
+    kind = str(kind or "").strip().lower()
+    if kind not in ("pdf", "video") or not path or not os.path.isfile(path) or not scenes:
+        return False
+    snapshot = copy.deepcopy([s for s in scenes if isinstance(s, dict)])
+    holder = {"done": False, "matches": {}, "error": ""}
+
+    def _work():
+        try:
+            holder["matches"] = (matcher or auto_ref_matches)(kind, path, snapshot, log=log) or {}
+        except Exception as exc:  # noqa: BLE001
+            holder["error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+        holder["done"] = True
+
+    def _finish():
+        if holder["error"]:
+            log(f"[场景配图] 没做完：{holder['error']}")
+            return
+        if not holder["matches"]:
+            return
+        current = get_current()
+        if not isinstance(current, list) or not current:
+            log("[场景配图] 场景已经没了，图没记上")
+            return
+        added, lost = apply_matches(current, snapshot, holder["matches"])
+        if lost:
+            log(f"[场景配图] 有 {lost} 场在配图时被改过 / 删掉，那几场的图没记上")
+        if added:
+            commit(current, added)
+            log(f"[场景配图] 已给 {len(holder['matches'])} 场记上 {added} 张图（{REF_FIELD}）")
+
+    def _poll():
+        if holder["done"]:
+            _finish()
+            return
+        after(500, _poll)
+
+    log(f"[场景配图] 来源是{'PDF' if kind == 'pdf' else '视频'}，后台开始配图：{os.path.basename(path)}")
+    if thread:
+        threading.Thread(target=_work, daemon=True, name="auto-ref-images").start()
+    else:
+        _work()
+    after(500, _poll)
+    return True
+
+
+def first_ref_image(scene: dict) -> str:
+    """这一场 ref_images 里第一张还在磁盘上的图；没有返回 ""。"""
+    refs = scene.get(REF_FIELD) if isinstance(scene, dict) else None
+    for r in refs if isinstance(refs, list) else []:
+        p = str((r.get("path") if isinstance(r, dict) else r) or "").strip()
+        if p and os.path.isfile(p):
+            return os.path.abspath(p)
+    return ""

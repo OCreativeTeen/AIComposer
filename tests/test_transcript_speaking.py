@@ -1,6 +1,10 @@
+import ast
+import pathlib
 import re
 import unittest
+from unittest import mock
 
+from utility import media_transcript as _mt
 from utility.media_transcript import (
     _punctuate_with_times,
     apply_verbatim_speaking,
@@ -16,7 +20,25 @@ TRANSCRIPT = """
 """
 
 
+def _real_languages() -> dict:
+    """config.py 里的 LANGUAGES（只读源码里的字面量，不执行 config.py）。"""
+    src = (pathlib.Path(__file__).resolve().parents[1] / "config.py").read_text(encoding="utf-8")
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "LANGUAGES" for t in node.targets):
+            return ast.literal_eval(node.value)
+    return {}
+
+
 class VerbatimSpeakingTest(unittest.TestCase):
+    def setUp(self):
+        # 全套跑时 test_comfy_edit_prompts 先导入，用 test_video_speaker_semantics._install_stubs 把
+        # sys.modules["config"] 换成没有 LANGUAGES 的假模块；media_transcript 随后导入就绑到了它。
+        # 只在缺的时候补上真的 LANGUAGES，测完还原，不影响别的测试。
+        if not hasattr(_mt.config, "LANGUAGES"):
+            patcher = mock.patch.object(_mt.config, "LANGUAGES", _real_languages(), create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_parse_carries_speaker(self):
         rows = parse_timed_transcript(TRANSCRIPT)
         self.assertEqual(

@@ -278,6 +278,47 @@ def _project_look_from_row(vd, cfg=None) -> tuple[str, str, str]:
 
 
 
+def _start_scene_auto_ref_images(app, parent, video_detail, scenes, src_kind, set_scene_json, get_scene_json, persist) -> None:
+    """t409u: 生成场景成功、保存以后：来源是 PDF → 抽图 + Strata 顺序对场景；来源是视频 → 每场按起止取中段一帧。
+    后台跑、不挡界面，结果追加到每一场的 ref_images，再写回编辑框并保存。文字 / 音频 / 信息图来源不动。"""
+    try:
+        from utility.material_image_matcher import start_auto_attach
+        from utility.scene_json import _parse_scene_json_list
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 场景配图没有启动：{exc}")
+        return
+    path = str(video_detail.get("scene_source_path") or "").strip()
+
+    def _current():
+        if callable(get_scene_json):
+            try:
+                parsed = _parse_scene_json_list(get_scene_json() or "")
+            except Exception:  # noqa: BLE001  窗口关了 / 编辑框里不是 JSON
+                parsed = None
+            if parsed:
+                return [s for s in parsed if isinstance(s, dict)]
+        sc = video_detail.get("scene_content")
+        return [s for s in sc if isinstance(s, dict)] if isinstance(sc, list) else []
+
+    def _commit(current, _added):
+        video_detail["scene_content"] = current
+        try:
+            set_scene_json(json.dumps(current, ensure_ascii=False, indent=2))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            alive = parent is not None and bool(parent.winfo_exists())
+        except Exception:  # noqa: BLE001
+            alive = False
+        persist(video_detail, parent=parent if alive else None)
+
+    root = getattr(app, "root", None) or parent
+    try:
+        start_auto_attach(root.after, src_kind, path, scenes, get_current=_current, commit=_commit)
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 场景配图没有启动：{exc}")
+
+
 def apply_scene_content_from_editor_text(
     video_detail: dict,
     raw: str,
@@ -1283,6 +1324,7 @@ class MediaGUIManager:
         text_backend: str = "",
         scene_source: str = "",
         scene_source_path: str = "",
+        get_scene_json=None,
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。text_backend: "grok" / "gemini"（CLI自动 用哪个网页）。"""
         channel_key = self._channel_config_key()
@@ -1399,6 +1441,10 @@ class MediaGUIManager:
                 )
                 if not persist(video_detail, parent=parent):
                     return
+                # t409u: PDF / 视频来源 → 后台自动给每场配图（ref_images）
+                _start_scene_auto_ref_images(
+                    self, parent, video_detail, scenes, src_kind, set_scene_json, get_scene_json, persist
+                )
                 try:
                     _copy_text_to_clipboard(parent, scene_json)
                 except Exception:

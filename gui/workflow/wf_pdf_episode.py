@@ -202,8 +202,8 @@ class PdfEpisodeMixin:
         """拖进来的 PDF（origin="drop"）或全集生成下载的 PDF（origin="全集生成"）：先拆到临时目录预览；
         分配给场景时才复制进本集 media 文件夹。每次拆页都记进本集（当前场景所在集）的 PDF 导入记录。
 
-        ``cross_episodes``：全集生成选了「本集到结束」且跨了几集。这时「写到结束」写完本集后接着写后面各集，
-        每页复制进那一集自己的 media 文件夹（接在那一集已有页之后编号）。"""
+        ``cross_episodes``：全集生成选了「本集到结束」且跨了几集。t411u 起预览里不再有「写到结束」，
+        这个参数只留着兼容（PDF 的图对场景在生成场景时已经做好）。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
@@ -537,9 +537,12 @@ class PdfEpisodeMixin:
             )
 
     def _assign_scene_clip_image_from_file(self, scene: dict, image_path: str) -> None:
-        """把已经拆好的页图拷到场景的 clip_image，不缩放、不转格式。"""
+        """把已经拆好的页图拷到场景的 clip_image，不缩放、不转格式。t410u: 这张图同时放到 ref_images 最前面。"""
+        from utility.project_ref_images import select_ref_image
+
         ext = os.path.splitext(image_path)[1].lower() or ".webp"
         refresh_scene_media(scene, "clip_image", ext, image_path, True)
+        select_ref_image(scene, image_path, source="page")
 
     def _tag_scene_pdf_page(self, scene: dict, group_name: str, page_no: int, pdf_name: str) -> None:
         scene["episode"] = group_name
@@ -550,13 +553,17 @@ class PdfEpisodeMixin:
         scene.pop("group_pdf", None)
 
     def _pool_clip_slot_image(self, scene: dict, image_type: str, image_path: str) -> None:
-        """clip 的起始图或结束图换了以后，加进这一集的图片库：接在最大编号后面，不覆盖。
+        """clip 的起始图或结束图换了以后，加进这一集的图片库。
 
-        起始图记成这一场的页；结束图只放进库里，不改这一场的页。
+        t412u: 起始图另存成 media/<集>/<本集第几场>_<序号>（序号接在这一场最大的后面），放到 ref_images 最前面；
+        结束图照旧只放进库里（接在最大编号后面），不改这一场的图。
         """
         if image_type not in ("clip_image", "clip_image_last"):
             return
         if not isinstance(scene, dict) or not image_path or not os.path.isfile(image_path):
+            return
+        if image_type == "clip_image":
+            self.workflow.add_scene_image_to_library(scene, image_path)
             return
         self.workflow.write_scene_page_png(
             scene, image_path, tag_scene=(image_type == "clip_image")
@@ -566,6 +573,12 @@ class PdfEpisodeMixin:
         """起始图换了以后，用新图重做这一场的 clip 视频：有 clip 音频就用新图加音频（同生场视频·静态）；
         t328u: 还没有 clip 音频时，用新图重做静音静态预览（同拆场后的预览，长度按讲话估算），
         不再留着用旧图做的预览视频。"""
+        wf = getattr(self, "workflow", None)
+        is_video = getattr(wf, "scene_source_is_video", None)
+        if callable(is_video) and is_video():
+            # t411u/t412u: 视频来源：新图只当场景图，clip 还是原视频那一段，不改成静态画面。
+            show_auto_close_popup(self.root, "放入", f"{summary}\n视频来源：clip 仍是原视频那一段。")
+            return
         audio = get_file_path(scene, "clip_audio") if isinstance(scene, dict) else ""
         if not audio or not os.path.isfile(audio):
             image = (get_file_path(scene, "clip_image") or scene.get("clip_image") or "") if isinstance(scene, dict) else ""
@@ -580,7 +593,7 @@ class PdfEpisodeMixin:
             return
         self.root.after(200, lambda: self._offer_still_videos_after_pdf([scene], summary))
 
-    def _rebuild_silent_still_clip(self, scene: dict) -> None:
+    def _rebuild_silent_still_clip(self, *scenes) -> None:
         """t328u: 后台用 clip_image 重做静音静态预览（_rebuild_monologue_preview_clips），做完保存并刷新预览。"""
         import threading
 
@@ -589,10 +602,11 @@ class PdfEpisodeMixin:
         def work():
             err = ""
             try:
-                self._rebuild_monologue_preview_clips(scene)
+                self._rebuild_monologue_preview_clips(*scenes)
             except Exception as exc:  # noqa: BLE001
                 err = str(exc)
-                print(f"⚠️ 静音预览视频没有重做（id={scene.get('id')}）：{exc}")
+                ids = ",".join(str(s.get("id")) for s in scenes if isinstance(s, dict))
+                print(f"⚠️ 静音预览视频没有重做（id={ids}）：{exc}")
 
             def finish():
                 try:
@@ -613,13 +627,28 @@ class PdfEpisodeMixin:
         if not scenes:
             messagebox.showinfo("PDF", summary, parent=self.root)
             return
+
+        def has_audio(s) -> bool:
+            a = get_file_path(s, "clip_audio") or ""
+            return bool(a and os.path.isfile(a))
+
+        # t410u: 没有 clip 音频的场景不再跳过（会留着旧图做的预览），改成用新图重做静音预览（同 _after_clip_image_changed）。
+        voiced = [s for s in scenes if has_audio(s)]
+        silent = [s for s in scenes if not has_audio(s)]
+        parts = []
+        if voiced:
+            parts.append(f"用新的 clip 图片加 clip 音频重新生成 {len(voiced)} 场的 clip 视频")
+        if silent:
+            parts.append(f"{len(silent)} 场还没有 clip 音频，用新图重做静音预览视频")
         show_auto_close_popup(
             self.root,
             "重新生成 clip 视频",
-            f"{summary}\n\n正在用新的 clip 图片加 clip 音频重新生成 {len(scenes)} 场的 clip 视频"
-            "（替换原来的；没有 clip 音频的场景会跳过）。",
+            f"{summary}\n\n正在" + "；".join(parts) + "（替换原来的）。",
         )
-        self._run_still_clip_videos(scenes)
+        if silent:
+            self._rebuild_silent_still_clip(*silent)
+        if voiced:
+            self._run_still_clip_videos(voiced)
 
     def _pdf_import_label(self, entry: dict) -> str:
         """来源下拉框里一条导入记录的名字：<pdf 名> · N页 · 时间。"""
@@ -640,7 +669,8 @@ class PdfEpisodeMixin:
         initial_index: int = 0,
         staging: dict | None = None,
     ) -> None:
-        """翻页查看页图。左右方向键翻页；当前页 → 当前场景；从当前页写到本集结束。
+        """翻页查看页图。左右方向键翻页；当前页 → 当前场景。
+        t411u: 去掉「写到本集结束 / 写到结束（跨集）」：PDF 的图对场景在生成场景时已经做好。
 
         顶上的「来源」下拉框：本集媒体文件夹（双击 clip 的原样），或本集导入过的某个 PDF 的拆页文件夹。
         选 PDF 时分配会先把页复制进本集 media 文件夹再写到场景（同拖进 PDF 后的预览）。
@@ -671,24 +701,49 @@ class PdfEpisodeMixin:
                 return self.workflow.staged_page_paths(st["dir"])
             if state["missing"]:
                 return []
-            return self._episode_page_pngs(group_name)
+            # t410u: 按场景顺序各场的 ref_images，再接本集文件夹里还没出现过的图
+            return self.workflow.ref_image_pool(group_name)
 
         def _episode_no(page_no: int) -> int:
             """临时页号 → 本集页号（接在已有页之后，同旧的拆页编号）。"""
             st = state["staging"]
             return int(st["base"]) + int(page_no) if st else int(page_no)
 
-        def _assign_image(scene: dict, i: int) -> int:
-            """分配第 i 页给场景：PDF 来源时先复制进本集 media 文件夹。返回本集页号。"""
-            page_no = _page_number(i)
+        def _image_label(i: int) -> str:
+            """第 i 张图在提示里的叫法：PDF 拆页是「第 N 页」，场景图是文件名（如 3_2.png）。"""
+            if state["staging"]:
+                return f"第 {_page_number(i)} 页"
+            return os.path.basename(pages[i]) if 0 <= i < len(pages) else ""
+
+        def _assign_image(scene: dict, i: int) -> str:
+            """分配第 i 张图给场景。PDF 来源时先复制进本集 media 文件夹（编号页图）。
+
+            t410u: 场景图来源（本集媒体文件夹）不改名、不复制：放到这一场 ref_images 最前面并作 clip_image。
+            返回提示用的叫法。"""
             src = pages[i]
             st = state["staging"]
-            if st:
-                page_no = _episode_no(page_no)
-                src = self.workflow.stage_page_into_episode(src, group_name, page_no)
+            if not st:
+                self.workflow.select_scene_ref_image(scene, src)
+                return _image_label(i)
+            page_no = _episode_no(_page_number(i))
+            src = self.workflow.stage_page_into_episode(src, group_name, page_no)
             self._assign_scene_clip_image_from_file(scene, src)
             self._tag_scene_pdf_page(scene, group_name, page_no, state["pdf_name"])
-            return page_no
+            return f"第 {page_no} 页"
+
+        def _image_users(path: str) -> list:
+            """t410u: 这张图在哪些场景的 ref_images 里：'本集第 3 场（全部第 12 场）· 当前图 / 备选'。"""
+            from utility.project_ref_images import image_users
+
+            out = []
+            for gi, first in image_users(self.workflow.scenes, path):
+                sc = self.workflow.scenes[gi]
+                g = self.workflow.scene_group(sc)
+                idxs = self.workflow.group_scene_indices(g)
+                pos = idxs.index(gi) + 1 if gi in idxs else 0
+                where = "本集" if g == group_name else self.workflow.episode_label(g)
+                out.append(f"{where}第 {pos} 场（全部第 {gi + 1} 场）· {'当前图' if first else '备选'}")
+            return out
 
         # ---- 来源 ----
         src_row = ttk.Frame(dlg)
@@ -709,55 +764,8 @@ class PdfEpisodeMixin:
         status.pack(fill=tk.X, padx=8, pady=(6, 2))
         usage_lbl = tk.Label(dlg, text="", anchor="w", font=("Microsoft YaHei UI", 11, "bold"))
         usage_lbl.pack(fill=tk.X, padx=8, pady=(0, 2))
-        hint_lbl = tk.Label(dlg, text="", anchor="w", fg="#1a4fa0")
-        hint_lbl.pack(fill=tk.X, padx=8, pady=(0, 2))
         path_lbl = ttk.Label(dlg, text=folder, anchor="w")
         path_lbl.pack(fill=tk.X, padx=8)
-
-        def _cross() -> bool:
-            st = state["staging"]
-            return bool(st and st.get("cross_episodes"))
-
-        def _forward_targets(page_i: int) -> list:
-            """跨集「写到结束」要写的 [(场景序号, 集名)]：本集从当前场景起，再接后面各集全部场景，页用完为止。"""
-            indices = self.workflow.group_scene_indices(group_name)
-            cur = self.current_scene_index
-            if cur not in indices:
-                return []
-            out = [(i, group_name) for i in indices[indices.index(cur):]]
-            later = self.workflow.episode_groups_from(self.workflow.scenes[cur])[1:]
-            for g in later:
-                out.extend((i, g) for i in self.workflow.group_scene_indices(g))
-            return out[: max(0, len(pages) - page_i)]
-
-        def _forward_hint(page_i: int) -> str:
-            """“写到本集结束”按下去会写哪几场，不会超出本集（跨集模式会接着写后面各集）。"""
-            if _cross():
-                targets = _forward_targets(page_i)
-                if not targets:
-                    return f"当前场景不在{self.workflow.episode_label(group_name)}，不能“写到结束”。"
-                groups_hit = []
-                for _i, g in targets:
-                    if g not in groups_hit:
-                        groups_hit.append(g)
-                return (
-                    f"写到结束（跨集）：从当前场景起写 {len(targets)} 场，"
-                    f"第 {groups_hit[0]}" + (f"–{groups_hit[-1]}" if len(groups_hit) > 1 else "") + " 集，"
-                    f"用 {len(targets)} 张图；每集的页复制进那一集自己的文件夹。"
-                )
-            indices = self.workflow.group_scene_indices(group_name)
-            cur = self.current_scene_index
-            if cur not in indices:
-                return f"当前场景不在{self.workflow.episode_label(group_name)}，不能“写到本集结束”。"
-            pos = indices.index(cur)
-            left_scenes = len(indices) - pos
-            left_pages = len(pages) - page_i
-            n = min(left_scenes, left_pages)
-            return (
-                f"写到本集结束：从当前场景（本集第 {pos + 1} 场）起，写到本集第 {pos + n} 场"
-                f"（本集共 {len(indices)} 场），用 {n} 张图；"
-                + ("本集最后一场到此为止。" if left_pages >= left_scenes else "图先用完。")
-            )
 
         def _scene_label() -> str:
             n = len(self.workflow.group_scene_indices(group_name))
@@ -795,7 +803,6 @@ class PdfEpisodeMixin:
                 canvas.create_text(20, 20, text=msg, anchor="nw", fill="#aaaaaa", font=("Microsoft YaHei UI", 14))
                 status.config(text=f"0 张图    {_scene_label()}")
                 usage_lbl.config(text="")
-                hint_lbl.config(text="")
                 return
             idx[0] = max(0, min(idx[0], len(pages) - 1))
             i = idx[0]
@@ -825,26 +832,25 @@ class PdfEpisodeMixin:
                 badge = f"{state['pdf_name']} · 第 {page_no} 页"
                 badge_color = "#FFD54F"
             else:
-                users = _page_users(_episode_no(page_no))
+                users = _image_users(path)
                 if users:
-                    usage_text = f"第 {page_no} 页 → 已分给：" + "、".join(users)
+                    usage_text = f"{os.path.basename(path)} → 用在：" + "、".join(users)
                     usage_color = "#0a6b0a"
                     badge = "场景：" + "、".join(u.split("（")[0] for u in users)
                     badge_color = "#7CFC7C"
                 else:
-                    usage_text = f"第 {page_no} 页 → 还没有被任何场景使用"
+                    usage_text = f"{os.path.basename(path)} → 还没有被任何场景使用"
                     usage_color = "#b00020"
                     badge = "还没有被任何场景使用"
                     badge_color = "#FF8A80"
             usage_lbl.config(text=usage_text, fg=usage_color)
-            hint_lbl.config(text=_forward_hint(i))
             canvas.create_text(
                 13, 13, text=badge, anchor="nw", fill="#000000", font=("Microsoft YaHei UI", 14, "bold")
             )
             canvas.create_text(
                 11, 11, text=badge, anchor="nw", fill=badge_color, font=("Microsoft YaHei UI", 14, "bold")
             )
-            where = "PDF 拆页" if state["staging"] else "本集文件夹"
+            where = "PDF 拆页" if state["staging"] else "场景图"
             status.config(
                 text=(
                     f"{where}共 {len(pages)} 张图，当前第 {i + 1} / {len(pages)} 张"
@@ -872,98 +878,19 @@ class PdfEpisodeMixin:
             if not pages:
                 return
             try:
-                page_no = _assign_image(scene, idx[0])
+                label = _assign_image(scene, idx[0])
                 self.workflow.save_scenes_to_json()
                 self.display_image_on_canvas_for_track("clip_image")
             except Exception as e:  # noqa: BLE001
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
                 return
             dlg.destroy()
-            self.root.after(
-                50,
-                lambda sc=[scene], msg=f"第 {page_no} 页已写入当前场景（{self.workflow.episode_label(group_name)}）。": (
-                    self._offer_still_videos_after_pdf(sc, msg)
-                ),
-            )
-
-        def _assign_forward():
-            """从正在看的这一页起，写入当前场景和本集后面的场景。场数不改。
-
-            写到本集最后一场，或者页用完为止，两者先到的那个。场景比页数多时，多出的场景不动。
-            """
-            scene_i = self.current_scene_index
-            if scene_i < 0 or scene_i >= len(self.workflow.scenes):
-                messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
+            msg = f"{label} 已写入当前场景（{self.workflow.episode_label(group_name)}）。"
+            if self.workflow.scene_source_is_video():
+                # t411u: 视频来源：选的图只当场景图，clip 还是原视频切出来的那段，不改成静态画面。
+                show_auto_close_popup(self.root, "场景图", msg + "\n视频来源：clip 仍是原视频那一段。")
                 return
-            if not pages:
-                return
-            page_i = idx[0]
-            written = 0
-            first_page = _episode_no(_page_number(page_i))
-            last_page_no = first_page
-            written_scenes: list = []
-            if _cross():
-                # 跨集：本集照旧（_assign_image），后面各集每页复制进那一集的 media 文件夹，接在已有页之后编号。
-                bases: dict = {}
-                counts: dict = {}
-                groups_hit: list = []
-                try:
-                    for gi, g in _forward_targets(page_i):
-                        scene = self.workflow.scenes[gi]
-                        if g == group_name:
-                            last_page_no = _assign_image(scene, page_i)
-                        else:
-                            if g not in bases:
-                                bases[g] = self.workflow.episode_next_page_base(g)
-                            counts[g] = counts.get(g, 0) + 1
-                            page_no = bases[g] + counts[g]
-                            src = self.workflow.stage_page_into_episode(pages[page_i], g, page_no)
-                            self._assign_scene_clip_image_from_file(scene, src)
-                            self._tag_scene_pdf_page(scene, g, page_no, state["pdf_name"])
-                        if g not in groups_hit:
-                            groups_hit.append(g)
-                        written += 1
-                        written_scenes.append(scene)
-                        page_i += 1
-                    self.workflow.save_scenes_to_json()
-                    self.display_image_on_canvas_for_track("clip_image")
-                except Exception as e:  # noqa: BLE001
-                    messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
-                    return
-                dlg.destroy()
-                span = (f"第 {groups_hit[0]}–{groups_hit[-1]} 集" if len(groups_hit) > 1
-                        else self.workflow.episode_label(groups_hit[0]) if groups_hit else "")
-                summary = f"从 PDF 第 {_page_number(idx[0])} 页起，写入了{span}共 {written} 场。"
-                self.root.after(
-                    50,
-                    lambda sc=list(written_scenes), msg=summary: self._offer_still_videos_after_pdf(sc, msg),
-                )
-                return
-            try:
-                while scene_i < len(self.workflow.scenes) and page_i < len(pages):
-                    scene = self.workflow.scenes[scene_i]
-                    if not isinstance(scene, dict) or self.workflow.scene_group(scene) != group_name:
-                        break
-                    last_page_no = _assign_image(scene, page_i)
-                    written += 1
-                    written_scenes.append(scene)
-                    scene_i += 1
-                    page_i += 1
-                self.workflow.save_scenes_to_json()
-                self.display_image_on_canvas_for_track("clip_image")
-            except Exception as e:  # noqa: BLE001
-                messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
-                return
-            dlg.destroy()
-            summary = (
-                f"从第 {first_page} 页起，写入了当前场景及本集后面共 {written} 场"
-                + (f"（到第 {last_page_no} 页）" if written else "")
-                + "。"
-            )
-            self.root.after(
-                50,
-                lambda sc=list(written_scenes), msg=summary: self._offer_still_videos_after_pdf(sc, msg),
-            )
+            self.root.after(50, lambda sc=[scene], m=msg: self._offer_still_videos_after_pdf(sc, m))
 
         bar = ttk.Frame(dlg)
         bar.pack(fill=tk.X, padx=8, pady=8)
@@ -983,19 +910,13 @@ class PdfEpisodeMixin:
         ext_btn.pack(side=tk.RIGHT)
         assign_btn = ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current)
         assign_btn.pack(side=tk.LEFT, padx=(0, 6))
-        forward_btn = ttk.Button(
-            bar, text=("写到结束（跨集）" if _cross() else "写到本集结束"), command=_assign_forward
-        )
-        forward_btn.pack(side=tk.LEFT)
 
         def _sync_buttons():
             st = state["staging"]
             can_open = bool(st and st.get("pdf") and os.path.isfile(st["pdf"]))
             ext_btn.state(["!disabled"] if can_open else ["disabled"])
             ok = not state["missing"]
-            forward_btn.config(text=("写到结束（跨集）" if _cross() else "写到本集结束"))
-            for b in (assign_btn, forward_btn):
-                b.state(["!disabled"] if ok else ["disabled"])
+            assign_btn.state(["!disabled"] if ok else ["disabled"])
 
         def _labels() -> list[str]:
             return [MEDIA_LABEL] + [self._pdf_import_label(e) for e in history]
@@ -1111,8 +1032,6 @@ class PdfEpisodeMixin:
         dlg._pdf_review = {
             "select_source": _select_source,
             "assign_current": _assign_current,
-            "assign_forward": _assign_forward,
-            "forward_hint": _forward_hint,
             "state": state,
             "pages": pages,
             "labels": _labels,

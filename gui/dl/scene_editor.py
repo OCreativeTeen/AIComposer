@@ -3554,6 +3554,7 @@ class SceneEditorImpl:
                             video_detail,
                             label,
                             lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
+                            get_scene_json=lambda: tx.get("1.0", tk.END),
                             get_instruction=lambda instr=user_instr: instr,
                             on_busy=lambda: _busy(smart_btn),
                             on_idle=lambda: _idle(smart_btn),
