@@ -105,6 +105,7 @@ class VideoFormatAndSelectorsTests(unittest.TestCase):
     def test_topic_box_labels_cover_chinese_and_english(self):
         labels = notebooklm_cdp.TOPIC_BOX_LABELS
         self.assertIn("自定义主题", labels["video_overview"])
+        self.assertEqual(labels["video_overview"][0], "描述您自己的主题")
         self.assertIn("描述您自己的主题", labels["video_overview"])
         self.assertIn("Describe your own topic", labels["video_overview"])
         self.assertEqual(

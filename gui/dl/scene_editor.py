@@ -288,7 +288,19 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         # append 会把每一项插到最前，所以从旧到新写入，最后一项（当前）在最前。
         for dest in reversed(ordered):
             project_manager.append_cover_image(video_detail, dest)
+        current = ordered[0] if ordered else ""
+        prev = str(video_detail.get("scene_source") or "").strip().lower()
+        if current and prev in ("", project_manager.SCENE_SOURCE_TEXT):
+            # 文字场景之后又生成了信息图：创建项目时按这张封面配图，不再看场数。
+            video_detail["scene_source"] = project_manager.SCENE_SOURCE_INFOGRAPHIC
+            video_detail["scene_source_path"] = os.path.abspath(current)
         gui._persist_video_detail_story(video_detail, parent=dlg)
+        refresh_source = getattr(dlg, "_refresh_scene_source_label", None)
+        if callable(refresh_source):
+            try:
+                refresh_source()
+            except Exception:  # noqa: BLE001
+                pass
         ctx = getattr(dlg, "_summary_drop_ctx", None)
         refresh = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
         if callable(refresh):
@@ -297,12 +309,18 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             except Exception:  # noqa: BLE001
                 pass
         n = len(project_manager.get_cover_images(video_detail))
-        current = ordered[0] if ordered else ""
         if current:
             print(f"节目生成：信息图已加为封面（共 {n} 张，当前 {os.path.basename(current)}）")
+            note = ""
+            if (
+                current
+                and prev in ("", project_manager.SCENE_SOURCE_TEXT)
+                and video_detail.get("scene_source") == project_manager.SCENE_SOURCE_INFOGRAPHIC
+            ):
+                note = "\n场景来源已改为信息图。创建项目时按这张封面给每一场配图。"
             show_auto_close_popup(
                 dlg, "信息图",
-                f"信息图已加为这一条的封面（共 {n} 张）：\n{os.path.basename(current)}",
+                f"信息图已加为这一条的封面（共 {n} 张）：\n{os.path.basename(current)}{note}",
             )
         return current
 
@@ -1293,12 +1311,29 @@ class SceneEditorImpl:
                 )
                 return True
 
+            def _transcript_beside(media_path: str) -> tuple[str, str]:
+                """这一份媒体自己的文字稿。拖进来的用这条记下的稿；语音/视频概览用它旁边的同名 .txt。"""
+                if not media_path or not os.path.isfile(media_path):
+                    return "", ""
+                story = _find_item_media_file(video_detail)
+                if story and os.path.normcase(os.path.abspath(story)) == os.path.normcase(os.path.abspath(media_path)):
+                    return _item_transcript_text(video_detail)
+                guess = os.path.splitext(os.path.abspath(media_path))[0] + ".txt"
+                if os.path.isfile(guess):
+                    try:
+                        text = (_read_plain_text_file(guess) or "").strip()
+                    except OSError:
+                        text = ""
+                    if text:
+                        return os.path.abspath(guess), text
+                return "", ""
+
             def _require_media_transcript(media_path: str) -> bool:
                 """场景生成前：没有文字稿就提醒用户必须先转录；已有文字稿就确认是用它还是重新转录。
 
                 返回 True 表示可以接着生成；取消、转录取消或失败返回 False。
                 """
-                existing, existing_text = _item_transcript_text(video_detail)
+                existing, existing_text = _transcript_beside(media_path)
                 if existing_text:
                     from utility import media_transcript
 
@@ -1312,6 +1347,7 @@ class SceneEditorImpl:
                         [("use", "用现有文字稿"), ("redo", "重新转录")],
                     )
                     if choice == "use":
+                        video_detail[STORY_TRANSCRIPT_KEY] = existing
                         return True
                     if choice == "redo":
                         return _run_item_transcript(
@@ -1624,13 +1660,104 @@ class SceneEditorImpl:
                 persist(video_detail, parent=dlg)
                 _sync_material_widgets()
 
+            _image_match_busy = {"on": False}
+
+            def _material_image_match(entry: dict, source: str) -> None:
+                """t406u: PDF 抽图 / 视频概览抽幻灯片 → Strata 看图 → 按顺序对到场景，记在每场的 ref_images 里。"""
+                import copy
+                import threading
+
+                from utility import material_image_matcher as mim
+
+                path = entry.get("path") or ""
+                if not path or not os.path.isfile(path):
+                    messagebox.showwarning("图片对场景", "找不到这个文件。", parent=dlg)
+                    return
+                if _image_match_busy["on"]:
+                    messagebox.showinfo("图片对场景", "上一次还在跑，等它跑完再来。", parent=dlg)
+                    return
+                scenes = _story_scene_list(video_detail, scene_ui)
+                if not scenes:
+                    messagebox.showwarning("图片对场景", "这一条还没有场景（scene_content 为空），先生成场景。", parent=dlg)
+                    return
+                what = "PDF 里每页的图" if source == "pdf" else "视频里每一张幻灯片"
+                out_dir = mim.working_dir_for(path)
+                if not messagebox.askyesno(
+                    "图片对场景",
+                    f"把{what}抽出来，用 Strata 一张张看，再按顺序对到 {len(scenes)} 个场景上？\n\n"
+                    f"{os.path.basename(path)}\n图片存到：{out_dir}\n\n"
+                    f"对上的图记在场景的「{mim.REF_FIELD}」里（追加，不会删掉已有的）。在后台跑，进度看控制台。",
+                    parent=dlg,
+                ):
+                    return
+                snapshot = copy.deepcopy(scenes)
+                holder = {"done": False, "result": None, "error": "", "status": ""}
+                _image_match_busy["on"] = True
+
+                def _progress(msg: str) -> None:
+                    holder["status"] = msg
+
+                def _work() -> None:
+                    try:
+                        holder["result"] = mim.run_match(path, source, snapshot, out_dir=out_dir, progress=_progress)
+                    except Exception as exc:  # noqa: BLE001
+                        holder["error"] = f"{type(exc).__name__}: {exc}"
+                    holder["done"] = True
+
+                def _finish() -> None:
+                    _image_match_busy["on"] = False
+                    if holder["error"]:
+                        print(f"[图片对场景] 失败：{holder['error']}")
+                        messagebox.showerror("图片对场景", f"没做完：{holder['error']}", parent=dlg)
+                        return
+                    result = holder["result"] or {}
+                    current = _story_scene_list(video_detail, scene_ui)
+                    added, lost = mim.apply_matches(current, snapshot, result.get("matches") or {})
+                    if added:
+                        video_detail["scene_content"] = current
+                        try:
+                            tx_box = scene_ui.get("tx")
+                            if tx_box is not None:
+                                tx_box.delete("1.0", tk.END)
+                                tx_box.insert("1.0", json.dumps(current, ensure_ascii=False, indent=2))
+                        except tk.TclError:
+                            pass
+                        persist(video_detail, parent=dlg)
+                    text = mim.summary_text(result, added, lost)
+                    print("[图片对场景] " + text.replace("\n", "\n[图片对场景] "))
+                    messagebox.showinfo("图片对场景", text, parent=dlg)
+
+                last_status = {"v": ""}
+
+                def _poll() -> None:
+                    try:
+                        if not dlg.winfo_exists():
+                            _image_match_busy["on"] = False
+                            return
+                    except tk.TclError:
+                        _image_match_busy["on"] = False
+                        return
+                    if holder["status"] != last_status["v"]:
+                        last_status["v"] = holder["status"]
+                        print(f"[图片对场景] {last_status['v']}")
+                    if holder["done"]:
+                        _finish()
+                        return
+                    dlg.after(500, _poll)
+
+                print(f"[图片对场景] 开始：{os.path.basename(path)}（{len(scenes)} 场）")
+                threading.Thread(target=_work, daemon=True, name="image-scene-match").start()
+                dlg.after(500, _poll)
+                show_auto_close_popup(dlg, "图片对场景", "已在后台开始，进度看控制台，跑完会弹出结果。")
+
             def _material_menu(menu, entry: dict) -> None:
                 kind = entry.get("kind") or ""
                 path = entry.get("path") or ""
                 real = bool(path) and not entry.get("placeholder")
                 if real:
                     if entry.get("select"):
-                        menu.add_command(label="选作生成材料", command=lambda: _material_select(entry))
+                        # t406u: 跟单击那一行完全一样（记下点中的是哪一个语音 / 视频概览），不只是切到「媒体」
+                        menu.add_command(label="选作生成材料", command=lambda: materials_panel.select_entry(entry))
                     menu.add_command(label="拷到剪贴板", command=lambda: _material_copy(entry))
                     if kind in ("audio", "video"):
                         menu.add_command(
@@ -1642,6 +1769,12 @@ class SceneEditorImpl:
                     menu.add_separator()
                 if real and entry.get("analyze"):
                     menu.add_command(label="分析（只用这一项）…", command=lambda: _material_analyze(entry))
+                    menu.add_separator()
+                if real and kind == "pdf":
+                    menu.add_command(label="抽图对场景…", command=lambda: _material_image_match(entry, "pdf"))
+                    menu.add_separator()
+                elif real and kind == "video":
+                    menu.add_command(label="抽幻灯片对场景…", command=lambda: _material_image_match(entry, "video"))
                     menu.add_separator()
                 if kind in ("pdf", ""):
                     menu.add_command(label="选择 / 换一份 PDF …", command=lambda: _material_pick({"kind": "pdf"}))
@@ -1803,6 +1936,19 @@ class SceneEditorImpl:
                 on_reorder_images=lambda paths: _set_cover_list(list(paths)),  # t214u: 拖动排序，第一张 = 封面
             )
             scene_ui["materials_panel"] = materials_panel
+
+            def _chosen_media_path() -> str:
+                """点中的语音概览 / 视频概览优先；没点中就用拖进材料区的音频或 mp4。"""
+                focused = getattr(materials_panel, "focused_entry", None) or {}
+                path = str(focused.get("path") or "").strip()
+                if (
+                    path
+                    and not focused.get("placeholder")
+                    and (focused.get("kind") or "") in ("audio", "video")
+                    and os.path.isfile(path)
+                ):
+                    return os.path.abspath(path)
+                return _find_item_media_file(video_detail) or ""
 
             def _show_materials(on: bool) -> None:
                 if on:
@@ -2411,7 +2557,7 @@ class SceneEditorImpl:
                 if mode == "media":
                     if _item_transcript_text(video_detail)[1]:
                         return "transcript"
-                    return _media_kind_for_path(_find_item_media_file(video_detail)) or "audio"
+                    return _media_kind_for_path(_chosen_media_path()) or "audio"
                 return "analyzed"
 
             def _scene_prompt_text_now() -> str:
@@ -2434,8 +2580,8 @@ class SceneEditorImpl:
                     extra = _pdf_instruction_for(sel, int(cached.get("pages") or 0))
                     instr = (instr + "\n\n" + extra).strip() if instr else extra
                 elif material_var.get() == "media":
-                    media_path = _find_item_media_file(video_detail)
-                    if media_path and not _item_transcript_text(video_detail)[1]:
+                    media_path = _chosen_media_path()
+                    if media_path and not _transcript_beside(media_path)[1]:
                         return ""  # 媒体一律按文字稿处理；没有文字稿就还不能出提示词
                     override = _media_material_override(video_detail, media_path) if media_path else ""
                 try:
@@ -2832,6 +2978,7 @@ class SceneEditorImpl:
                     "scene_prompt_params": _scene_prompt_params,
                     "pdf_instruction_for": _pdf_instruction_for,
                     "pick_cover_image": _pick_cover_image,
+                    "chosen_media_path": _chosen_media_path,
                     "read_analyzed_draft": _read_analyzed_draft,
                 }
             )
@@ -2851,10 +2998,24 @@ class SceneEditorImpl:
             _scene_prompt_params = scene_ui["scene_prompt_params"]
             _pdf_instruction_for = scene_ui["pdf_instruction_for"]
             _pick_cover_image = scene_ui["pick_cover_image"]
+            _chosen_media_path = scene_ui["chosen_media_path"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
             _selected_material_kind = scene_ui["selected_material_kind"]
             _require_media_transcript = scene_ui["require_media_transcript"]
-            ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
+            scene_source_var = tk.StringVar()
+
+            def _refresh_scene_source_label() -> None:
+                kind = video_detail.get("scene_source") if isinstance(video_detail, dict) else ""
+                try:
+                    scene_source_var.set(
+                        f"scene_content（JSON 数组）    来源：{project_manager.scene_source_label(kind)}"
+                    )
+                except tk.TclError:
+                    pass
+
+            dlg._refresh_scene_source_label = _refresh_scene_source_label
+            _refresh_scene_source_label()
+            ttk.Label(frm, textvariable=scene_source_var).pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
                 frm, wrap=tk.WORD, width=100, height=5, font=("Consolas", 10)
             )
@@ -3087,6 +3248,12 @@ class SceneEditorImpl:
                             print(f"⚠️ 场景没有记进历史:{exc}")
                         if callable(on_saved):
                             on_saved()
+                        refresh_source = getattr(dlg, "_refresh_scene_source_label", None)
+                        if callable(refresh_source):
+                            try:
+                                refresh_source()
+                            except Exception:  # noqa: BLE001
+                                pass
                         sync_cast = scene_ui.get("sync_cast_from_scenes")
                         if callable(sync_cast):
                             dlg.after(100, sync_cast)  # 场景生成后：演员栏 = 场景里出现的人
@@ -3335,11 +3502,12 @@ class SceneEditorImpl:
                             extra = _pdf_instruction_for(label, int(cached.get("pages") or 0))
                             user_instr = (user_instr + "\n\n" + extra).strip() if user_instr else extra
                         elif material_var.get() == "media":
-                            media_path = _find_item_media_file(video_detail)
+                            media_path = _chosen_media_path()
                             if not media_path:
                                 messagebox.showwarning(
                                     "媒体",
-                                    "先把音频或 mp4 拖到材料区。",
+                                    "还没有可用的音频或视频。\n\n"
+                                    "点一下材料列表里的「语音概览」，或把音频 / mp4 文件拖进材料区。",
                                     parent=dlg,
                                 )
                                 return
@@ -3358,6 +3526,21 @@ class SceneEditorImpl:
                         elif material_var.get() == "media" and kind != "transcript":
                             # 有文字稿就直接用文字稿，不再附媒体；没有再附媒体本身。
                             attachment = _find_item_media_file(video_detail)
+                        source_kind = project_manager.SCENE_SOURCE_TEXT
+                        source_path = ""
+                        if kind == "pdf":
+                            source_kind = project_manager.SCENE_SOURCE_PDF
+                            source_path = attachment or ""
+                        elif kind == "image":
+                            source_kind = project_manager.SCENE_SOURCE_INFOGRAPHIC
+                            source_path = attachment or ""
+                        elif material_var.get() == "media":
+                            source_path = _chosen_media_path() or ""
+                            source_kind = (
+                                project_manager.SCENE_SOURCE_VIDEO
+                                if _media_kind_for_path(source_path) == "video"
+                                else project_manager.SCENE_SOURCE_AUDIO
+                            )
                         backend = _ask_scene_text_backend(
                             dlg,
                             text_only_blocked=self.llm_api.__class__._attachment_kind(attachment or "")
@@ -3382,6 +3565,8 @@ class SceneEditorImpl:
                             attachment=attachment,
                             prompt_params=_scene_prompt_params(),
                             text_backend=backend,
+                            scene_source=source_kind,
+                            scene_source_path=source_path,
                         )
 
                     def on_persist_keep_open():

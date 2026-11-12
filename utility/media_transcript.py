@@ -379,8 +379,9 @@ def _ask_llm(llm, system: str, user: str, check_cancel: Optional[Callable[[], No
     """调用 LLM。自动调用失败（报错或返回空，比如 Gemini 忙返回 503）就转到手动模式。
 
     手动模式：``manual(system, user, what)`` 会打开 LLM 手动窗口，让人把提示词拿去处理，
-    再把结果贴回来；它的返回值就是这次的回答。每一次调用都先试自动(Strata)，
-    只有这一次失败才打开手动窗口，下一次调用仍然先试自动。``mode`` 只用来统计手动次数。
+    再把结果贴回来；它的返回值就是这次的回答。传入的 ``llm`` 会先自动调用（补标点用的是 Strata），
+    只有这一次失败才打开手动窗口。``llm`` 为空时不调用任何模型，直接打开手动窗口。
+    ``mode`` 只用来统计手动次数。
     自动调用失败后自动重试的次数由 ``config.TRANSCRIBE_LLM_RETRIES`` 决定，默认 1，就是不重试。
     手动也没拿到回答就返回 ``None``。
     """
@@ -411,7 +412,10 @@ def _ask_llm(llm, system: str, user: str, check_cancel: Optional[Callable[[], No
     if mode is not None:
         mode["manual"] = True
         mode["manual_count"] = mode.get("manual_count", 0) + 1
-    print(f"{what}：自动调用没成功，转到手动模式。")
+    if use_auto:
+        print(f"{what}：自动调用没成功，转到手动模式。")
+    else:
+        print(f"{what}：这一步不自动调用模型，直接打开手动窗口。")
     if check_cancel is not None:
         check_cancel()
     try:
@@ -515,59 +519,151 @@ class ManualBridge:
         return True
 
 
+# 一次交给 Strata 的补标点长度：两分钟。10 分钟整段送进去时，答不完或开头多了一句说明，
+# 整段都会被退回，文字稿里就只剩没有标点的识别原文。
+# 字数上限只挡住特别密的一段，正常语速两分钟不会先被字数切开。
+_PUNCT_MAX_CHARS = 1500
+_PUNCT_MAX_SECONDS = 120.0
+_PUNCT_CLOCK_RE = re.compile(
+    r"^\s*\[\s*(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)\s*\]\s*(.+?)\s*$"
+)
+_SENTENCE_END_RE = re.compile(r"[。！？!?；;]")
+
+
+def _parse_punct_line(line: str):
+    """补标点的一行。``[秒]`` 或 ``[hh:mm:ss.s]`` 都可以。对不上返回 None。"""
+    clock = _PUNCT_CLOCK_RE.match(line)
+    if clock:
+        hours, minutes, seconds, text = clock.groups()
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds), text
+    match = _LINE_RE.match(line)
+    if match:
+        return float(match.group(1)), match.group(2)
+    return None
+
+
+def _text_needs_sentence_breaks(text: str) -> bool:
+    """一段比较长、却几乎没有句号问号，就是还没补上标点。"""
+    bare = _strip(text)
+    if len(bare) < 40:
+        return False
+    return len(_SENTENCE_END_RE.findall(text or "")) < max(1, len(bare) // 80)
+
+
+def _punct_slices(items: list[dict]) -> list[list[dict]]:
+    """按两分钟切开，避免一次把 10 分钟都交给 Strata。"""
+    if not items:
+        return []
+    slices: list[list[dict]] = []
+    start = 0
+    chars = 0
+    origin = float(items[0].get("start") or 0)
+    for index, item in enumerate(items):
+        size = len(str(item.get("text") or "")) + 16
+        span = float(item.get("end") or item.get("start") or 0) - origin
+        if index > start and (chars + size > _PUNCT_MAX_CHARS or span > _PUNCT_MAX_SECONDS):
+            slices.append(items[start:index])
+            start = index
+            chars = 0
+            origin = float(item.get("start") or 0)
+        chars += size
+    if start < len(items):
+        slices.append(items[start:])
+    return slices
+
+
 def _punctuate_with_times(items: list[dict], language: str, ask,
                           stats: Optional[dict] = None) -> list[tuple[float, str]]:
     """一批片段交给 LLM：补标点、一句一行、每行开头写开始秒数。出问题就退回原始片段。
 
-    ``ask(系统提示词, 用户提示词, 说明)`` 返回 LLM 的回答（自动或手动），拿不到返回 ``None``；
+    10 分钟的识别结果会先切成两分钟一段再交给 Strata。某一小段没补上标点，
+    只退回这一小段，不把整段 10 分钟都退回。
     ``ask`` 是 ``None`` 表示没有 LLM 可用。
     ``stats["punct_batches"]`` 记一共处理了几批，``stats["punct_fallback"]`` 记几批退回了原始片段。
     """
     if not items:
         return []
+    slices = _punct_slices(items)
+    if len(slices) > 1:
+        out: list[tuple[float, str]] = []
+        for piece in slices:
+            out.extend(_punctuate_one(piece, language, ask, stats))
+        return out
+    return _punctuate_one(items, language, ask, stats)
+
+
+def _punctuate_one(items: list[dict], language: str, ask,
+                   stats: Optional[dict] = None, *, retry: bool = True) -> list[tuple[float, str]]:
     raw = _raw_lines(items)
-    if stats is not None:
-        stats["punct_batches"] = stats.get("punct_batches", 0) + 1
 
     def fallback() -> list[tuple[float, str]]:
         if stats is not None:
             stats["punct_fallback"] = stats.get("punct_fallback", 0) + 1
         return raw
 
-    if ask is None:
+    status, lines = _punctuate_call(items, language, ask, stats)
+    if status == "down":
+        print("带时间的标点处理失败，这一小段用原始片段。")
         return fallback()
+    source = "".join(str(it.get("text") or "") for it in items)
+    bare = status == "ok" and _text_needs_sentence_breaks(source) and _text_needs_sentence_breaks(
+        "".join(sentence for _stamp, sentence in lines)
+    )
+    if status != "ok" or bare:
+        if retry and status != "down" and len(items) >= 2:
+            print("带时间的标点处理：这一小段没补上，拆成两段再交给 Strata。")
+            mid = len(items) // 2
+            return (
+                _punctuate_one(items[:mid], language, ask, stats, retry=False)
+                + _punctuate_one(items[mid:], language, ask, stats, retry=False)
+            )
+        if bare:
+            print("带时间的标点处理：没有加上标点，这一小段用原始片段。")
+        return fallback()
+    return lines
+
+
+def _punctuate_call(items: list[dict], language: str, ask,
+                    stats: Optional[dict] = None) -> tuple[str, list[tuple[float, str]]]:
+    """返回 ``("ok", 句子)``、``("bad", [])`` 或 ``("down", [])``。``down`` 是 Strata 没有回答。"""
+    if stats is not None:
+        stats["punct_batches"] = stats.get("punct_batches", 0) + 1
+    if ask is None:
+        return "down", []
     user = "\n".join(f"[{it['start']:.1f}-{it['end']:.1f}] {it['text']}" for it in items)
     system = config_prompt.TRANSCRIPT_TIMESTAMP_SYSTEM_PROMPT.format(language=_language_label(language))
     answer = ask(system, user, "补标点")
     if answer is None:
-        print("带时间的标点处理失败，这一批用原始片段。")
-        return fallback()
-    text = _strip_fence(answer)
+        return "down", []
     lines: list[tuple[float, str]] = []
-    for line in text.splitlines():
+    started = False
+    for line in _strip_fence(answer).splitlines():
         if not line.strip():
             continue
-        match = _LINE_RE.match(line)
-        if not match:
-            print("带时间的标点处理：有一行没有时间戳，这一批用原始片段。")
-            return fallback()
-        lines.append((float(match.group(1)), match.group(2)))
+        parsed = _parse_punct_line(line)
+        if parsed is None:
+            if not started:
+                continue
+            print("带时间的标点处理：有一行没有时间戳。")
+            return "bad", []
+        started = True
+        lines.append(parsed)
     if not lines:
-        return fallback()
+        return "bad", []
     lo = min(float(it["start"]) for it in items) - 1.0
     hi = max(float(it["end"]) for it in items) + 2.0
     last = lo
     for stamp, _sentence in lines:
         if stamp < last - 0.05 or stamp > hi:
-            print("带时间的标点处理：时间对不上，这一批用原始片段。")
-            return fallback()
+            print("带时间的标点处理：时间对不上。")
+            return "bad", []
         last = max(last, stamp)
     before = len(_strip("".join(str(it["text"]) for it in items)))
     after = len(_strip("".join(sentence for _t, sentence in lines)))
     if before and not (0.85 <= after / before <= 1.15):
-        print("带时间的标点处理：字数对不上，这一批用原始片段。")
-        return fallback()
-    return lines
+        print("带时间的标点处理：字数对不上。")
+        return "bad", []
+    return "ok", lines
 
 
 def _speaker_windows(lines: list[tuple[float, str]], max_chars: int) -> list[tuple[int, int]]:
@@ -986,3 +1082,166 @@ def transcribe_with_progress_dialog(parent, media_path: str, *, pid: str = "", l
         except tk.TclError:
             pass
     return (state["path"], "") if not state["error"] else ("", state["error"])
+
+
+_TIMED_LINE_RE = re.compile(
+    r"^\s*\[(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)\]\s*(?:[<＜](\d+)[>＞]\s*)?(.*\S)\s*$"
+)
+
+
+def parse_timed_transcript(text: str) -> list[dict]:
+    """读文字稿。每一行 ``[hh:mm:ss.s]``，换人时才有 ``<N>``。
+
+    返回的每一句都带上当时是谁在说（没写标记的沿用上一句）。
+    """
+    rows: list[dict] = []
+    current = 0
+    for line in (text or "").splitlines():
+        match = _TIMED_LINE_RE.match(line)
+        if not match:
+            continue
+        hours, minutes, seconds, who, sentence = match.groups()
+        stamp = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        if who:
+            current = int(who)
+        elif not current:
+            current = 1
+        sentence = (sentence or "").strip()
+        if sentence:
+            rows.append({"start": stamp, "speaker": current, "text": sentence})
+    return rows
+
+
+def read_timed_transcript_text(media_path: str = "", video_detail: dict | None = None) -> str:
+    """找这份媒体的文字稿。概览用旁边的同名 txt；这条自己的媒体再用记下的 transcript。"""
+    candidates: list[str] = []
+    media = (media_path or "").strip()
+    if media:
+        candidates.append(os.path.splitext(media)[0] + ".txt")
+    if isinstance(video_detail, dict):
+        stored = str(video_detail.get("transcript") or "").strip()
+        story_media = str(video_detail.get("media") or "").strip()
+        same = False
+        if media and story_media:
+            try:
+                same = os.path.normcase(os.path.abspath(media)) == os.path.normcase(os.path.abspath(story_media))
+            except OSError:
+                same = False
+        if stored and (not media or same):
+            candidates.append(stored)
+        if story_media and (not media or same):
+            candidates.append(os.path.splitext(story_media)[0] + ".txt")
+    seen: set[str] = set()
+    for path in candidates:
+        key = os.path.normcase(os.path.abspath(path)) if path else ""
+        if not key or key in seen or not os.path.isfile(path):
+            continue
+        seen.add(key)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if parse_timed_transcript(text):
+            return text
+    return ""
+
+
+def _scene_bounds(scenes: list) -> list[tuple[dict, float, float]] | None:
+    """每一场的起止秒。缺 start 就没法按文字稿切，返回 None。缺 end 用下一场的 start。"""
+    bounds = []
+    for scene in scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        try:
+            start = float(scene.get("start"))
+        except (TypeError, ValueError):
+            return None
+        try:
+            end = float(scene.get("end"))
+        except (TypeError, ValueError):
+            end = None
+        bounds.append([scene, start, end])
+    if not bounds:
+        return None
+    for index, item in enumerate(bounds):
+        if item[2] is None:
+            if index + 1 < len(bounds):
+                item[2] = bounds[index + 1][1]
+            else:
+                item[2] = item[1]
+    return [(scene, start, float(end)) for scene, start, end in bounds]
+
+
+_SENTENCE_END = "。！？!?.;；…"
+_TRAILING_CLOSERS = "\"'”’」』）)]》"
+_SOFT_END = "，,、"
+
+
+def _as_sentence(text: str) -> str:
+    """文字稿一行就是一句。抄进 speaking 时，句尾没有收句标点就补上，断句才不会被拼没。
+
+    行里原有的逗号、问号、句号保持不动。已经收住的句子不再加第二个句号。
+    """
+    body = (text or "").strip()
+    if not body:
+        return body
+    trimmed = body.rstrip(_TRAILING_CLOSERS)
+    closers = body[len(trimmed):]
+    stem = trimmed.rstrip()
+    if stem and stem[-1] in _SOFT_END:
+        stem = stem[:-1].rstrip()
+    if not stem:
+        return body
+    if stem[-1] in _SENTENCE_END:
+        return body
+    mark = "。" if any("\u4e00" <= ch <= "\u9fff" for ch in stem) else "."
+    return stem + mark + closers
+
+
+def _sentence_in_scene(stamp: float, start: float, end: float, is_last: bool) -> bool:
+    """一句归到「开始时间落在这一场里」的场。边界上的那句归下一场。"""
+    if stamp < start - 0.05:
+        return False
+    if is_last:
+        return stamp <= end + 0.05
+    return stamp < end - 0.05
+
+
+def apply_verbatim_speaking(scenes: list, transcript_text: str) -> tuple[int, int]:
+    """用文字稿原句替换每一场的 speaking。模型写的讲话丢掉。
+
+    只保留谁在说：一场开头写当时的 ``<N>``，换人再写。字和行里已有的标点保持原样。
+    每一行是一句；句尾没有句号时补上，拼进同一场时断句还在。
+    返回 (写回的场数, 没有落到任何一场的句数)。对不上时间就不改。
+    """
+    rows = parse_timed_transcript(transcript_text)
+    bounds = _scene_bounds(scenes) if rows else None
+    if not rows or not bounds:
+        return 0, 0
+    used = [False] * len(rows)
+    replaced = 0
+    last = len(bounds) - 1
+    for index, (scene, start, end) in enumerate(bounds):
+        picked = []
+        for row_i, row in enumerate(rows):
+            if _sentence_in_scene(row["start"], start, end, index == last):
+                picked.append(row)
+                used[row_i] = True
+        if not picked:
+            continue
+        parts: list[str] = []
+        previous = None
+        for row in picked:
+            speaker = int(row["speaker"] or 1)
+            sentence = _as_sentence(row["text"])
+            if speaker != previous:
+                parts.append(f"<{speaker}> {sentence}")
+                previous = speaker
+            else:
+                parts.append(sentence)
+        scene["speaking"] = " ".join(parts).strip()
+        scene.pop("speaking_timing", None)
+        replaced += 1
+    missed = sum(1 for flag in used if not flag)
+    return replaced, missed

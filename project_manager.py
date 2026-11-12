@@ -1274,11 +1274,48 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
 LIST_ITEM_TOP_PROJECT_KEYS = (
     "analyzed_content",
     "scene_content",
+    "scene_source",
+    "scene_source_path",
     "topic_category",
     "topic_subtype",
     "tags",
     "summary",
 )
+
+# 生成场景时记下材料。创建 / 重建项目只看这个，不再按「有没有封面、PDF、场数」猜测。
+SCENE_SOURCE_TEXT = "text"
+SCENE_SOURCE_PDF = "pdf"
+SCENE_SOURCE_AUDIO = "audio"
+SCENE_SOURCE_VIDEO = "video"
+SCENE_SOURCE_INFOGRAPHIC = "infographic"
+SCENE_SOURCES = (
+    SCENE_SOURCE_TEXT,
+    SCENE_SOURCE_PDF,
+    SCENE_SOURCE_AUDIO,
+    SCENE_SOURCE_VIDEO,
+    SCENE_SOURCE_INFOGRAPHIC,
+)
+SCENE_SOURCE_LABELS = {
+    SCENE_SOURCE_TEXT: "文字",
+    SCENE_SOURCE_PDF: "PDF",
+    SCENE_SOURCE_AUDIO: "音频",
+    SCENE_SOURCE_VIDEO: "视频",
+    SCENE_SOURCE_INFOGRAPHIC: "信息图",
+}
+
+
+def normalize_scene_source(kind) -> str:
+    """不认识的来源按文字：创建项目时用默认图片和 clip，不弹选择窗。"""
+    k = str(kind or "").strip().lower()
+    return k if k in SCENE_SOURCES else SCENE_SOURCE_TEXT
+
+
+def scene_source_label(kind) -> str:
+    """空字符串表示这条还没记过来源。"""
+    raw = str(kind or "").strip()
+    if not raw:
+        return "未记录（按文字）"
+    return SCENE_SOURCE_LABELS.get(normalize_scene_source(raw), "文字")
 
 _LIST_REF_PREFIX = "chanlist:"
 
@@ -1680,6 +1717,13 @@ def hydrate_config_cover_media(cfg: dict, video_detail: dict | None = None) -> N
             covers = [os.path.abspath(one)]
     if covers:
         set_cover_images(cfg, covers)
+    if isinstance(row, dict):
+        src = str(row.get("scene_source") or "").strip()
+        if src and not str(cfg.get("scene_source") or "").strip():
+            cfg["scene_source"] = normalize_scene_source(src)
+        src_path = str(row.get("scene_source_path") or "").strip()
+        if src_path and not str(cfg.get("scene_source_path") or "").strip():
+            cfg["scene_source_path"] = src_path
 
     for k, v in media.items():
         if not v:

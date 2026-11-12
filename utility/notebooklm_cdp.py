@@ -241,13 +241,14 @@ AUDIO_FORMAT_LABELS = {
 }
 
 # 自定义主题框的中英文标签（按真实 UI；没对上就退回第一个 textarea）。
-# 视频：填「自定义主题」/「描述您自己的主题」，不要填带建议芯片的「视频应侧重于哪些方面?」。
+# 视频：「自定义主题」是折叠按钮，真正的输入框占位符是「描述您自己的主题」。
+# 不要填带建议芯片的「视频应侧重于哪些方面?」。
 TOPIC_BOX_LABELS = {
     "video_overview": (
-        "自定义主题",
         "描述您自己的主题",
         "描述你自己的主题",
         "Describe your own topic",
+        "自定义主题",
         "Custom topic",
         "Customize your topic",
     ),
@@ -457,28 +458,86 @@ def _apply_video_size(page, dlg, kind: str, video_size, prompt: str, status: Sta
     return with_orientation_line(prompt, orientation)
 
 
-def _topic_textarea(dlg, kind: str):
-    """按各产物自定义框的标签找 textarea；找不到就用第一个。"""
+def element_is_fillable(tag: str, *, contenteditable: str = "", role: str = "") -> bool:
+    """按钮（例如「自定义主题」折叠标题）不能 fill。只有输入框可以。"""
+    tag = (tag or "").lower()
+    if tag in ("textarea", "input", "select"):
+        return True
+    ce = (contenteditable or "").lower()
+    if ce and ce != "false":
+        return True
+    return (role or "").lower() == "textbox"
+
+
+def _locator_is_fillable(el) -> bool:
+    try:
+        tag = el.evaluate("node => node.tagName || ''")
+        ce = el.get_attribute("contenteditable") or ""
+        role = el.get_attribute("role") or ""
+    except Exception:  # noqa: BLE001
+        return False
+    return element_is_fillable(tag, contenteditable=ce, role=role)
+
+
+def _first_fillable(loc):
+    try:
+        count = loc.count()
+    except Exception:  # noqa: BLE001
+        return None
+    for i in range(count):
+        el = loc.nth(i)
+        if _locator_is_fillable(el):
+            return el
+    return None
+
+
+def _expand_custom_topic(dlg) -> None:
+    """输入框不在时，点开「自定义主题」折叠标题。已经展开就不要再点，免得把它收起来。"""
+    try:
+        header = dlg.locator("button.custom-topic-header")
+        if not header.count():
+            return
+        box = dlg.locator(
+            'textarea[placeholder*="描述您自己的主题" i], textarea[placeholder*="描述你自己的主题" i],'
+            'textarea[placeholder*="Describe your own topic" i]'
+        )
+        if box.count() and box.first.is_visible():
+            return
+        header.first.click(timeout=3000)
+        dlg.locator("textarea").first.wait_for(state="visible", timeout=3000)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _find_topic_textarea(dlg, kind: str):
     for lab in TOPIC_BOX_LABELS.get(kind) or ():
         lab = str(lab or "").strip()
         if not lab:
             continue
         try:
-            loc = dlg.get_by_label(re.compile(re.escape(lab), re.I))
-            if loc.count():
-                return loc.first
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            loc = dlg.locator("textarea").filter(has=dlg.get_by_text(re.compile(re.escape(lab), re.I)))
-            if loc.count():
-                return loc.first
+            found = _first_fillable(dlg.get_by_label(re.compile(re.escape(lab), re.I)))
+            if found is not None:
+                return found
         except Exception:  # noqa: BLE001
             pass
         escaped = lab.replace("\\", "\\\\").replace('"', '\\"')
-        loc = dlg.locator(f'textarea[aria-label*="{escaped}" i], textarea[placeholder*="{escaped}" i]')
-        if loc.count():
-            return loc.first
+        found = _first_fillable(dlg.locator(
+            f'textarea[aria-label*="{escaped}" i], textarea[placeholder*="{escaped}" i],'
+            f'input[aria-label*="{escaped}" i], input[placeholder*="{escaped}" i]'
+        ))
+        if found is not None:
+            return found
+    return None
+
+
+def _topic_textarea(dlg, kind: str):
+    """按各产物自定义框的标签找输入框。视频概览先找「描述您自己的主题」，不要点到折叠按钮。"""
+    found = _find_topic_textarea(dlg, kind)
+    if found is None and kind == "video_overview":
+        _expand_custom_topic(dlg)
+        found = _find_topic_textarea(dlg, kind)
+    if found is not None:
+        return found
     return dlg.locator("textarea").first
 
 

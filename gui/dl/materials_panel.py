@@ -459,6 +459,16 @@ class MaterialsPanel(ttk.Frame):
             self._on_select(entry)
         return "break"
 
+    def select_entry(self, entry: dict) -> None:
+        """t406u: 右键「选作生成材料」= 单击选中：记成点中的那一行（语音 / 视频概览就用这一个文件），涂色，再通知调用方。"""
+        if not (entry.get("select") or "") or entry.get("placeholder"):
+            return
+        self.focused_entry = entry
+        self._last_click = (None, 0.0)
+        self.selected = entry.get("select") or ""
+        self._paint_selection()
+        self._on_select(entry)
+
     def _double(self, entry: dict):
         print(f"📂 材料双击：{entry.get('kind') or '?'} · {entry.get('path') or '（没有文件）'}")
         self._on_copy(entry)

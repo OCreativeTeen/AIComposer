@@ -950,10 +950,16 @@ class MagicWorkflow(EpisodeOpsMixin):
         except Exception as exc:
             print(f"⚠️ 写入封面步序号失败: {exc}")
 
-        # 从 PROJECT_CONFIG 封面媒体填充 clip_image，并按首图宽高比设定横/竖屏尺寸
+        # 配图只看生成场景时记下的来源，不按手头材料猜测，也不弹选择窗。
+        kind, path = self._story_scene_source()
+        self._scene_source_kind = kind
+        self._scene_source_path = path
+        where = f" ({os.path.basename(path)})" if path else ""
+        print(f"SOURCE: scene source = {kind}{where}")
         self._apply_cover_media_to_scenes(scene_list)
-        self._apply_item_media_as_shared_zero()
-        self._apply_item_media_as_scene_clips()
+        if kind in (project_manager.SCENE_SOURCE_AUDIO, project_manager.SCENE_SOURCE_VIDEO):
+            self._apply_item_media_as_shared_zero()
+            self._apply_item_media_as_scene_clips()
         self._copy_item_transcript_to_project()
 
         self.save_scenes_to_json()
@@ -975,8 +981,32 @@ class MagicWorkflow(EpisodeOpsMixin):
         path = os.path.join(config.get_media_path(self.pid), name)
         return os.path.abspath(path) if os.path.isfile(path) else ""
 
+    def _story_scene_source(self) -> tuple[str, str]:
+        """故事行上记下的场景来源和材料路径。没记过的按文字。"""
+        cfg = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+        kind = str(cfg.get("scene_source") or "").strip()
+        path = str(cfg.get("scene_source_path") or "").strip()
+        if not kind or not path:
+            _list_path, _index, row = project_manager.find_project_topic_list_row(cfg)
+            if isinstance(row, dict):
+                if not kind:
+                    kind = str(row.get("scene_source") or "").strip()
+                if not path:
+                    path = str(row.get("scene_source_path") or "").strip()
+        kind = project_manager.normalize_scene_source(kind) if kind else project_manager.SCENE_SOURCE_TEXT
+        if path and not os.path.isfile(path):
+            path = ""
+        return kind, path
+
     def _row_media_path(self) -> str:
-        """这条列表行上写着的媒体文件。没有文件时返回空字符串。"""
+        """这条列表行上写着的媒体文件。没有文件时返回空字符串。
+
+        场景来源是音频或视频时，用生成场景时记下的那份文件。
+        """
+        kind = getattr(self, "_scene_source_kind", "")
+        path = getattr(self, "_scene_source_path", "") or ""
+        if kind in (project_manager.SCENE_SOURCE_AUDIO, project_manager.SCENE_SOURCE_VIDEO) and path and os.path.isfile(path):
+            return os.path.abspath(path)
         cfg = project_manager.PROJECT_CONFIG
         if not isinstance(cfg, dict):
             return ""
@@ -2128,8 +2158,23 @@ class MagicWorkflow(EpisodeOpsMixin):
 
     # move_to_adjacent_episode / merge_adjacent_episode 在 magic_workflow_episodes.EpisodeOpsMixin 里。
 
+    def _source_warning(self, title: str, text: str) -> None:
+        print(f"⚠️ {title}: {text}")
+        root = tk._default_root
+        if root is None:
+            return
+        try:
+            messagebox.showwarning(title, text, parent=root)
+        except tk.TclError:
+            pass
+
     def _apply_cover_media_to_scenes(self, scene_list: list) -> None:
-        """scene_content 多场景 → PDF 页对 clip_image；单场景 → 封面图作 clip_image。"""
+        """按记下的 scene_source 配图。文字 / 音频 / 视频不在这里改图。
+
+        信息图：封面拷进每一场，不看场数。
+        PDF：页数必须等于场数，一页一张 clip_image，clip 保持默认。
+        不再弹出「用封面还是 PDF」。
+        """
         pc = project_manager.PROJECT_CONFIG
         if not isinstance(pc, dict):
             return
@@ -2138,114 +2183,94 @@ class MagicWorkflow(EpisodeOpsMixin):
         if not (project_manager.get_cover_images(pc) or get_program_media_list(pc, "slides") or pc.get("cover_video")):
             project_manager.hydrate_config_cover_media(pc)
 
-        n_scenes = len(self.scenes)
+        n_scenes = len([s for s in self.scenes if isinstance(s, dict)])
         if n_scenes <= 0:
             return
-
-        # 封面 + 分页 PDF 两种以上可选：弹窗让用户挑（点封面 / 点 PDF / 都不用 = 原默认）
+        kind = getattr(self, "_scene_source_kind", "") or project_manager.SCENE_SOURCE_TEXT
+        path = getattr(self, "_scene_source_path", "") or ""
         self._seed_cover_override = ""
-        multi = isinstance(scene_list, list) and len(scene_list) > 1
-        covers = [c for c in (project_manager.get_cover_images(pc) or []) if isinstance(c, str) and os.path.isfile(c)]
-        pdf_opt = get_primary_program_media(pc, "slides") if multi else ""
-        if pdf_opt and not os.path.isfile(pdf_opt):
-            pdf_opt = ""
-        picked = None
-        from utility.scene_image_slots import covers_for_pdf_prompt, needs_cover_vs_pdf_prompt
 
-        # 多张封面不弹窗互选；只有封面 vs 分页 PDF 才问，默认候选是当前封面 covers[0]。
-        if needs_cover_vs_pdf_prompt(covers, pdf_opt):
-            picked = self._ask_cover_or_pdf(covers_for_pdf_prompt(covers), pdf_opt, n_scenes)
-            if not picked:
-                # 都不用 / 关窗：当作没有封面、没有 PDF；add_story_scene 已随机填好频道图和 clip 视频
-                print("ℹ️ 新项目：不用封面 / PDF，场景保留随机的频道图片和 clip 视频")
-                return
-        if picked and picked[0] == "cover":
-            self._seed_cover_override = picked[1]
-            if multi:
-                self._seed_scenes_from_cover(pc)
-                return
-
-        # 多场景：用幻灯片 PDF 逐页对应 clip_image
-        if isinstance(scene_list, list) and len(scene_list) > 1:
-            slide_pdf = get_primary_program_media(pc, "slides")
-            if not (picked and picked[0] == "pdf") and (not slide_pdf or not os.path.isfile(slide_pdf)) and n_scenes <= 6:
-                # 没有分页 PDF、只有 2-6 场：预览里的封面图给每一场当 clip_image / clip_image_last
-                if self._seed_scenes_from_cover(pc):
-                    return
-            if not slide_pdf or not os.path.isfile(slide_pdf):
-                print("⚠️ 多场景但 PROJECT_CONFIG 无可用 slide PDF，跳过封面导入")
-                return
-            group_name = "1"
-            for scene in self.scenes:
-                if isinstance(scene, dict) and str(scene.get("episode") or "").strip():
-                    group_name = self.scene_group(scene)
-                    break
-            pdf_path = self._copy_slide_pdf_into_episode(slide_pdf, group_name)
-            pdf_name = os.path.basename(pdf_path)
-            _folder, page_images = self.export_pdf_pages_to_group(pdf_path, group_name)
-            if not page_images:
-                print(f"⚠️ PDF 未能渲出页面图: {pdf_path}")
-                return
-            self._stamp_episode_folder_to_pdf(group_name)
-            for scene in self.scenes:
-                if isinstance(scene, dict) and not str(scene.get("episode") or "").strip():
-                    scene["episode"] = group_name
-                    scene.pop("group", None)
-            # 场景自己带 start 时，场数以 scene_content 为准。PDF 页多出来
-            # 不能再复制最后一场，否则复制体会带着同一段起止，后面切原视频会把这一段重编码很多遍。
-            timed = any(
-                isinstance(s, dict) and self._scene_time_seconds(s.get("start")) is not None
-                for s in self.scenes
-            )
-            if timed:
-                print(
-                    f"SLIDE: {len(page_images)} pages, keep "
-                    f"{len(self.group_scene_indices(group_name))} timed scenes"
-                )
-            else:
-                self.fit_group_to_page_count(group_name, len(page_images), "extend")
-            written = 0
-            for i, scene_i in enumerate(self.group_scene_indices(group_name)):
-                if i >= len(page_images):
-                    break
-                scene = self.scenes[scene_i]
-                try:
-                    page_path = page_images[i]
-                    if os.path.splitext(page_path)[1].lower() == ".webp":
-                        refresh_scene_media(scene, "clip_image", ".webp", page_path, True)
-                    else:
-                        file_path = self.ffmpeg_processor.resize_image_smart(page_path)
-                        refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
-                except Exception as e:
-                    print(f"⚠️ 场景 {scene_i} 设置 clip_image 失败: {e}")
-                    continue
-                scene["episode"] = group_name
-                page_stem = os.path.splitext(os.path.basename(page_images[i]))[0]
-                scene["episode_page"] = int(page_stem) if page_stem.isdigit() else i + 1
-                scene["episode_pdf"] = pdf_name
-                scene.pop("group", None)
-                scene.pop("group_page", None)
-                scene.pop("group_pdf", None)
-                written += 1
-            print(f"✅ 已从 slide PDF 为第 {group_name} 集的 {written} 个场景设置 clip_image")
+        if kind in (
+            project_manager.SCENE_SOURCE_TEXT,
+            project_manager.SCENE_SOURCE_AUDIO,
+            project_manager.SCENE_SOURCE_VIDEO,
+        ):
+            print(f"SOURCE: {kind}，场景保留默认图片和 clip")
             return
 
-        # 单场景：封面图 → clip_image；封面成片 → clip
-        if n_scenes == 1:
-            scene = self.scenes[0]
-            cover = self._seed_cover_path(pc)
-            cover_video = (pc.get("cover_video") or "").strip()
-            if cover:
-                self._seed_scenes_from_cover(pc)
-            elif not cover_video or not os.path.isfile(cover_video):
-                print("⚠️ 单场景但 PROJECT_CONFIG 无可用 cover_image / cover_video，跳过封面导入")
-                return
-            if cover_video and os.path.isfile(cover_video):
-                try:
-                    refresh_scene_media(scene, "clip", ".mp4", cover_video, make_replacement_copy=True)
-                    print(f"✅ 已将封面成片设为单场景 clip: {cover_video}")
-                except Exception as e:
-                    print(f"⚠️ 设置封面 clip 失败: {e}")
+        if kind == project_manager.SCENE_SOURCE_INFOGRAPHIC:
+            if path and os.path.isfile(path):
+                self._seed_cover_override = path
+            if not self._seed_scenes_from_cover(pc, ignore_count=True):
+                self._source_warning(
+                    "信息图",
+                    "这条场景来源是信息图，但没有可用的封面。\n各场先用默认图片。",
+                )
+            return
+
+        slide_pdf = path if path.lower().endswith(".pdf") and os.path.isfile(path) else ""
+        if not slide_pdf:
+            slide_pdf = get_primary_program_media(pc, "slides") or ""
+        if not slide_pdf or not os.path.isfile(slide_pdf):
+            self._source_warning(
+                "PDF",
+                "这条场景来源是 PDF，但找不到这份 PDF。\n各场先用默认图片。",
+            )
+            return
+        try:
+            from utility.pdf_util import _pdf_page_count
+
+            pages = int(_pdf_page_count(slide_pdf) or 0)
+        except Exception:  # noqa: BLE001
+            pages = 0
+        if pages != n_scenes:
+            self._source_warning(
+                "PDF 与场景数不一致",
+                f"这条场景是按 PDF 生成的，但这份 PDF 有 {pages} 页，场景有 {n_scenes} 场。\n"
+                "页数和场数不一致，这次不按 PDF 配图，各场用默认图片。",
+            )
+            return
+        group_name = "1"
+        for scene in self.scenes:
+            if isinstance(scene, dict) and str(scene.get("episode") or "").strip():
+                group_name = self.scene_group(scene)
+                break
+        pdf_path = self._copy_slide_pdf_into_episode(slide_pdf, group_name)
+        pdf_name = os.path.basename(pdf_path)
+        _folder, page_images = self.export_pdf_pages_to_group(pdf_path, group_name)
+        if len(page_images) != n_scenes:
+            self._source_warning(
+                "PDF",
+                f"PDF 渲出 {len(page_images)} 张页图，场景有 {n_scenes} 场。\n各场先用默认图片。",
+            )
+            return
+        self._stamp_episode_folder_to_pdf(group_name)
+        written = 0
+        scene_i = 0
+        for scene in self.scenes:
+            if not isinstance(scene, dict):
+                continue
+            page_path = page_images[scene_i]
+            try:
+                if os.path.splitext(page_path)[1].lower() == ".webp":
+                    refresh_scene_media(scene, "clip_image", ".webp", page_path, True)
+                else:
+                    file_path = self.ffmpeg_processor.resize_image_smart(page_path)
+                    refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
+            except Exception as e:
+                print(f"⚠️ 场景 {scene_i} 设置 clip_image 失败: {e}")
+                scene_i += 1
+                continue
+            scene["episode"] = group_name
+            page_stem = os.path.splitext(os.path.basename(page_path))[0]
+            scene["episode_page"] = int(page_stem) if page_stem.isdigit() else scene_i + 1
+            scene["episode_pdf"] = pdf_name
+            scene.pop("group", None)
+            scene.pop("group_page", None)
+            scene.pop("group_pdf", None)
+            written += 1
+            scene_i += 1
+        print(f"✅ 已从 PDF 为 {written} 个场景设置 clip_image（clip 仍用默认）")
 
     def _seed_cover_path(self, pc: dict) -> str:
         """建项目时给场景用的封面：用户选中的当前封面（cover_image[0] / 最新一张）。"""
@@ -2284,86 +2309,19 @@ class MagicWorkflow(EpisodeOpsMixin):
             pass
         return True
 
-    def _ask_cover_or_pdf(self, covers: list, pdf_path: str, n_scenes: int):
-        """模态小窗：每张封面一个缩略图（点了就用它），分页 PDF 一个按钮（带页数），都不用 = 原默认。
-        返回 ("cover", path) / ("pdf", path) / None。"""
-        root = tk._default_root
-        if root is None:
-            return None
-        from PIL import Image, ImageTk
-
-        result = [None]
-        win = tk.Toplevel(root)
-        win.title("新项目：场景图用哪个？")
-        win.transient(root)
-        win.resizable(False, False)
-        frm = tk.Frame(win, padx=12, pady=10)
-        frm.pack(fill=tk.BOTH, expand=True)
-        covers_ok = n_scenes <= 4
-        tip = f"共 {n_scenes} 场。点一张封面：拷进每一场的 Clip/Zero 起始图与结束图（Zero 结束图之后不再改；已有自己首图的场不动）。"
-        if not covers_ok:
-            tip = f"共 {n_scenes} 场，超过 4 场，封面不能用；可以用 PDF 分页。"
-        tk.Label(frm, text=tip, justify=tk.LEFT, wraplength=640).pack(anchor=tk.W, pady=(0, 8))
-
-        def pick(val):
-            result[0] = val
-            win.destroy()
-
-        row = tk.Frame(frm)
-        row.pack(anchor=tk.W)
-        win._thumbs = []
-        for i, path in enumerate(covers):
-            cell = tk.Frame(row, padx=4, pady=4)
-            cell.grid(row=i // 5, column=i % 5, sticky=tk.N)
-            try:
-                im = Image.open(path)
-                im.thumbnail((160, 160))
-                ph = ImageTk.PhotoImage(im)
-                win._thumbs.append(ph)
-                btn = tk.Button(cell, image=ph, command=lambda p=path: pick(("cover", p)))
-            except Exception:  # noqa: BLE001
-                btn = tk.Button(cell, text="(预览失败)", width=20, height=6, command=lambda p=path: pick(("cover", p)))
-            if not covers_ok:
-                btn.configure(state=tk.DISABLED)
-            btn.pack()
-            tk.Label(cell, text=os.path.basename(path), wraplength=160, font=("Arial", 8)).pack()
-        if pdf_path:
-            try:
-                from utility.pdf_util import _pdf_page_count
-
-                pages = int(_pdf_page_count(pdf_path) or 0)
-            except Exception:  # noqa: BLE001
-                pages = 0
-            cell = tk.Frame(row, padx=4, pady=4)
-            cell.grid(row=len(covers) // 5, column=len(covers) % 5, sticky=tk.N)
-            tk.Button(
-                cell, text=f"📄 PDF\n{pages} 页" if pages else "📄 PDF", font=("Arial", 14),
-                width=8, height=4, command=lambda: pick(("pdf", pdf_path)),
-            ).pack()
-            tk.Label(cell, text=os.path.basename(pdf_path), wraplength=160, font=("Arial", 8)).pack()
-        tk.Button(frm, text="都不用（随机频道素材）", command=lambda: pick(None)).pack(anchor=tk.E, pady=(10, 0))
-        win.protocol("WM_DELETE_WINDOW", lambda: pick(None))
-        win.update_idletasks()
-        try:
-            x = root.winfo_rootx() + max(0, (root.winfo_width() - win.winfo_width()) // 2)
-            y = root.winfo_rooty() + max(0, (root.winfo_height() - win.winfo_height()) // 3)
-            win.geometry(f"+{x}+{y}")
-        except tk.TclError:
-            pass
-        win.grab_set()
-        win.focus_force()
-        root.wait_window(win)
-        return result[0]
-
-    def _seed_scenes_from_cover(self, pc: dict) -> bool:
-        """1-6 场 + 有封面：封面独立拷进每一场的 clip_image、clip_image_last、zero_image、
+    def _seed_scenes_from_cover(self, pc: dict, *, ignore_count: bool = False) -> bool:
+        """封面独立拷进每一场的 clip_image、clip_image_last、zero_image、
         zero_image_last（四份真实文件，内容相同）。已有自己首图的场不动。
         成功后打上 cover_origin=cover，此后 zero_image_last 视为封面原图、不再改写。
+        来源已标明是信息图时 ignore_count=True，不再用「最多 6 场」决定要不要用封面。
         t172u: 拷进去以后记下 cover_seeded_path，魔法工作流窗口起来后自动从封面逐场提取第 N 步。"""
         from utility.scene_image_slots import seed_scene_images_from_cover
 
         cover = self._seed_cover_path(pc)
-        if not cover or not (1 <= len(self.scenes) <= 6):
+        n = len(self.scenes)
+        if not cover or n < 1:
+            return False
+        if not ignore_count and n > 6:
             return False
         done = 0
         for scene in self.scenes:

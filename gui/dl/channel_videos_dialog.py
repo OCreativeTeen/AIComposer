@@ -1460,11 +1460,13 @@ class ChannelVideosDialogImpl:
                     parent=parent,
                 )
                 return
+            src_label = project_manager.scene_source_label(vd.get("scene_source"))
             ok = messagebox.askyesno(
                 "重新生成项目",
                 f"将删除项目 {old_pid} 的工作流文件（场景、媒体），\n"
                 f"并另建一个新的项目号。\n\n"
-                f"这条里的文案和场景内容会保留，用来填写新项目。\n\n"
+                f"这条里的文案和场景内容会保留，用来填写新项目。\n"
+                f"场景来源：{src_label}。按这个来源配图，不再询问用封面还是 PDF。\n\n"
                 f"确定删除并重新生成吗？",
                 parent=parent,
                 default=messagebox.NO,

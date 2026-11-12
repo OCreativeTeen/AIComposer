@@ -1208,6 +1208,7 @@ class MediaGUIManager:
         attachment: str = "",
         prompt_params: dict | None = None,
         text_backend: str = "",
+        from_transcript: bool = False,
     ) -> list | None:
         """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
         has_override = content_override is not None and str(content_override).strip()
@@ -1223,9 +1224,11 @@ class MediaGUIManager:
         )
         if not (prompt or "").strip():
             return None
-        # t167u: 四个后端共用：每场少人、少交换、约 10 秒说完
+        # t167u: 四个后端共用：每场少人、少交换、约 10 秒说完。
+        # 音频 / 视频的讲话必须是文字稿原句，这条「压缩对白」会把原话改写掉，所以不附上。
         import config_prompt as _cp
-        prompt = prompt.rstrip() + "\n\n" + _cp.scene_dialogue_budget_block().strip() + "\n"
+        if not from_transcript:
+            prompt = prompt.rstrip() + "\n\n" + _cp.scene_dialogue_budget_block().strip() + "\n"
         prompt = prompt.rstrip() + "\n\n" + _cp.scene_speaker_id_block().strip() + "\n"  # t174u
         backend = (text_backend or "").strip().lower()
         if backend in ("deepseek", "strata"):
@@ -1278,6 +1281,8 @@ class MediaGUIManager:
         attachment: str = "",
         prompt_params: dict | None = None,
         text_backend: str = "",
+        scene_source: str = "",
+        scene_source_path: str = "",
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。text_backend: "grok" / "gemini"（CLI自动 用哪个网页）。"""
         channel_key = self._channel_config_key()
@@ -1315,9 +1320,33 @@ class MediaGUIManager:
                     attachment=attachment,
                     prompt_params=prompt_params,
                     text_backend=text_backend,
+                    from_transcript=project_manager.normalize_scene_source(scene_source) in (
+                        project_manager.SCENE_SOURCE_AUDIO,
+                        project_manager.SCENE_SOURCE_VIDEO,
+                    ),
                 )
             except Exception as ex:
                 err_msg = str(ex)
+            if scenes and project_manager.normalize_scene_source(scene_source) in (
+                project_manager.SCENE_SOURCE_AUDIO,
+                project_manager.SCENE_SOURCE_VIDEO,
+            ):
+                try:
+                    from utility.media_transcript import apply_verbatim_speaking, read_timed_transcript_text
+
+                    transcript_text = read_timed_transcript_text(scene_source_path, video_detail)
+                    if not transcript_text:
+                        print("SPEAKING: 找不到带时间的文字稿，讲话仍用模型写的")
+                    else:
+                        copied, missed = apply_verbatim_speaking(scenes, transcript_text)
+                        if copied:
+                            print(f"SPEAKING: 已按文字稿原句写回 {copied} 场的讲话")
+                            if missed:
+                                print(f"SPEAKING: 有 {missed} 句没有落在任何一场的起止时间里")
+                        else:
+                            print("SPEAKING: 场景起止对不上文字稿的时间，讲话仍用模型写的")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 文字稿原句没有写回：{exc}")
             if scenes:
                 try:  # t174u: 人物编号对齐（只重排 / 补位，不删内容），有问题只提醒
                     from utility.speaker_ids import align_story_speakers
@@ -1344,6 +1373,14 @@ class MediaGUIManager:
                 scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
                 _old_sc = video_detail.get("scene_content")
                 video_detail["scene_content"] = scenes
+                src_kind = project_manager.normalize_scene_source(scene_source) if str(scene_source or "").strip() else ""
+                if src_kind:
+                    video_detail["scene_source"] = src_kind
+                    src_path = str(scene_source_path or "").strip()
+                    if src_kind != project_manager.SCENE_SOURCE_TEXT and src_path and os.path.isfile(src_path):
+                        video_detail["scene_source_path"] = os.path.abspath(src_path)
+                    else:
+                        video_detail.pop("scene_source_path", None)
                 new_title = project_manager.caption_from_scene_content_item(scenes[0])
                 if new_title and _scene_caption_may_replace_title(video_detail, _old_sc):
                     _apply_project_video_title(video_detail, new_title)
@@ -1374,7 +1411,8 @@ class MediaGUIManager:
                 show_auto_close_popup(
                     parent,
                     "已生成场景",
-                    f"已用「{prompt_label}」生成 {len(scenes)} 个场景，并已保存到频道列表。"
+                    f"已用「{prompt_label}」生成 {len(scenes)} 个场景，并已保存到频道列表。\n"
+                    f"场景来源：{project_manager.scene_source_label(video_detail.get('scene_source'))}。"
                     + (
                         f"\n项目成片名已更新为：{new_title}"
                         if new_title

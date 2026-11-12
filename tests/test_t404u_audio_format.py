@@ -68,10 +68,15 @@ class RealUiSelectorTests(unittest.TestCase):
 
     def test_video_still_targets_custom_topic_not_the_chip_field(self):
         labels = notebooklm_cdp.TOPIC_BOX_LABELS["video_overview"]
-        self.assertEqual(labels[0], "自定义主题")
-        self.assertIn("描述您自己的主题", labels)
+        self.assertEqual(labels[0], "描述您自己的主题")
+        self.assertIn("自定义主题", labels)
         self.assertIn("Describe your own topic", labels)
         self.assertFalse(any("侧重于哪些方面" in x for x in labels))
+
+    def test_custom_topic_header_button_is_not_a_text_box(self):
+        self.assertFalse(notebooklm_cdp.element_is_fillable("button", role=""))
+        self.assertTrue(notebooklm_cdp.element_is_fillable("textarea"))
+        self.assertTrue(notebooklm_cdp.element_is_fillable("div", contenteditable="true"))
 
     def test_video_format_still_prefers_explainer(self):
         self.assertEqual(notebooklm_cdp.VIDEO_FORMAT_PREFERRED, "explainer")

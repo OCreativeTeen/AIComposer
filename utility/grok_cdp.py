@@ -76,21 +76,52 @@ CHAT_REPLY_TEXT_SEL = '.response-content-markdown'
 # reply's labels are matched first and the search is scoped to the reply's own turn.
 CHAT_REPLY_COPY_LABELS = ("复制响应", "Copy response", "Copy", "复制")
 CHAT_REPLY_JS = """() => {
+  const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
+  const pack = (el, count) => {
+    if (!el) return {count: 0, id: '', text: ''};
+    const md = el.querySelectorAll ? el.querySelectorAll('.response-content-markdown') : [];
+    let text = '';
+    if (md && md.length) text = [...md].map(textOf).filter(Boolean).join('\\n');
+    if (!text) {
+      const bub = (el.querySelector && (el.querySelector('.message-bubble') || el.querySelector('pre'))) || el;
+      const clone = bub.cloneNode(true);
+      clone.querySelectorAll('.thinking-container, button').forEach((e) => e.remove());
+      text = textOf(clone);
+    }
+    const host = (el.closest && el.closest('[id]')) || el;
+    return {count: count || 1, id: (host && host.id) || el.id || '', text: text.trim()};
+  };
+  // 用户自己的话是 items-end。不再因为回答里也有 Edit 按钮就把回答丢掉。
   const turns = [...document.querySelectorAll('div[id^="response-"]')].filter((r) =>
-    !/(^|\\s)items-end(\\s|$)/.test(String(r.className)) && !r.querySelector('button[aria-label="Edit"]'));
-  const last = turns[turns.length - 1];
-  if (!last) return {count: 0, id: '', text: ''};
-  const md = last.querySelectorAll('.response-content-markdown');
-  let text = '';
-  if (md.length) {
-    text = [...md].map((e) => e.innerText || e.textContent || '').join('\\n');
-  } else {
-    const bub = last.querySelector('.message-bubble') || last;
-    const clone = bub.cloneNode(true);
-    clone.querySelectorAll('.thinking-container, button').forEach((e) => e.remove());
-    text = clone.innerText || clone.textContent || '';
+    !/(^|\\s)items-end(\\s|$)/.test(String(r.className)));
+  if (turns.length) {
+    const got = pack(turns[turns.length - 1], turns.length);
+    if (got.text) return got;
   }
-  return {count: turns.length, id: last.id, text: text.trim()};
+  const composer = document.querySelector('[data-testid="chat-input"]');
+  const blocks = [...document.querySelectorAll('.response-content-markdown, .message-bubble')].filter((e) => {
+    if (composer && composer.contains(e)) return false;
+    const r = e.getBoundingClientRect();
+    return r.width > 8 && r.height > 8;
+  });
+  if (blocks.length) {
+    const got = pack(blocks[blocks.length - 1], blocks.length);
+    if (got.text) return got;
+  }
+  // grok.com/bot 的纯文本回答不一定套在 response- 里。说话人结果是一行一个「编号: 人」。
+  let best = null;
+  for (const el of document.querySelectorAll('div, pre, p')) {
+    if (composer && composer.contains(el)) continue;
+    const t = textOf(el);
+    if (!t || t.length > 20000) continue;
+    const lines = t.split(/\\n/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length < 5) continue;
+    const hits = lines.filter((l) => /^\\d+\\s*[:：]\\s*[1-4]\\s*$/.test(l)).length;
+    if (hits < lines.length * 0.7) continue;
+    if (!best || t.length < best.length) best = t;
+  }
+  if (best) return {count: 1, id: '', text: best};
+  return {count: 0, id: '', text: ''};
 }"""
 # Logged-out grok.com: shows 登录/注册 and a "sign up to continue" card instead of answering.
 LOGGED_OUT_JS = """() => {
@@ -592,9 +623,10 @@ def ask_text(prompt: str, status: Status = None) -> str:
             text = reply.get("text") or ""
             if int(reply.get("count") or 0) <= before or not text:
                 continue
-            if text == last and not _stop_visible(page):
+            if text == last:
                 same += 1
-                if same >= CHAT_STABLE_POLLS:
+                # 停止按钮还在时多等一会儿。文字已经停住，就采用这段，不再一直等到超时。
+                if same >= (CHAT_STABLE_POLLS if not _stop_visible(page) else CHAT_STABLE_POLLS * 4):
                     break
             else:
                 same = 0

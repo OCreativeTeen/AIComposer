@@ -744,10 +744,11 @@ class CoverListAndPickerHelperTest(unittest.TestCase):
         self.assertIn("primary_cover_for_seeding", seed_fn)
         self.assertNotIn("covers[-1]", seed_fn)
         apply_i = mw.index("def _apply_cover_media_to_scenes")
-        ask_i = mw.index("def _ask_cover_or_pdf")
+        ask_i = mw.index("def _seed_cover_path")
         apply_fn = mw[apply_i:ask_i]
-        self.assertIn("needs_cover_vs_pdf_prompt", apply_fn)
-        self.assertIn("covers_for_pdf_prompt", apply_fn)
+        self.assertIn("scene_source", apply_fn)
+        self.assertIn("SCENE_SOURCE_INFOGRAPHIC", apply_fn)
+        self.assertNotIn("needs_cover_vs_pdf_prompt", apply_fn)
         self.assertNotIn("len(covers) + (1 if pdf_opt else 0) >= 2", apply_fn)
         # 自动从封面提取仍走 cover_seeded_path；不改提取循环
         wf = Path(ROOT, "gui/workflow/wf_prompt_flows.py").read_text(encoding="utf-8")
