@@ -262,9 +262,9 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
     def _sync_pick_ui(self):
         if self.on_pick is not None:
             self._hint_var.set(
-                "↑↓ 选择 · Enter 将所选内容填入导向说明（无预览、不写系统剪贴板）· Delete 删除当前项 · Ctrl+Delete 清空全部"
+                "↑↓ 选择 · Enter 将所选内容填入内容主题 / FYI（无预览、不写系统剪贴板）· Delete 删除当前项 · Ctrl+Delete 清空全部"
             )
-            self._activate_btn.configure(text="填入导向说明 (Enter)")
+            self._activate_btn.configure(text="填入内容主题 (Enter)")
         else:
             self._hint_var.set(
                 "↑↓ 选择 · Enter 复制到系统剪贴板并查看全文 · Delete 删除当前项 · Ctrl+Delete 清空全部"

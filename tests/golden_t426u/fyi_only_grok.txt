@@ -1,0 +1,30 @@
+NO SUBTITLES: subtitles / captions mean the speaking content (dialogue, narration, self-talk); it is heard as voice only and is never written on screen, in any language. This is not about text already in the image. （字幕 = 讲话内容，只用声音，不上屏；不是图片里已有的文字。）
+
+Visual_Style:
+三维卡通 (Pixar-Art-Cartoon)
+
+Video_choices:
+只按注意 / FYI · 单画面 · 关键字作背景 · 风格不变 · 12s
+
+Instruction_for_video_generation:
+Main action (most important):
+镜头可以移动
+
+One picture is attached. Picture 1 is the first frame of the clip.
+Animate picture 1, carrying out the main action.
+Keep the place, the people, their faces and clothes, and the objects of the picture. Only what the main action asks for moves; the objects stay as they are.
+Do not remove anyone unless the main action says so.
+Faithful animation: bring picture 1 itself to life and nothing else. Keep exactly what it shows: its people (only those already there), its background, its scene content and any keyword lettering already in it. The motion and the meaning come only from what picture 1 and its keywords show; add no place, country, period or culture description, no story, character or object that is not in picture 1. （忠实动画：只让起始画面本身动起来；图里本来就有的人、背景、场景内容和图里已有的关键字都照原样；动作和意思只从这张图和它的关键字来，不加图里没有的地域、国家、时代、文化描述、故事、人物或东西。）
+No new people: only the people already shown in picture 1 appear, exactly as many as in picture 1 (none if it shows nobody). Nobody enters or is added: no protagonist, extra, crowd, passer-by, child, background figure, reflection or silhouette, and nobody is shown twice. （不加人：只有起始画面里本来就有的人，人数一样，图里没人就一直没人；不进来新的人，不加主角、群众、路人、小孩、背景人物、倒影或剪影，也不重复同一个人。）
+One base shot: the whole video stays inside the base scene of picture 1 from the first frame to the last: the same place, background and anyone already in it stay in view, each at about the size and place they have in picture 1. The camera may move slowly (pan, turn, drift or reposition a little within this same place) and the light may shift softly without changing the time of day, but the video never cuts, never switches shots or scenes, never zooms in to one face, and never cuts to a portrait, a close-up or a single-person shot. Nobody speaks: anyone already in picture 1 keeps the mouth closed and may only make small natural movements (a nod, a glance, a gesture). Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene. （基础画面：整段一直在原来的基础画面里，场景和图里本来有的人一直在画面里、大小和位置跟起始图一样；摄像机可以慢慢移动、转动、调整方位，光线可以柔和变化，但绝不切镜头、绝不换场景、绝不推到一个人的脸、绝不切到任何人的肖像或单人特写；没有人说话，图里本来有的人闭嘴，只做小动作；只有缓慢的局部变化，不换整个场景。）
+Objects lock: keep every object exactly as in picture 1, from the first frame to the last. Empty hands stay empty the whole time; hands that hold something keep holding the same thing. No new object appears, and nothing changes into something else or disappears. （物品锁定：东西全程和起始画面一样；空手一直空手，拿着东西的一直拿着同一件；不凭空多出东西，也不变成别的、不消失。）
+Keep the visual style of picture 1 for the whole clip. Do not restyle it toward 三维卡通 (Pixar-Art-Cartoon).
+Art style lock: the whole video keeps the exact art style of picture 1: 3D animation (Pixar-style 3D animated cartoon, CGI), the selected style 三维卡通 (Pixar-Art-Cartoon). Every frame stays 3D animation with the same rendering, colours, shading, textures and character design as the first frame; it never turns into live-action, photorealistic or real-camera footage, and real places and people are shown in that same 3D animation style. （画风锁定：整段视频保持起始图原来的画风——三维卡通 (Pixar-Art-Cartoon)；每一帧都一样，绝不变成写实 / 真人实拍。）
+Image keywords: the keywords only describe lettering already drawn in the start picture (for example a keyword already set into the background); keep those as they are and they are never erased; they may gently come alive with the scene (a soft glow, shimmer, sway or light moving across it) while keeping the same characters in the same place. Anything in the keywords that is not already visible in the start picture must not be added. Nothing new appears. No new text is ever added: no word is taken from the visual description, the speaking lines or the scene title and put on screen; it is not the speaking content, not subtitles and not captions; if the start picture has no lettering, the video has none. （关键字作背景 = 只描述起始图里已经看得见、已经嵌在背景里的关键字：保留、不删除，可以灵动起来；关键字里有但图里没有的，一律不加；绝不再加任何字，不从场景描述或讲话里取字加到画面上；图里本来没有字，视频里就没有字。）
+Clip length: about 12 seconds. Pace the main action to fill the clip; do not rush it or freeze at the end.
+Do not prescribe a camera move. No push-in, pull-back, pan, tilt, zoom, arc, tracking, or handheld shake, unless ``visual`` already describes one.
+Sound: no narration, no voice-over, and no dialogue, unless the main action asks for speech. Natural ambient sound only.
+No music in this clip. No score, no song, no melody, no background music, no musical sting, no mood track.
+** Music for the finished film is added later, across the whole piece. A music bed inside one scene cannot be taken out.
+** Sound effects that belong to this place are welcome: birds, wind, rain, water, footsteps, a door, cloth, leaves, a street, a room.
+** If there is speech in this clip, keep those effects under the voices. If this clip is silent of speech, ambient sound alone is fine. Do not turn effects into a tune.

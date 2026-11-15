@@ -1245,3 +1245,190 @@ def apply_verbatim_speaking(scenes: list, transcript_text: str) -> tuple[int, in
         replaced += 1
     missed = sum(1 for flag in used if not flag)
     return replaced, missed
+
+
+# ---- t434u: 一场讲话最多 115 个字（约 25 秒），超了按句拆成连续的几场 ----
+SCENE_SPEAKING_MAX_UNITS = 115  # 汉字 1 个算 1；英文词 / 数字串 1 个算 2；标点不算
+SCENE_SPEAKING_MAX_SECONDS = 25.0  # 第二道检查：按文字稿时间，一场不超过 25 秒（单独一句超了没法再拆）
+_UNIT_MARK_RE = re.compile(r"[<＜]\d+s?[>＞]")
+_UNIT_CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]")
+_UNIT_WORD_RE = re.compile(r"[A-Za-z0-9\u00c0-\u024f]+(?:['’][A-Za-z]+)*")
+_CLAUSE_RE = re.compile(r"[^，,、；;：:。！？!?…]+[，,、；;：:。！？!?…]*[\"'”’」』）)\]》]*")
+
+
+def speaking_units(text: str) -> int:
+    """t434u: 讲话字数（汉字 1 个 = 1；英文词、数字串 1 个 = 2；标点和 <N> 标记不算）。"""
+    body = _UNIT_MARK_RE.sub(" ", str(text or ""))
+    cjk = len(_UNIT_CJK_RE.findall(body))
+    words = len(_UNIT_WORD_RE.findall(_UNIT_CJK_RE.sub(" ", body)))
+    return cjk + 2 * words
+
+
+def _balanced_groups(units: list, k: int) -> list:
+    """把 units 按顺序分成 k 组，最大的一组尽量小。返回每组的 (起, 止) 下标。"""
+    n = len(units)
+    pre = [0]
+    for u in units:
+        pre.append(pre[-1] + u)
+    inf = float("inf")
+    best = [[inf] * (n + 1) for _ in range(k + 1)]
+    cut = [[0] * (n + 1) for _ in range(k + 1)]
+    best[0][0] = 0
+    for g in range(1, k + 1):
+        for j in range(g, n + 1):
+            for i in range(g - 1, j):
+                v = max(best[g - 1][i], pre[j] - pre[i])
+                if v < best[g][j]:
+                    best[g][j], cut[g][j] = v, i
+    out, j = [], n
+    for g in range(k, 0, -1):
+        i = cut[g][j]
+        out.append((i, j))
+        j = i
+    return out[::-1]
+
+
+def _hard_chunks(text: str, max_units: int) -> list:
+    """一个分句本身就超过上限（没有标点）：按字 / 词硬切成大致一样长的几段。"""
+    tokens = re.findall(r"[A-Za-z0-9\u00c0-\u024f]+(?:['’][A-Za-z]+)*\s*|\S\s*|\s+", text)
+    units = [speaking_units(t) for t in tokens]
+    k = max(1, -(-sum(units) // max_units))
+    return ["".join(tokens[a:b]) for a, b in _balanced_groups(units, k)]
+
+
+def _split_long_sentence(text: str, max_units: int) -> list:
+    """一句超过上限：在分句标点（，、；：。！？）后面切，每段不超过上限，尽量一样长。"""
+    clauses = [c for c in _CLAUSE_RE.findall(text) if c.strip()] or [text]
+    pieces: list = []
+    for clause in clauses:
+        if speaking_units(clause) > max_units:
+            pieces.extend(_hard_chunks(clause, max_units))
+        else:
+            pieces.append(clause)
+    units = [speaking_units(p) for p in pieces]
+    k = max(1, -(-sum(units) // max_units))
+    while True:
+        groups = _balanced_groups(units, k)
+        if all(sum(units[a:b]) <= max_units for a, b in groups):
+            return ["".join(pieces[a:b]).strip() for a, b in groups]
+        k += 1
+
+
+def _join_speech(left: str, right: str) -> str:
+    if not left:
+        return right
+    if _UNIT_CJK_RE.search(left[-1:]) or left[-1:] in "，、；：。！？…」』）》" or _UNIT_CJK_RE.search(right[:1]):
+        return left + right
+    return left + " " + right
+
+
+def _scene_pieces(picked: list, scene_end: float, max_units: int) -> list:
+    """这一场的句子 → 片段 [{start, end, speaker, text, units, row, last}]。超长的句子拆成几段（时间按字数分）。"""
+    out = []
+    for i, row in enumerate(picked):
+        s = float(row["start"])
+        e = float(picked[i + 1]["start"]) if i + 1 < len(picked) else max(float(scene_end), s)
+        text = row["text"]
+        parts = [text] if speaking_units(text) <= max_units else _split_long_sentence(text, max_units)
+        total = sum(speaking_units(p) for p in parts) or 1
+        done = 0
+        for j, part in enumerate(parts):
+            u = speaking_units(part)
+            a = s + (e - s) * done / total
+            done += u
+            b = s + (e - s) * done / total
+            out.append({"start": a, "end": b, "speaker": int(row["speaker"] or 1), "text": part,
+                        "units": u, "row": i, "last": j == len(parts) - 1})
+    return out
+
+
+def _plan_scene_split(pieces: list, start: float, end: float, max_units: int, max_seconds: float) -> list:
+    """最少分几场：每场不超过 max_units 字；时间第二道检查（一场超过 max_seconds 秒且不止一段时再多分）。"""
+    n = len(pieces)
+    units = [p["units"] for p in pieces]
+
+    def span(a, b):
+        s = start if a == 0 else pieces[a]["start"]
+        e = end if b == n else pieces[b]["start"]
+        return e - s
+
+    def ok(groups):
+        return all(sum(units[a:b]) <= max_units and (b - a == 1 or span(a, b) <= max_seconds + 0.05)
+                   for a, b in groups)
+
+    if ok([(0, n)]):
+        return [(0, n)]
+    k = max(2, -(-sum(units) // max_units))
+    while k < n:
+        groups = _balanced_groups(units, k)
+        if ok(groups):
+            return groups
+        k += 1
+    return [(i, i + 1) for i in range(n)]
+
+
+def _speaking_text(pieces: list) -> str:
+    """片段拼回讲话：一场开头写 <N>，换人再写；整句之间空一格，同一句拆开的段直接接上。"""
+    parts: list = []
+    previous = None
+    prev_last = True
+    for p in pieces:
+        text = _as_sentence(p["text"]) if p["last"] else p["text"].strip()
+        if p["speaker"] != previous:
+            parts.append(f"<{p['speaker']}> {text}")
+            previous = p["speaker"]
+        elif prev_last:
+            parts[-1] = parts[-1] + " " + text
+        else:
+            parts[-1] = _join_speech(parts[-1], text)
+        prev_last = p["last"]
+    return " ".join(parts).strip()
+
+
+def split_long_transcript_scenes(scenes: list, transcript_text: str, *,
+                                 max_units: int = SCENE_SPEAKING_MAX_UNITS,
+                                 max_seconds: float = SCENE_SPEAKING_MAX_SECONDS,
+                                 groups_out: list | None = None) -> tuple[list, int]:
+    """t434u: 按文字稿写回讲话以后、人物对位以前：讲话超过 max_units 字（或超过 max_seconds 秒）的场，
+    按句子拆成连续的几场（尽量一样长；单独一句超了就在分句标点处切）。拆出来的场沿用原场的故事、画面、
+    人物等全部字段，只改 start / end / speaking。返回 (新的场景列表, 多出来的场数)。对不上时间就原样返回。
+    t436u: groups_out 给了就把每个拆开的场记成 (原场在 scenes 里的下标, [拆出来的几场])。"""
+    rows = parse_timed_transcript(transcript_text)
+    bounds = _scene_bounds(scenes) if rows else None
+    if not rows or not bounds:
+        return scenes, 0
+    import copy as _copy
+
+    out: list = []
+    added = 0
+    last = len(bounds) - 1
+    by_id = {id(scene): (start, end, index) for index, (scene, start, end) in enumerate(bounds)}
+    for scene_pos, scene in enumerate(scenes or []):
+        info = by_id.get(id(scene)) if isinstance(scene, dict) else None
+        if info is None:
+            out.append(scene)
+            continue
+        start, end, index = info
+        picked = [row for row in rows if _sentence_in_scene(row["start"], start, end, index == last)]
+        if not picked:
+            out.append(scene)
+            continue
+        pieces = _scene_pieces(picked, end, max_units)
+        groups = _plan_scene_split(pieces, start, end, max_units, max_seconds)
+        if len(groups) == 1:
+            out.append(scene)
+            continue
+        n = len(pieces)
+        made = []
+        for a, b in groups:
+            part = _copy.deepcopy(scene)
+            part["start"] = round(start if a == 0 else pieces[a]["start"], 2)
+            part["end"] = round(end if b == n else pieces[b]["start"], 2)
+            part["speaking"] = _speaking_text(pieces[a:b])
+            part.pop("speaking_timing", None)
+            out.append(part)
+            made.append(part)
+        if groups_out is not None:
+            groups_out.append((scene_pos, made))
+        added += len(groups) - 1
+    return out, added

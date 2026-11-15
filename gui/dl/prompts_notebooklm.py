@@ -68,6 +68,11 @@ def _resolve_combined_prompt_template(
         for i, (lbl, tpl) in enumerate(choices):
             if (lbl or "").strip() == want:
                 return (lbl, tpl, i)
+        # t447u: 旧名（Step Story、Series · Podcast …）→ 现在的中文名再找一次
+        want = config_channel.canonical_prompt_label(want)
+        for i, (lbl, tpl) in enumerate(choices):
+            if (lbl or "").strip() == want:
+                return (lbl, tpl, i)
     idx = max(0, min(index, len(choices) - 1))
     lbl, tpl = choices[idx]
     return lbl, tpl, idx
@@ -95,10 +100,9 @@ def _notebooklm_row_topic_fields(video_detail: dict) -> tuple[str, str, str]:
 
 def _notebooklm_row_tags_text(video_detail: dict) -> str:
     vd = video_detail if isinstance(video_detail, dict) else {}
-    tags_raw = vd.get("tags", "")
-    if isinstance(tags_raw, list):
-        return ", ".join(str(x) for x in tags_raw if str(x).strip())
-    return ", ".join(parse_tags_list(str(tags_raw or "")))
+    from utility.tags_text import normalize_tags
+
+    return ", ".join(normalize_tags(vd.get("tags")))  # t447u
 
 
 def _story_cast_text(video_detail: dict):
@@ -255,6 +259,9 @@ _PROGRAM_OUTPUT_NAMES = {
 
 
 def program_mode_key(mode_label: str) -> str:
+    key = config_channel.series_style_key(mode_label)  # t447u: 中文名（播客 / 主持人节目 / 故事对话 / 故事表演）
+    if key:
+        return "story_only" if key == "story_speak" else key
     low = (mode_label or "").lower()
     if "podcast" in low:
         return "podcast"
@@ -326,13 +333,15 @@ def build_program_cast_block(video_detail, mode_label: str = "", output: str = "
             "    ** STYLE: Counselor. No people listed: the counsel is a voice from behind the pictures.",
             "    ** The 讲员 is the counselor and the main voice of the program.",
             "    ** The other 人物 are the people of the story. They are performers, not guests: they act the story "
-            "in its own place, through action, emotion, exclamation and short exchanges, while the counselor explains.",
+            "silently in its own place, through action, expression and gesture, while the counselor explains. "
+            "They never speak: no lines, no lip-sync. Only the 讲员 speaks.",
         ]
     elif mode == "story_act":
         lines += [
             "    ** STYLE: Story act, like a silent film. The 人物 act the story out through action, behavior and "
-            "expression. Nobody speaks: no dialogue, no narrator.",
-            "    ** The 讲员, if listed, appears at most silently at the start and end.",
+            "expression. The 人物 never speak: no dialogue. The story parts carry sound effects only, no music.",
+            "    ** The 讲员, if listed, is the only voice: the opening and background, short links between parts, "
+            "and the closing. The 讲员 never tells the story for them. No 讲员: no narrator at all.",
         ]
     elif mode == "story_only":
         lines += [
@@ -529,24 +538,20 @@ def _media_material_override(video: dict, media_path: str) -> str:
 
 
 _MEDIA_SCENE_LENGTH_NOTE = (
-    "Scene size for a recording: about 30 seconds, never shorter than 15 seconds and never longer than 50 seconds. "
-    "Most scenes land between 20 and 40 seconds. So a recording of N seconds has about N divided by 30 scenes: "
-    "a 10-minute recording has about 20 scenes, a 20-minute recording about 40. "
-    "Do not write a handful of long scenes. A podcast or a long talk is many scenes. "
+    # t436u: 生成场景时只按故事片段分场，不限时长 / 字数（建项目时再整理、拆分）
+    "Scenes for a recording: one scene is one relatively independent, complete story fragment of the speech "
+    "(a story moment, one exchange, or one point being made), as long as that fragment needs. "
+    "There is no time limit and no length limit for a scene; the program refines long scenes later. "
+    "Do not cut one fragment in two just to keep scenes short, and do not glue two fragments into one scene. "
     "A scene starts at the start time of its first sentence. Its end is the start time of the first sentence "
-    "of the next scene, and the last scene ends at N. Its length is end minus start. "
-    "Work this subtraction for every scene before you answer. A scene under 15 seconds must be joined to the "
-    "neighbour whose matter is closest. A scene over 50 seconds must be split at a sentence end. "
-    "Then check the scene count against N divided by 30. "
-    "Never cut in the middle of a sentence. Inside the 15 to 50 second window, cut where a small point is finished, "
+    "of the next scene, and the last scene ends at N. "
+    "Never cut in the middle of a sentence. Cut where a story fragment or a point is finished, "
     "where a question has been answered, or where the matter turns. "
-    "If one single sentence runs longer than 50 seconds by itself, it stays whole as its own scene. "
     "Scenes need not be equal and the ends follow the sentence times, so do not repeat round numbers "
     "such as 30.00 or 60.00 as ends. "
     "Do not mix two matters in one scene, and keep the order of the speech, "
     "so the story or the levels stay clear from one scene to the next. "
-    "A recording shorter than 15 seconds is one scene. "
-    "Many scenes means several episodes: the episode rules of the prompt group them, 5 to 15 scenes per episode."
+    "A recording shorter than 15 seconds is one scene."
 )
 
 
@@ -609,13 +614,11 @@ def _prompt_text_for_material(prompt: str, material: str) -> str:
             "the speaker changes. A sentence without a mark is spoken by the same person as the sentence before it. "
             "The first line is always <1>. There are at most 4 speakers.\n"
             "Scenes from the transcript:\n"
-            "- Group whole sentences into scenes. A scene never cuts a sentence. Every scene is about 30 seconds, "
-            "never under 15 and never over 50 seconds; a recording of N seconds has about N divided by 30 scenes.\n"
-            "- You know the exact start time of every sentence, so you can measure. Walk down the transcript from the "
-            "start of a scene and find the sentence start that is closest to 30 seconds later, preferring a sentence end "
-            "where a small point is finished or a question has been answered, inside the 15 to 50 second window. "
-            "That sentence start is the next scene's start. Compute end minus start for every scene, convert times to "
-            "seconds first, and fix any scene outside 15 to 50 seconds before you answer.\n"
+            "- Group whole sentences into scenes. A scene never cuts a sentence. One scene is one relatively "
+            "independent, complete story fragment (a story moment, one exchange, or one point being made), as long as "
+            "that fragment needs. There is no time limit and no length limit for a scene.\n"
+            "- Walk down the transcript and start a new scene where a story fragment or a point is finished, where a "
+            "question has been answered, or where the matter turns. That sentence start is the next scene's start.\n"
             "- A scene's \"start\" is the start time of its first sentence. Its \"end\" is the start time of the "
             "first sentence of the next scene, so each scene's end equals the next scene's start. "
             "The first scene starts at 0.00. The last scene ends at N, the Recording length.\n"
@@ -628,7 +631,7 @@ def _prompt_text_for_material(prompt: str, material: str) -> str:
             "- Your only job for the speech is the cut: start and end must be sentence start times from the transcript, "
             "so the copied sentences are exactly the ones that belong in the scene.\n"
             "- The 10-second dialogue budget does not apply to this run. Do not condense the speech. "
-            "Scene length stays about 30 seconds, never under 15 and never over 50.\n"
+            "There is no length limit for a scene.\n"
             "- The actor list of each scene follows the transcript speaker numbers of the sentences in that scene. "
             "Place N in the actor list is the person marked <N>: <1> is the first entry, <2> the second, "
             "<3> the third, and so on. Look at the highest transcript speaker number among the sentences in this scene; "
@@ -684,7 +687,7 @@ def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: 
         "Do not merge two pages, do not split one page, do not add a scene, do not drop one. "
         "The scene count equals the page count."
     )
-    if "series" in label.lower():
+    if config_channel.is_series_label(label):
         line += (
             " The program frame (the host's or counselor's opening and closing, the remedy) "
             "is carried inside the scenes of the pages it belongs to. It does not get extra scenes."

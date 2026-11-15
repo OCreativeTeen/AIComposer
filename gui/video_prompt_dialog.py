@@ -640,6 +640,12 @@ def open_video_prompt_dialog(
         _host = (_look.get("narrator") or host_narrator or "").strip()
         _reg = (_look.get("region") or "").strip()
         _era = (_look.get("era") or "").strip()
+        _use_actor = bool(actor_var.get())
+        _bg_on = bool(bg_include_var.get()) and _use_actor  # t424u: 地域 / 时代 / 舞台 / 讲员只在勾了人物时写
+        if not _use_actor:
+            if bg_include_var.get() and (_reg or _era or _host):
+                print("ℹ️ 没勾人物：地域 · 时代 · 舞台 · 讲员不写进提示词，也不加图里没有的人")
+            _host = ""
         frames = "two" if is_transition else frame_var.get()
         field_kw = dict(
             use_visual=bool(visual_var.get()),
@@ -693,14 +699,10 @@ def open_video_prompt_dialog(
             messagebox.showerror("视频提示", str(exc), parent=dlg)
             return
         if fyi_only:
-            # FYI 已作为「主要动作」写在最前；背景条件放在后面。
-            bg = config_prompt.background_condition_block(_reg, _era, _host, bg_stage) if bg_include_var.get() else ""
-            if bg:
-                bg = bg.replace("(applies to everything below)", "(applies to the whole clip)")
-                prompt = prompt + "\n\n---\n\n" + bg
+            pass  # t422u: 只按 FYI：只让图本身动起来，背景条件（地域 / 时代 / 讲员）不写
         else:
             prompt = config_prompt.prepend_background_condition(
-                prompt, _reg, _era, _host, include=bool(bg_include_var.get()), stage=bg_stage,
+                prompt, _reg, _era, _host, include=_bg_on, stage=bg_stage,
             )
             prompt = prepend_fyi(  # t163u: FYI 里讲字幕 / 文字的句子不带
                 prompt, config_prompt.strip_caption_lines(get_fyi_text()), include=bool(fyi_include_var.get())
@@ -736,12 +738,27 @@ def open_video_prompt_dialog(
                     images.append(end)
                 else:
                     missing.append("终止画面")
+        # t426u: MiniMax 无讲话档（M0 忠实动画 / M1 无讲话场景）用自己的提示词模板（prompt_profiles），别的组合照旧
+        _pp_profile = ""
+        _pp_ctx = None
+        try:
+            from prompt_profiles import select_h3_profile as _pp_select
+
+            _scene_audio0 = bool(get_image("clip_audio")) if get_image is not None else False
+            _amode0 = audio_mode_var.get() if (_cfg_mm.is_minimax(backend) and _scene_audio0 and not story_on) else "none"
+            _pp_profile = _pp_select(is_minimax=_cfg_mm.is_minimax(backend), fyi_only=fyi_only, story_on=story_on,
+                                     use_speaking=use_sp, audio_mode=_amode0, frames=frames,
+                                     transition=bool(is_transition))
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 提示词档位没选出来（{exc}），用原来的提示词")
+            _pp_profile = ""
         # t123u: Grok 单画面：场景图后面按说话人顺序附上有形象图的人，提示词里说明每张图是谁。
         portrait_refs = []
         # t216u: MiniMax 选了「参考图工作流」时也附肖像（最多 8 张；场景图 + 8 = R2V 的 9 张上限）
         # t395u: MiniMax 只剩两个参考图工作流（8 步快速 / Pika 6 步），都附肖像（t392u：只给场景图里没有的人）
         _mm_r2v = _cfg_mm.is_minimax(backend) and _sdp_wf.normalize_h3_workflow(h3_wf_var.get()) in ("r2v_fast8", "r2v_pika6")
-        if (backend == "grok" or _mm_r2v) and frames != "two" and images and callable(get_actor_portraits):
+        if (backend == "grok" or _mm_r2v) and frames != "two" and images and callable(get_actor_portraits) \
+                and _use_actor and not _pp_profile:  # t424u: 没勾人物不附肖像；t426u: 无讲话档不附肖像
             try:
                 portrait_refs = list(get_actor_portraits(scenes[0]) or [])[: (8 if _mm_r2v else 4)]  # Grok 最多 5 张输入图
             except Exception as exc:  # noqa: BLE001
@@ -773,7 +790,9 @@ def open_video_prompt_dialog(
         _tr = transition if is_transition else None
         _start = images[0] if images else ""
         _guard_scenes = config_prompt.speaking_story_scenes(scenes) if story_on else scenes  # t416u
-        guard = config_prompt.video_guard_block(_guard_scenes, _tr, _start, audio_mode=_amode)
+        if fyi_only:
+            _guard_scenes = []  # t422u: 只按图：不看场景里的讲话 / 画面描述
+        guard = config_prompt.video_guard_block(_guard_scenes, _tr, _start, audio_mode=_amode, spoken=not fyi_only)
         if prompt.startswith("OUTPUT FORMAT"):
             head, sep, rest = prompt.partition("\n\n")
             prompt = head + "\n\n" + guard + ("\n\n" + rest if sep else "")
@@ -802,12 +821,13 @@ def open_video_prompt_dialog(
             _pics = {n: k for k, (n, _nm, _p) in enumerate(portrait_refs, 2)} if (portrait_refs and _mm_r2v) else None
             _h3_args = dict(
                 frames=frames, transition=_tr, style=style,
-                region=bg_region if bg_include_var.get() else "", era=bg_era if bg_include_var.get() else "",
+                region=bg_region if _bg_on else "", era=bg_era if _bg_on else "",
                 language=language or "", camera=camera_var.get(), audio_mode=_amode, start_image=_start,
                 seconds=_secs, use_visual=bool(visual_var.get()), use_speaking=use_sp,
                 speaking_as_story=story_on,  # t416u
                 fyi=get_fyi_text() if fyi_include_var.get() else "",
-                stage=bg_stage if bg_include_var.get() else None,
+                stage=bg_stage if _bg_on else None,
+                use_actor=_use_actor, faithful=fyi_only,  # t422u / t424u
                 speech_speed=_speech_speed if _amode == "none" else 1.0,
                 text=text_var.get(),  # t321u: 保留 / 关键字作背景 → H3 里写「Image keywords:」那句
             )
@@ -835,7 +855,7 @@ def open_video_prompt_dialog(
             prompt = _h3_build(None)
             if _amode == "talk":  # t150u: 每句台词的起止秒（分段时每段只留这段里的台词和说话人）
                 _timeline = config_prompt.h3_speaker_timeline(scenes[0]) if scenes else []
-            if polish_var.get() and scenes:
+            if polish_var.get() and scenes and not fyi_only:  # t422u: 只按图时不让 Strata 写人物
                 # t150u: Strata 精简前先看场景图 + 每个有肖像的人（原工作流也找肖像，只给 Strata 看，不送 ComfyUI）
                 try:
                     _rows = config_prompt.h3_speaker_map(scenes[0])[0]
@@ -853,6 +873,26 @@ def open_video_prompt_dialog(
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ Strata 人物描述准备失败：{exc}")
                     _h3_people = None
+        if _pp_profile:  # t426u: 档位提示词（没有讲话 / 字幕 / 旁白的字眼，声音只有环境声）
+            try:
+                from prompt_profiles import PROFILE_LABELS as _pp_labels
+                from prompt_profiles.context import make_h3_context
+                from prompt_profiles.h3 import build_h3_prompt as _pp_build
+
+                _pp_ctx = make_h3_context(
+                    _pp_profile, scenes, style=style, camera=camera_var.get(), text=text_var.get(), start_image=_start,
+                    use_visual=bool(visual_var.get()), story_on=story_on,
+                    fyi=get_fyi_text() if fyi_include_var.get() else "", use_actor=_use_actor,
+                    region=bg_region if _bg_on else "", era=bg_era if _bg_on else "",
+                    stage=bg_stage if _bg_on else None)
+                prompt = _pp_build(_pp_ctx)
+                _h3_build = None
+                _h3_people = None
+                _pres = None
+                print(f"视频提示：用档位「{_pp_labels.get(_pp_profile, _pp_profile)}」")
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 档位提示词没做成（{exc}），用原来的提示词")
+                _pp_ctx = None
         if missing and quiet:
             print("视频提示：这一场没有" + "、".join(missing) + "，只发已有的图。")
         elif missing:
@@ -977,6 +1017,11 @@ def open_video_prompt_dialog(
             box["pre"] = base
             if not _polish_on:
                 box["v"] = (base, "没用 Strata 精简")
+                return
+            if _pp_ctx is not None:  # t426u: 档位：Strata 只把中文资料译成英文画面方向，不通过就用没精简的档位提示词
+                from prompt_profiles.strata import refine_h3
+
+                box["v"] = refine_h3(_pp_ctx)
                 return
             if _h3_build is not None and _h3_people:  # t150u: 先看图写人物描述，再打磨
                 def _rb(notes):

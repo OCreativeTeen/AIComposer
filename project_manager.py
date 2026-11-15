@@ -1280,6 +1280,7 @@ LIST_ITEM_TOP_PROJECT_KEYS = (
     "topic_subtype",
     "tags",
     "summary",
+    "story_fyi",  # t447u: STORY 窗的内容主题 / FYI，建项目时一起带过去
 )
 
 # 生成场景时记下材料。创建 / 重建项目只看这个，不再按「有没有封面、PDF、场数」猜测。
@@ -2189,14 +2190,9 @@ class ProjectSelectionDialog:
         icat = (initial_category or '').strip() or None
         isub = (initial_subtype or '').strip() or None
         if initial_tags is not None:
-            if isinstance(initial_tags, list):
-                itags = [
-                    str(t).strip()
-                    for t in initial_tags
-                    if t is not None and str(t).strip()
-                ]
-            else:
-                itags = parse_tags_list(str(initial_tags)) or None
+            from utility.tags_text import normalize_tags
+
+            itags = normalize_tags(initial_tags) or None  # t447u
             if itags == []:
                 itags = None
         else:

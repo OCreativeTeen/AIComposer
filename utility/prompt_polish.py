@@ -30,6 +30,7 @@ Keep ALL hard facts:
 - Self-talk: copy sentences starting "Self-talk:", "Entire-scene self-talk:", "Audible voices:", "Single audible voice:", and "Speak once:" verbatim. A scene with exactly one speaking turn marked <Ns> is that same actor delivering the exact supplied speaking text off-mouth (lips closed, no lip sync), audible not mute — not narration of actions or setting, not another narrator. Interactive <N> lines still have lip sync. Cast count is not speaker count: unmarked visible people stay silent and never repeat the line.
 - Directions inside the scene: when something is turned, shown or handed to a person, name that person as the target and say it turns sideways toward them inside the scene, never toward the camera or viewer. People never address the camera.
 - No speech (t416u): if the prompt has the sentence starting "No speech:", nobody speaks in this clip. Copy the sentences starting "No speech:", "Tell the story in pictures:" and "Sound effects only:" verbatim, once each. Never add dialogue, spoken lines, voices, narration, voice-over, singing or music of any kind; the story content is acted out in the picture, and the sound is only ambient sound and sound effects.
+- Faithful animation / No new people (t422u/t424u): if the prompt has the sentence starting "Faithful animation:" or "No new people:", copy each verbatim, once. Only what is already in the start picture moves: never add a person, protagonist, crowd, passer-by or any figure that is not already in it, and never write any region, country, era, period, culture or stage description that the prompt does not already contain. With "Faithful animation:" the clip only brings the picture itself (its people, background, scene content and keyword lettering) to life.
 - Cast lock: keep the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. A change of pose or place is the same person moving there (for example "小偉 himself walks over and sits down on the chair"), never a second copy.
 Remove repetition, field names, meta explanations and instructions about how to read the prompt.
 Write in positive, concrete phrasing (describe what is seen and heard). Do not write ban lists.
@@ -56,6 +57,7 @@ Rules:
 - Make the visual, action, expression and voice descriptions vivid, concrete and concise, in English, positive phrasing only. No ban lists.
 - Keep the lighting / time-of-day continuity and the camera instruction.
 - Directions inside the scene: when something is turned, shown or handed to a person ("轉向 David", "turns toward David"), write it with that person as the explicit target, turning sideways inside the scene toward them, never toward the camera or viewer. Copy every sentence containing "not toward the camera" or "Everyone stays inside the scene" verbatim. People never address the camera.
+- Faithful animation / No new people (t422u/t424u): if the prompt has the sentence starting "Faithful animation:" or "No new people:", copy each verbatim, once. Only what is already in the start picture moves: never add a person, protagonist, crowd, passer-by or any figure that is not already in it, and never write any region, country, era, period, culture or stage description that the prompt does not already contain. With "Faithful animation:" the clip only brings the picture itself (its people, background, scene content and keyword lettering) to life.
 - Cast lock: copy the sentences starting "Exactly ... in the whole video" and "Any change of pose or place" verbatim. Never add a person. When the description really changes someone's pose or place (sits down, stands up, walks to...), write it as that same person moving there from where they are, never as a second copy; a person already sitting or standing in <Picture 1> simply stays there, so never invent a move. Do not describe the same move a second time in other words.
 - Copy every sentence that contains a <d> block exactly as given, together with the speaker description in front of it (for example "The young man 林浩 with a young male voice (voice Leo) (S2) says:"), including the bracketed description of each person, the times, the "while ... listens with closed lips" part and the "lip movement switches to ..." part. Rewrite only the sentences without <d>.
 - Lip sync and speaker mapping are the most important facts of this prompt. Copy the sentence starting "Speaker map:" and the sentence starting "Lip sync:" verbatim, with every bracketed person description. Never drop, shorten, swap or soften the lip-sync emphasis, who speaks, who stays silent with closed lips, the switch of the moving mouth when the speaker changes, or each speaker's seat/side (left/right) and clothing in the brackets. Every (S1)/(S2) id always means the same person as in the Speaker map; never move a speaker to the other person's seat or outfit.
@@ -291,6 +293,19 @@ def validate(original: str, polished: str, backend: str) -> str:
         obj = added_object_words(original, polished)
         if obj:
             return f"Strata 加了原提示词里没有的物品（{obj}）"
+        from config_prompt import (VIDEO_FAITHFUL_PREFIX, VIDEO_NO_NEW_PEOPLE_PREFIX,  # t422u / t424u
+                                   added_people_words, added_place_era_words)
+
+        if VIDEO_FAITHFUL_PREFIX in original and VIDEO_FAITHFUL_PREFIX not in polished:
+            return "忠实动画（只让图本身动）那句没保留"
+        if VIDEO_NO_NEW_PEOPLE_PREFIX in original and VIDEO_NO_NEW_PEOPLE_PREFIX not in polished:
+            return "不加人那句没保留"
+        ppl = added_people_words(original, polished)
+        if ppl:
+            return f"Strata 加了人（{ppl}）"
+        pl = added_place_era_words(original, polished)
+        if pl:
+            return f"Strata 加了地域 / 时代的词（{pl}）"
     except ImportError:
         pass
     for line in _dialogue_lines(original, h3):

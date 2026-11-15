@@ -342,6 +342,9 @@ def apply_scene_content_from_editor_text(
         return False, "scene_content 必须是 JSON 数组（以 [ 开头的 list）。", None
     if not parsed:
         return False, "解析后无有效场景条目，请检查 JSON 结构。", None
+    from utility.scene_shot import ensure_scene_shots
+
+    ensure_scene_shots(parsed)  # t440u: 保存时没有 shot 的场补 "1-1"
     video_detail["scene_content"] = parsed
     return True, f"parsed {len(parsed)} scene(s)", parsed
 
@@ -973,6 +976,9 @@ class MediaGUIManager:
                     video.pop("scene_content", None)
                     continue
             if isinstance(scene_content, list) and scene_content:
+                from utility.scene_shot import ensure_scene_shots
+
+                ensure_scene_shots(scene_content)  # t440u: 读进来时没有 shot 的场补 "1-1"
                 video["scene_content"] = scene_content
             else:
                 video.pop("scene_content", None)
@@ -1385,11 +1391,30 @@ class MediaGUIManager:
                             print(f"SPEAKING: 已按文字稿原句写回 {copied} 场的讲话")
                             if missed:
                                 print(f"SPEAKING: 有 {missed} 句没有落在任何一场的起止时间里")
+                            # t436u: 生成场景时不再按 115 字拆；建项目时由 utility/scene_prep 整理、拆分
                         else:
                             print("SPEAKING: 场景起止对不上文字稿的时间，讲话仍用模型写的")
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 文字稿原句没有写回：{exc}")
             if scenes:
+                try:  # t436u: 集号由手工选的「共 N 集」决定；只重新生成第 k 集 → 换掉原来的第 k 集，其它集不动
+                    _ep = dict(prompt_params or {})
+                    _n, _k = _ep.get("episodes") or 1, _ep.get("episode") or 1
+                    _only = config_channel.episode_only(_ep)
+                    for _n_note in config_channel.normalize_scene_episodes(scenes, _n, _k, only=_only):
+                        print(f"⚠️ 分集：{_n_note}")
+                    if _only:
+                        _old = video_detail.get("scene_content")
+                        if isinstance(_old, str):
+                            try:
+                                _old = json.loads(_old)
+                            except ValueError:
+                                _old = []
+                        _new_count = len(scenes)
+                        scenes = config_channel.merge_episode_scenes(_old if isinstance(_old, list) else [], scenes, _k)
+                        print(f"分集：第 {int(_k)} 集换成新生成的 {_new_count} 场，其它集不动（共 {len(scenes)} 场）")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 分集没有处理：{exc}")
                 try:  # t174u: 人物编号对齐（只重排 / 补位，不删内容），有问题只提醒
                     from utility.speaker_ids import align_story_speakers
 
@@ -1398,6 +1423,10 @@ class MediaGUIManager:
                         print(f"⚠️ 人物编号：{_n}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 人物编号检查没做：{exc}")
+                # t440u: 每一场都要有 shot（没拆过 = "1-1"，已有的不改）
+                from utility.scene_shot import ensure_scene_shots
+
+                ensure_scene_shots(scenes)
 
             def apply():
                 if on_idle:

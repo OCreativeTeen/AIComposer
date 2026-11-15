@@ -668,6 +668,7 @@ class PdfEpisodeMixin:
         pdf_name: str,
         initial_index: int = 0,
         staging: dict | None = None,
+        focus_scene: dict | None = None,
     ) -> None:
         """翻页查看页图。左右方向键翻页；当前页 → 当前场景。
         t411u: 去掉「写到本集结束 / 写到结束（跨集）」：PDF 的图对场景在生成场景时已经做好。
@@ -702,7 +703,8 @@ class PdfEpisodeMixin:
             if state["missing"]:
                 return []
             # t410u: 按场景顺序各场的 ref_images，再接本集文件夹里还没出现过的图
-            return self.workflow.ref_image_pool(group_name)
+            # t442u: focus_scene（双击时的当前场景）的图连成一块放在它的位置
+            return self.workflow.ref_image_pool(group_name, current=focus_scene)
 
         def _episode_no(page_no: int) -> int:
             """临时页号 → 本集页号（接在已有页之后，同旧的拆页编号）。"""

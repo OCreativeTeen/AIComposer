@@ -182,7 +182,7 @@ def extract(stage, topic, content="", instruction="", language="", region="", er
 
     user = (f"舞台：{stage_en(st)}" + (f"（{region} · {era}）" if (region or era) else "") + "\n"
             + f"主题：{str(topic or '').strip()}\n"
-            + (f"导向说明：{instruction.strip()}\n" if str(instruction or "").strip() else "")
+            + (f"内容主题：{instruction.strip()}\n" if str(instruction or "").strip() else "")
             + (f"输出语言：{language}\n" if language else "")
             + ("内容摘录：\n" + str(content or "").strip()[:3000] if str(content or "").strip() else ""))
     out, backend, errs = "", "", []

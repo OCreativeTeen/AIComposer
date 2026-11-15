@@ -66,7 +66,7 @@ class OneBaseShotRuleTest(unittest.TestCase):
         for name, p, pic in (("h3", _h3(), "<Picture 1>"), ("flow", _flow(), "picture 1"),
                              ("flow_evolve", _flow("to_style"), "picture 1"), ("minimax", _mm(), "the first frame"),
                              ("fyi", _fyi(), "picture 1")):
-            rule = cp.video_one_shot_rule(pic)
+            rule = cp.video_one_shot_rule(pic, speaking=(name != "fyi"))  # t422u: 只按 FYI 没有对口型那段
             self.assertEqual(p.count(rule), 1, name)
             self.assertEqual(p.count(cp.VIDEO_ONE_SHOT_PREFIX), 1, name)
 

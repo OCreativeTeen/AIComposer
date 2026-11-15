@@ -593,11 +593,12 @@ class ImagesMixin:
                 self.workflow.save_scenes_to_json()
         except Exception as e:  # noqa: BLE001
             print(f"⚠️ 整理场景参考图失败：{e}")
-        pages = self.workflow.ref_image_pool(group_name)
+        # t442u: 当前场景的图（含共用的）连成一块，打开时停在它的第一张
+        pages = self.workflow.ref_image_pool(group_name, current=scene)
         if pages:
             self._open_pdf_page_review(
                 folder, pages, group_name, os.path.basename(pdf_path or ""),
-                initial_index=start_index(pages, scene),
+                initial_index=start_index(pages, scene), focus_scene=scene,
             )
             return
         has_history = bool(self.workflow.pdf_import_history(group_name))
@@ -632,7 +633,7 @@ class ImagesMixin:
             messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
             return
         # 只是翻页查看，不整理页码：PDF 有几页就能看几页，不受本集场数限制。
-        pages = self.workflow.ref_image_pool(group_name)
+        pages = self.workflow.ref_image_pool(group_name, current=scene)
         start_idx = 0
         try:
             page_no = int(scene.get("episode_page") or 0)
@@ -645,7 +646,7 @@ class ImagesMixin:
                     start_idx = i
                     break
         self._open_pdf_page_review(
-            folder, pages, group_name, os.path.basename(pdf_path), initial_index=start_idx
+            folder, pages, group_name, os.path.basename(pdf_path), initial_index=start_idx, focus_scene=scene
         )
 
     @staticmethod

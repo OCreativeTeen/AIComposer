@@ -81,10 +81,9 @@ def _topic_fields(video_detail: dict) -> tuple[str, str, str]:
 
 def _tags_text(video_detail: dict) -> str:
     vd = video_detail if isinstance(video_detail, dict) else {}
-    tags_raw = vd.get("tags", "")
-    if isinstance(tags_raw, list):
-        return ", ".join(str(x) for x in tags_raw if str(x).strip())
-    return str(tags_raw or "").strip()
+    from utility.tags_text import normalize_tags
+
+    return ", ".join(normalize_tags(vd.get("tags")))  # t447u
 
 
 def _story_title(video_detail: dict) -> str:
@@ -140,6 +139,8 @@ def build_gemini_prompt(
         want = config_channel.STEP_STORY_LABEL
         if steps is None:
             steps = legacy
+    if not any(lbl == want for lbl, _ in rows):
+        want = config_channel.canonical_prompt_label(want)  # t447u: 旧名 → 中文名
     template = ""
     sections = 1
     for i, (lbl, tpl) in enumerate(rows):

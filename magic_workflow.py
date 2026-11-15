@@ -911,6 +911,10 @@ class MagicWorkflow(EpisodeOpsMixin):
                     changed = True
             except Exception as exc:
                 print(f"⚠️ 恢复封面步序号失败: {exc}")
+            from utility.scene_shot import ensure_scene_shots
+
+            if ensure_scene_shots(self.scenes):  # t440u: 旧项目没有 shot 的场补 "1-1"
+                changed = True
             if changed:
                 self.save_scenes_to_json()
             return
@@ -2207,6 +2211,7 @@ class MagicWorkflow(EpisodeOpsMixin):
 
         media_root = config.get_media_path(self.pid)
         counters: dict = {}
+        done: dict = {}  # t442u: 同一个原文件整个项目只复制一次（拆开的几段共用）
         changed = 0
         copied = 0
         for scene in self.scenes or []:
@@ -2217,7 +2222,8 @@ class MagicWorkflow(EpisodeOpsMixin):
             folder = self.episode_media_dir(episode)
             before = json.dumps(scene.get(pri.REF_FIELD), ensure_ascii=False, sort_keys=True, default=str)
             try:
-                copied += pri.import_scene_ref_images(scene, folder, counters[episode], media_root=media_root)
+                copied += pri.import_scene_ref_images(scene, folder, counters[episode], media_root=media_root,
+                                                      done=done)
             except OSError as e:
                 print(f"⚠️ 本集第 {counters[episode]} 场参考图复制进项目失败: {e}")
             pri.merge_legacy_page(scene, folder, first=legacy_first)
@@ -2227,11 +2233,12 @@ class MagicWorkflow(EpisodeOpsMixin):
             print(f"REF: {copied} 张参考图复制进项目 media/<集>/（<场>_<序号>）")
         return changed
 
-    def ref_image_pool(self, episode: str) -> list:
-        """t410u: 选图翻页用：按场景顺序每一场的 ref_images，再接本集文件夹里还没出现过的图（编号页图、<场>_<序号>）。"""
+    def ref_image_pool(self, episode: str, current=None) -> list:
+        """t410u: 选图翻页用：按场景顺序每一场的 ref_images，再接本集文件夹里还没出现过的图（编号页图、<场>_<序号>）。
+        t442u: current = 当前场景 → 它的图（含共用的）连成一块放在它自己的位置。"""
         from utility import project_ref_images as pri
 
-        return pri.image_pool(self.scenes, [self.episode_media_dir(episode)])
+        return pri.image_pool(self.scenes, [self.episode_media_dir(episode)], current=current)
 
     def scene_number_in_episode(self, scene) -> int:
         """这一场是本集第几场（从 1 起）。找不到就当接在本集最后。"""
@@ -2608,6 +2615,9 @@ class MagicWorkflow(EpisodeOpsMixin):
             # 在保存之前规范化可能包含JSON字符串的字段
             normalized_scenes = []
             json_string_fields = []  # 可能需要规范化的字段列表
+            from utility.scene_shot import ensure_scene_shots
+
+            ensure_scene_shots(self.scenes)  # t440u: 新加 / 新拆的场也都要有 shot（已有的不改）
             
             for scene in self.scenes:
                 normalized_scene = scene.copy()

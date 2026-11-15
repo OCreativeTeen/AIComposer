@@ -718,7 +718,9 @@ class FinalizePublishMixin:
             messagebox.showerror("Video播放", f"无法打开播放器：{e}", parent=self.root)
 
     def _ask_final_video_options(self):
-        """最终视频生成方式，上面带一个速度。返回 (mode, speed)，取消返回 None。"""
+        """最终视频生成方式，上面带范围（t436u：标记范围 / 本集 / 全部）和速度。
+        返回 (mode, speed, scope)，取消返回 None。"""
+        from utility.final_range import FINAL_SCOPES, normalize_scope, final_range_bounds
         pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
         try:
             saved = float(pc.get("final_video_speed") or 1.0)
@@ -736,6 +738,18 @@ class FinalizePublishMixin:
         frame = ttk.Frame(dlg, padding=14)
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="最终视频生成方式", font=("Arial", 12, "bold")).pack(pady=(4, 10))
+
+        scope_row = ttk.Frame(frame)
+        scope_row.pack(pady=(0, 8))
+        ttk.Label(scope_row, text="范围").pack(side=tk.LEFT, padx=(0, 6))
+        scope_var = tk.StringVar(value=normalize_scope(pc.get("final_video_scope")))
+        count = len(self.workflow.scenes or [])
+        marker = self._marker_scene_bounds()
+        episode = self.workflow.episode_run_bounds(getattr(self, "current_scene_index", -1))
+        for key, label in FINAL_SCOPES:
+            a, b = final_range_bounds(key, count, marker, episode)
+            ttk.Radiobutton(scope_row, text=f"{label}（第 {a + 1}–{b + 1} 场）", value=key,
+                            variable=scope_var).pack(side=tk.LEFT, padx=(0, 8))
 
         speed_row = ttk.Frame(frame)
         speed_row.pack(pady=(0, 10))
@@ -760,7 +774,7 @@ class FinalizePublishMixin:
             if speed < 0.5 or speed > 2.0:
                 messagebox.showwarning("速度", "速度请写在 0.5 到 2.0 之间。", parent=dlg)
                 return
-            result["value"] = (mode, speed)
+            result["value"] = (mode, speed, normalize_scope(scope_var.get()))
             dlg.destroy()
 
         for mode, label in (
@@ -781,13 +795,29 @@ class FinalizePublishMixin:
         picked = result["value"]
         if picked and isinstance(project_manager.PROJECT_CONFIG, dict):
             project_manager.PROJECT_CONFIG["final_video_speed"] = round(picked[1], 3)
+            project_manager.PROJECT_CONFIG["final_video_scope"] = picked[2]
             save_project_config(parent=self.root)
         return picked
 
+    def _final_range_bounds(self, scope) -> tuple:
+        """t436u: 范围 → 场景下标（含首尾）。"""
+        from utility.final_range import final_range_bounds
+
+        return final_range_bounds(
+            scope,
+            len(self.workflow.scenes or []),
+            self._marker_scene_bounds(),
+            self.workflow.episode_run_bounds(getattr(self, "current_scene_index", -1)),
+        )
+
     def run_finalize_video(self):
-        """t102u: 先问「右下角加 Logo」,要就给最终合成要用的所有 clip 加上(后台),再弹「最终视频生成方式」。"""
+        """t102u / t436u: 先弹「最终视频生成方式」（范围 + 速度 + 方式），再问「右下角加 Logo」
+        （要就给这个范围要用的 clip 加上，后台），然后生成。"""
         if not getattr(self, "workflow", None) or not self.workflow.scenes:
             messagebox.showwarning("最终视频", "还没有场景。", parent=self.root)
+            return
+        picked = self._ask_final_video_options()
+        if picked is None:
             return
         pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
         last = bool(pc.get("final_logo"))
@@ -800,7 +830,7 @@ class FinalizePublishMixin:
                 parent=self.root,
             ):
                 return
-            self._run_finalize_after_logo()
+            self._run_finalize_after_logo(picked)
             return
         ans = messagebox.askyesnocancel(
             "右下角 Logo",
@@ -817,9 +847,9 @@ class FinalizePublishMixin:
             except Exception:  # noqa: BLE001
                 pass
         if not ans:
-            self._run_finalize_after_logo()
+            self._run_finalize_after_logo(picked)
             return
-        start, end = self._marker_scene_bounds()
+        start, end = self._final_range_bounds(picked[2])
         scenes = [sc for sc in (self.workflow.scenes or [])[start:end + 1] if isinstance(sc, dict)]
         todo, already, no_clip = [], 0, []
         for sc in scenes:
@@ -837,7 +867,7 @@ class FinalizePublishMixin:
             note += f",没有 clip 的场景 {len(no_clip)} 个(id: {', '.join(no_clip[:12])})"
         self.log_to_output(self.video_output, note)
         if not todo:
-            self._run_finalize_after_logo()
+            self._run_finalize_after_logo(picked)
             return
 
         def _ok(scene, old_clip, new_clip):
@@ -848,7 +878,7 @@ class FinalizePublishMixin:
 
         def _done(failed):
             self.log_to_output(self.video_output, f"右下角 Logo 完成:{len(todo) - len(failed)}/{len(todo)} 场")
-            self._run_finalize_after_logo()
+            self._run_finalize_after_logo(picked)
 
         self._clip_overlay_ffmpeg_batch_async(
             todo, wm_path, wm_opts, "右下角 Logo", "加 Logo 失败",
@@ -856,11 +886,14 @@ class FinalizePublishMixin:
             on_scene_ok=_ok, on_done=_done,
         )
 
-    def _run_finalize_after_logo(self):
-        picked = self._ask_final_video_options()
+    def _run_finalize_after_logo(self, picked=None):
+        if picked is None:
+            picked = self._ask_final_video_options()
         if picked is None:
             return
-        mode, final_speed = picked
+        mode, final_speed = picked[0], picked[1]
+        scope = picked[2] if len(picked) > 2 else "marker"
+        start, end = self._final_range_bounds(scope)
         if mode == "transitions":
             with_transitions, replace_final_audio_with_zero = True, False
         elif mode == "transitions_zero":
@@ -881,10 +914,11 @@ class FinalizePublishMixin:
 
         def run_task():
             try:
-                start, end = self._marker_scene_bounds()
+                from utility.final_range import scope_label
+
                 self.log_to_output(
                     self.video_output,
-                    f"视频生成：第 {start + 1}–{end + 1} 场，速度 {final_speed:.2f} 倍",
+                    f"视频生成（{scope_label(scope)}）：第 {start + 1}–{end + 1} 场，速度 {final_speed:.2f} 倍",
                 )
                 self.workflow.finalize_video(
                     with_transitions,

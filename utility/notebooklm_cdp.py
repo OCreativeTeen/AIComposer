@@ -199,6 +199,22 @@ def _open_customize(page, spec: dict, status: Status):
     return page.locator(DIALOG_SEL).last
 
 
+SLIDES_LENGTH_LONG_RE = re.compile(r"^\s*(长|较长|Long)\s*$", re.I)
+
+
+def _select_slides_long(dlg) -> bool:
+    """t427u: 演示文稿「长度」选「长」（场景多时默认长度出不了那么多页）。找不到就返回 False（不中断）。"""
+    for sel in ("mat-button-toggle", "mat-radio-button", '[role="radio"]', "button", "mat-chip-option"):
+        try:
+            loc = dlg.locator(sel).filter(has_text=SLIDES_LENGTH_LONG_RE)
+            if loc.count():
+                loc.first.click(timeout=3000)
+                return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[notebooklm_cdp] slides length {sel}: {exc}")
+    return False
+
+
 def _click_dialog_options(dlg, options) -> None:
     """``extra["nblm_options"]``: texts to click in the dialog (e.g. "演示用幻灯片", "纵向", "短")."""
     for text in options or []:
@@ -549,6 +565,12 @@ def _fill_prompt(page, dlg, prompt: str, kind: str = "") -> None:
     got = box.input_value() or ""
     if len(got.strip()) < min(20, len((prompt or "").strip())):
         raise RuntimeError("提示词没有填进 NotebookLM 的描述框")
+    if len(got.strip()) < len((prompt or "").strip()):  # t428u: 框有字数上限时会截掉后面（硬性要求在最前面）
+        try:
+            cap = box.get_attribute("maxlength") or "?"
+        except Exception:  # noqa: BLE001
+            cap = "?"
+        print(f"[notebooklm_cdp] ⚠️ 描述框只收下 {len(got.strip())}/{len((prompt or '').strip())} 字（maxlength={cap}）")
 
 
 def _click_generate_now(page, dlg) -> None:
@@ -962,6 +984,14 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
             prompt = _step("设置画面比例", lambda: _apply_video_size(page, dlg, kind, extra.get("video_size"), prompt, status))
             _click_dialog_options(dlg, extra.get("nblm_options"))
             import config_prompt
+
+            if kind == "slides":  # t427u: 场景多时选「长」，否则默认长度大约只出 15 页
+                _n_slides = config_prompt.notebooklm_deck_slide_count(prompt)
+                if _n_slides >= config_prompt.NOTEBOOKLM_DECK_LONG_FROM:
+                    if _select_slides_long(dlg):
+                        _say(status, f"长度：长（{_n_slides} 页）")
+                    else:
+                        _say(status, f"⚠️ 没找到演示文稿「长度 · 长」，请在窗口里确认（要 {_n_slides} 页）")
 
             topic = str(extra.get("content_topic") or extra.get("nblm_topic") or "").strip()
             fill = config_prompt.notebooklm_topic_box_text(kind, topic, prompt=prompt)

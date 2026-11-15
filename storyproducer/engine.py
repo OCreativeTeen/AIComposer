@@ -377,7 +377,7 @@ class StoryEngine:
         if not labels:
             labels = [
                 "Short Story",
-                "Step Story",
+                "短故事",
                 "Mini Story",
                 "Long Story",
             ]

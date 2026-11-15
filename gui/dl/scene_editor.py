@@ -31,7 +31,7 @@ from gui.dl.youtube_dl import _youtube_row_display_title, _youtube_row_source_ti
 from gui.dl.list_store import GEN_VIDEO_SLIDE_KEY, _find_gen_video_slide_for_row
 from gui.dl.gen_video_files import STORY_MEDIA_KEY, STORY_TRANSCRIPT_KEY, _find_gen_video_webp_for_row, _find_item_media_file, _find_item_transcript_file, _gen_video_slide_pdf_dest_filename, _item_transcript_text
 from gui.dl.prompts_notebooklm import analyzed_content_text
-from gui.downloader import _apply_scene_lm_combo, _bind_text_editor_replace_from_clipboard_on_double_click, _episode_choice_label, _episode_ids_in_scenes, _filter_scenes_by_episode, _fit_story_summary_window, _image_material_override, _media_material_override, _open_cover_image_for_row, _pdf_pages_as_scene_source, _pdf_scene_generation_instruction, _project_look_from_row, _prompt_choice_entries, _prompt_text_for_material, apply_scene_content_from_editor_text, ask_download_slide_pdf, save_cover_image_as_gen_video_webp, save_pil_image_to_cover_array
+from gui.downloader import _apply_scene_lm_combo, _episode_choice_label, _episode_ids_in_scenes, _filter_scenes_by_episode, _fit_story_summary_window, _image_material_override, _media_material_override, _open_cover_image_for_row, _pdf_pages_as_scene_source, _pdf_scene_generation_instruction, _project_look_from_row, _prompt_choice_entries, _prompt_text_for_material, apply_scene_content_from_editor_text, ask_download_slide_pdf, save_cover_image_as_gen_video_webp, save_pil_image_to_cover_array
 
 
 # 节目生成用的模块函数：SceneEditorImpl 的方法由 MediaGUIManager 以未绑定方式调用（self 是 MediaGUIManager），
@@ -537,12 +537,19 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
     except tk.TclError:
         _series_label = ""
     _series_label = _series_label or (video_detail.get("scene_prompt_label") or "").strip()
-    _series_key = config_prompt.normalize_story_style(_series_label) if "series" in _series_label.lower() else ""
-    if not _series_key and config_channel.is_step_story_label(_series_label):
-        _series_key = "story_speak"  # Step Story 和 Story Speak 同一种讲法：人物对话
-    if _series_key:
-        saved = dict(saved) if isinstance(saved, dict) else {}
-        saved["narrative"] = config_prompt.story_style_narrative(_series_key)
+    # t448u: 节目生成没有自己的风格选项，跟主窗口选的方式走（短故事 / 播客 / 主持人节目 / 故事对话 / 故事表演）。
+    # 主窗口不是这五种时用这一条存的故事风格；旧的技术方案汇报 / 高管简报默默归到主持人节目（不预填 FYI）。
+    _old_narr = str((saved or {}).get("narrative") or "") if isinstance(saved, dict) else ""
+    _fallback_style = (
+        config_prompt.normalize_story_style(video_detail.get("story_style"))
+        or config_prompt.NARRATIVE_TO_STORY_STYLE.get(_old_narr, "")
+        or config_prompt.STORY_STYLE_CHOICES[0][0]
+    )
+    from utility.cast_preset import program_mode_narrative
+
+    _mode_shown, _mode_key, _mode_narr = program_mode_narrative(_series_label, _fallback_style)
+    saved = dict(saved) if isinstance(saved, dict) else {}
+    saved["narrative"] = _mode_narr
 
     open_slide_prompt_dialog(
         dlg,
@@ -562,6 +569,9 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         get_analysis=get_analysis,
         material_pdf=material_pdf,
         actor_avatar_dir=_story_avatar_dir(video_detail),
+        program_mode=_series_label,
+        story_style=_fallback_style,
+        get_fyi=(scene_ui.get("fyi_get") if isinstance(scene_ui, dict) else None),
     )
 
 
@@ -684,9 +694,9 @@ class SceneEditorImpl:
             for _src in (video_detail, video_detail.get(project_manager.PROJECT_PROFILE_KEY)):
                 if isinstance(_src, dict) and (_src.get("scene_prompt_label") or "").strip():
                     _saved_prompt_label = (_src.get("scene_prompt_label") or "").strip()
-                    _saved_prompt_label = config_channel.STORY_PROMPT_LABEL_RENAMES.get(
-                        _saved_prompt_label, _saved_prompt_label
-                    )
+                    if not any((opt[0] or "").strip() == _saved_prompt_label for opt in nb_prompt_choices):
+                        # t447u: 旧名（Step Story、Series . Podcast、Series · Story Only …）→ 现在的中文名
+                        _saved_prompt_label = config_channel.canonical_prompt_label(_saved_prompt_label)
                     break
             if config_channel.is_series_direct_label(_saved_prompt_label):
                 # 直接生成系列节目已去掉：按这一条的叙事风格回到对应的 Series 选项（没有就 Series · Podcast）
@@ -726,8 +736,9 @@ class SceneEditorImpl:
                 width=3,
             )
             step_count_combo.pack(side=tk.LEFT)
-            series_total_var = tk.StringVar(value="1")  # Series：共 1 集 = 整套节目（原行为）
+            series_total_var = tk.StringVar(value="1")  # t436u: 共 1 集 = 不分集；共 N 集 = 一次生成全部 N 集
             series_ep_var = tk.StringVar(value="1")
+            series_only_var = tk.BooleanVar(value=False)  # t436u: 勾上 = 只重新生成第 k 集（其它集不动）
             series_frm = ttk.Frame(gen_host)
             ttk.Label(series_frm, text="共").pack(side=tk.LEFT, padx=(0, 2))
             series_total_combo = ttk.Combobox(
@@ -738,7 +749,9 @@ class SceneEditorImpl:
                 width=3,
             )
             series_total_combo.pack(side=tk.LEFT)
-            ttk.Label(series_frm, text="集  第").pack(side=tk.LEFT, padx=(2, 2))
+            ttk.Label(series_frm, text="集").pack(side=tk.LEFT, padx=(2, 6))
+            series_only_chk = ttk.Checkbutton(series_frm, text="只重新生成第", variable=series_only_var)
+            series_only_chk.pack(side=tk.LEFT)
             series_ep_combo = ttk.Combobox(
                 series_frm, textvariable=series_ep_var, state="readonly", width=3
             )
@@ -756,6 +769,11 @@ class SceneEditorImpl:
                 series_ep_combo.configure(values=[str(i) for i in range(1, n + 1)])
                 if _int_of(series_ep_var, 1) > n:
                     series_ep_var.set(str(n))
+                _multi = n > 1  # t436u: 共 1 集时「只重新生成第 k 集」没有意义
+                series_only_chk.configure(state="normal" if _multi else "disabled")
+                series_ep_combo.configure(state="readonly" if _multi else "disabled")
+                if not _multi:
+                    series_only_var.set(False)
 
             _sync_series_episode_choices()
             series_total_var.trace_add("write", _sync_series_episode_choices)
@@ -792,8 +810,9 @@ class SceneEditorImpl:
                         text="第几步" if config_channel.is_step_image_label(sel) else "步数"
                     )
                     step_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
-                elif config_channel.is_series_direct_label(sel) or config_channel.is_series_label(sel):
-                    series_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
+                if not (config_channel.is_step_image_label(sel) or config_channel.is_scene_summary_image_label(sel)):
+                    # t436u: 共 N 集对所有场景提示词都有效（以前只给 Series）
+                    series_frm.pack(side=tk.LEFT, padx=(0, 8), after=step_frm if step_frm.winfo_manager() else prompt_combo)
 
             prompt_combo_var.trace_add("write", _sync_dynamic_prompt_widgets)
             _sync_dynamic_prompt_widgets()
@@ -1170,7 +1189,7 @@ class SceneEditorImpl:
                         refresh_media()
                     persist(video_detail, parent=dlg)
                     note = f"这份 PDF 已挂到这一条（{page_count} 页）。"
-                    if "series" in (prompt_combo_var.get() or "").lower():
+                    if config_channel.is_series_label(prompt_combo_var.get() or ""):
                         note += "\n\n系列提示词可以在材料旁边选择：每一页一个场景，或由 AI 判断场数。"
                     show_auto_close_popup(dlg, "PDF", note)
                 finally:
@@ -2488,7 +2507,7 @@ class SceneEditorImpl:
                     label = ((pv.get() if pv is not None else "") or "").strip()
                     if label:
                         look["scene_prompt_label"] = label
-                        st = config_prompt.normalize_story_style(label) if "series" in label.lower() else ""
+                        st = config_channel.series_style_key(label)
                         if not st and config_channel.is_step_story_label(label):
                             st = "story_speak"
                         if st:
@@ -2519,34 +2538,79 @@ class SceneEditorImpl:
                     "steps": _int_of(step_count_var, config_channel.STEP_STORY_DEFAULT),
                     "episode": _int_of(series_ep_var, 1),
                     "episodes": _int_of(series_total_var, 1),
+                    "episode_only": bool(series_only_var.get()),  # t436u
                     "visual_style": (visual_style_var.get() or "").strip(),
                 }
 
             def _pdf_instruction_for(label: str, pages: int) -> str:
                 p = _scene_prompt_params()
-                if config_channel.is_series_direct_label(label) or (
-                    config_channel.is_series_label(label) and p["episodes"] > 1
-                ):
+                only = config_channel.episode_only(p)
+                if only:  # t436u: 只重新生成第 k 集
                     return (
-                        f"The PDF has {int(pages)} pages and describes the whole series. "
+                        f"The PDF has {int(pages)} pages and describes the whole program of {p['episodes']} episodes. "
                         f"Read it all, then use only the part for episode {p['episode']} of {p['episodes']}. "
                         "One scene per page does not apply."
                     )
-                return _pdf_scene_generation_instruction(
+                if config_channel.is_series_direct_label(label):
+                    return (
+                        f"The PDF has {int(pages)} pages and describes the whole series. "
+                        "Read it all. One scene per page does not apply."
+                    )
+                line = _pdf_scene_generation_instruction(
                     label,
                     int(pages),
-                    _pdf_layout_mode() if "series" in label.lower() else "ai",
+                    _pdf_layout_mode() if config_channel.is_series_label(label) else "ai",
                 )
+                if int(p.get("episodes") or 1) > 1:  # t436u: 共 N 集：页还是一页一场，再按 EPISODES 规则分成 N 集
+                    line += (
+                        f" Then group these page scenes into exactly {p['episodes']} episodes, "
+                        "as the EPISODES block says."
+                    )
+                return line
 
-            ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
-                anchor=tk.W, pady=(0, 2)
+            # t447u: 「内容主题 / FYI」取代原来的「导向说明」：场景生成（模板 {instruction}）和节目生成都用这一份，
+            # 存在这一条的 story_fyi / story_fyi_history / story_fyi_include（建项目时 story_fyi 复制进项目）。
+            from gui.prompt_fyi import pack_fyi_note
+            from utility import story_fyi as _story_fyi
+
+            _fyi_hist, _fyi_inc = _story_fyi.load_story_fyi(video_detail)
+            _fyi_job = {"id": None}
+            _fyi_parts: dict = {}
+
+            def _fyi_persist_now() -> None:
+                _fyi_job["id"] = None
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"FYI 没有存下：{exc}")
+
+            def _fyi_changed() -> None:
+                if not _fyi_parts:
+                    return
+                if not _story_fyi.store_story_fyi(
+                    video_detail, _fyi_parts["get_text"](), _fyi_parts["get_history"](),
+                    bool(_fyi_parts["include_var"].get()),
+                ):
+                    return
+                if _fyi_job["id"] is not None:
+                    try:
+                        dlg.after_cancel(_fyi_job["id"])
+                    except tk.TclError:
+                        pass
+                try:
+                    _fyi_job["id"] = dlg.after(1500, _fyi_persist_now)
+                except tk.TclError:
+                    _fyi_job["id"] = None
+
+            _fyi_box, _fyi_get_text, _fyi_include_var, _fyi_get_history = pack_fyi_note(
+                frm, history=_fyi_hist, pady=(0, 8), include=_fyi_inc,
+                title="内容主题 / FYI（场景生成和节目生成都用）", on_change=_fyi_changed,
             )
-            instruction_frm = ttk.Frame(frm)
-            instruction_frm.pack(fill=tk.X, pady=(0, 8))
-            instruction_tx = scrolledtext.ScrolledText(
-                instruction_frm, wrap=tk.WORD, width=100, height=2, font=("Arial", 9)
-            )
-            instruction_tx.pack(fill=tk.X, pady=(0, 4))
+            _fyi_parts.update(get_text=_fyi_get_text, get_history=_fyi_get_history, include_var=_fyi_include_var)
+            # 原来用导向说明 Text 的地方（场景生成、CLI instruction）照旧用 get / delete / insert
+            instruction_tx = _story_fyi.FyiTextAdapter(_fyi_get_text, _fyi_box.set_text, _fyi_include_var)
+            scene_ui["fyi_get"] = lambda: (_fyi_get_text(), bool(_fyi_include_var.get()))
+            scene_ui["fyi_set"] = _fyi_box.set_text
 
             def _selected_material_kind() -> str:
                 mode = material_var.get()
@@ -2967,6 +3031,7 @@ class SceneEditorImpl:
                     "remember_pdf_source": _remember_pdf_source,
                     "prompt_combo": prompt_combo,
                     "nb_prompt_choices": nb_prompt_choices,
+                    "commit_prompt_label": _commit_prompt_label,
                     "instruction_tx": instruction_tx,
                     "visual_style_var": visual_style_var,
                     "visual_style_combo_opts": visual_style_combo_opts,
@@ -3020,7 +3085,7 @@ class SceneEditorImpl:
                 frm, wrap=tk.WORD, width=100, height=5, font=("Consolas", 10)
             )
             tx.pack(fill=tk.X, expand=False, pady=(0, 8))
-            _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
+            # t439u: 去掉「双击用剪贴板替换全文」；普通双击 = Tk 默认选词，Ctrl+双击 = 看参考图（见下）
             scene_ui["tx"] = tx
 
             # t113u: 摘要框(列表行 summary),可编辑;自动摘要完成后刷新
@@ -3329,6 +3394,18 @@ class SceneEditorImpl:
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+                        # t447u: 生成前检查人物：故事对话 / 故事表演 / 短故事 至少 2 个人物；播客至少 2 人；主持人节目要有讲员或人物
+                        from utility import cast_preset as _cast_preset
+
+                        _cast_mode = _cast_preset.mode_for_label(label)
+                        if _cast_mode:
+                            _panel = scene_ui.get("actor_panel")
+                            _cast_now = (_panel.get_text() if _panel is not None
+                                         else str(video_detail.get("story_actors") or ""))
+                            _ok, _why = _cast_preset.validate_cast_for_mode(_cast_mode, _cast_now)
+                            if not _ok:
+                                show_auto_close_popup(dlg, "场景生成", _why, kind="error", duration_ms=6000)
+                                return
                         kind = _selected_material_kind()
                         override = None
                         if config_channel.is_scene_summary_image_label(label):
@@ -3577,6 +3654,16 @@ class SceneEditorImpl:
                         )
                         if not ok:
                             return False, msg
+                        from utility.scene_shot import missing_shots
+
+                        if missing_shots(_parse_scene_json_list(raw)):  # t440u: 补了 shot → 编辑框也显示出来
+                            try:
+                                _view = tx.yview()
+                                tx.delete("1.0", tk.END)
+                                tx.insert("1.0", json.dumps(parsed, ensure_ascii=False, indent=2))
+                                tx.yview_moveto(_view[0])
+                            except tk.TclError:
+                                pass
                         result_holder[0] = parsed
                         if not persist(video_detail, parent=dlg):
                             return False, "写入频道列表失败"
@@ -3627,7 +3714,7 @@ class SceneEditorImpl:
                     ttk.Style().configure(
                         smart_style,
                         font=("Microsoft YaHei UI", 9, "bold"),
-                        padding=(6, 6),
+                        padding=(3, 6),  # t447u: 多了「人物设置」，按钮收窄
                     )
                     ttk.Style().configure(
                         "StoryMidAction.TButton",
@@ -3639,7 +3726,7 @@ class SceneEditorImpl:
                         text="场景生成",
                         command=on_smart_generate,
                         style=smart_style,
-                        width=8,
+                        width=6,
                     )
                     # 方案下拉在前,中间一道和前面同宽的分隔,场景生成按钮在后
                     _smart_sep = ttk.Separator(scene_ui["prompt_combo"].master, orient="vertical")
@@ -3658,10 +3745,92 @@ class SceneEditorImpl:
                         text="生成节目",
                         command=_on_program_btn,
                         style=smart_style,
-                        width=8,
+                        width=6,
                     )
-                    program_btn.pack(side=tk.LEFT, padx=(0, 6), after=_smart_sep)
-                    smart_btn.pack(side=tk.LEFT, padx=(0, 6), after=program_btn)
+
+                    def _on_cast_preset() -> None:
+                        """t447u: 人物设置：按场景生成方式 + 分析报告让 Strata 预设人物（关系）；再按一次换一组不同的关系。"""
+                        import threading
+
+                        from utility import cast_preset as _cp
+
+                        mode = _cp.mode_for_label((prompt_combo_var.get() or "").strip())
+                        if not mode:
+                            show_auto_close_popup(
+                                dlg, "人物设置",
+                                "这个场景生成方式不用设置人物（播客 / 主持人节目 / 故事对话 / 故事表演 / 短故事 才用）。",
+                                kind="error", duration_ms=4500,
+                            )
+                            return
+                        analysis = _story_analysis_text(video_detail, scene_ui)
+                        if not (analysis or "").strip():
+                            show_auto_close_popup(dlg, "人物设置", "还没有分析报告。", kind="error", duration_ms=3500)
+                            return
+                        panel = scene_ui.get("actor_panel")
+                        current = panel.get_text() if panel is not None else str(video_detail.get("story_actors") or "")
+                        narrator = ""
+                        try:
+                            nv = scene_ui.get("narrator_var")
+                            narrator = ((panel.host_name() if panel is not None else "")
+                                        or (nv.get() if nv is not None else "") or "").strip()
+                        except tk.TclError:
+                            narrator = ""
+                        narrator = (narrator or str(video_detail.get("narrator") or "")
+                                    or (project_manager.LAST_NARRATOR or "")).strip()
+                        history = _cp.cast_history(video_detail)
+                        result: dict = {}
+
+                        def _work() -> None:
+                            try:
+                                result["v"] = _cp.preset_cast(
+                                    mode, analysis, narrator=narrator, history=history, current=current
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                result["e"] = exc
+
+                        _busy(cast_btn)
+                        th = threading.Thread(target=_work, daemon=True)
+                        th.start()
+
+                        def _poll() -> None:
+                            if th.is_alive():
+                                dlg.after(250, _poll)
+                                return
+                            _idle(cast_btn)
+                            if "e" in result:
+                                show_auto_close_popup(dlg, "人物设置", f"没有设置好：{result['e']}",
+                                                      kind="error", duration_ms=6000)
+                                return
+                            text, people = result["v"]
+                            _cp.remember_cast(video_detail, people)
+                            if panel is not None:
+                                panel.set_text(text)  # 人物栏 on_change 会存进这一条（连 cast_history）
+                            else:
+                                video_detail["story_actors"] = text
+                                try:
+                                    persist(video_detail, parent=dlg)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                            show_auto_close_popup(
+                                dlg, "人物设置",
+                                f"{_cp.MODE_NAMES.get(mode, mode)}：\n" + text.replace(" | ", "\n")
+                                + "\n\n再按一次「人物设置」换一组关系。",
+                                duration_ms=4000,
+                            )
+
+                        dlg.after(250, _poll)
+
+                    cast_btn = ttk.Button(
+                        scene_ui["prompt_combo"].master,
+                        text="人物设置",
+                        command=_on_cast_preset,
+                        style=smart_style,
+                        width=6,
+                    )
+                    scene_ui["cast_preset"] = _on_cast_preset
+                    program_btn.pack(side=tk.LEFT, padx=(0, 4), after=_smart_sep)
+                    cast_btn.pack(side=tk.LEFT, padx=(0, 4), after=program_btn)
+                    smart_btn.pack(side=tk.LEFT, padx=(0, 4), after=cast_btn)
 
                     def _on_gen_review() -> None:
                         """t168u: 生成查看：三步看历史的 名字 / 摘要 / 场景，各选一个。"""
@@ -3694,9 +3863,74 @@ class SceneEditorImpl:
                         text="生成查看",
                         command=_on_gen_review,
                         style=smart_style,
-                        width=8,
+                        width=6,
                     )
-                    review_btn.pack(side=tk.LEFT, padx=(0, 6), after=smart_btn)
+                    review_btn.pack(side=tk.LEFT, padx=(0, 4), after=smart_btn)
+
+                    def _on_scene_prep() -> None:
+                        """t436u: 整理场景（和建项目时自动做的一样）：Strata 改写视觉、拆长讲话、分镜视觉连贯、写 shot。"""
+                        scenes_now = _parse_scene_json_list(tx.get("1.0", tk.END) or "") or []
+                        if not scenes_now:
+                            messagebox.showwarning("整理场景", "还没有场景（场景 JSON 为空或无效）。", parent=dlg)
+                            return
+                        from gui.dl.scene_prep_runner import run_scene_prep_modal
+
+                        out, msg = run_scene_prep_modal(
+                            dlg, scenes_now, video_detail, getattr(self, "language", "") or "tw", title="整理场景"
+                        )
+                        print(f"整理场景：{msg}")
+                        if out:
+                            try:
+                                tx.delete("1.0", tk.END)
+                                tx.insert("1.0", json.dumps(out, ensure_ascii=False, indent=2))
+                            except tk.TclError:
+                                return
+                            ok, pmsg = on_persist_keep_open()
+                            if not ok:
+                                msg += f"；保存失败：{pmsg}"
+                        show_auto_close_popup(dlg, "整理场景", msg, duration_ms=2600)
+
+                    prep_btn = ttk.Button(
+                        scene_ui["prompt_combo"].master,
+                        text="整理场景",
+                        command=_on_scene_prep,
+                        style=smart_style,
+                        width=6,
+                    )
+                    prep_btn.pack(side=tk.LEFT, padx=(0, 4), after=review_btn)
+
+                    def _on_tx_ctrl_double(event=None):
+                        """t436u: Ctrl+双击场景 JSON → 看这一场的参考图、选一张（移到第一张）。普通双击照旧。"""
+                        from gui.dl.ref_image_review import open_ref_image_review, scene_index_at
+
+                        text = tx.get("1.0", "end-1c")
+                        try:
+                            offset = len(tx.get("1.0", f"@{event.x},{event.y}"))
+                            scenes_now = json.loads(text)
+                        except (tk.TclError, ValueError, AttributeError):
+                            return "break"
+                        idx = scene_index_at(text, offset)
+                        if not isinstance(scenes_now, list) or not (0 <= idx < len(scenes_now)) \
+                                or not isinstance(scenes_now[idx], dict):
+                            return "break"
+
+                        def _picked(scene) -> None:
+                            scenes_now[idx] = scene
+                            view = tx.yview()
+                            try:
+                                tx.delete("1.0", tk.END)
+                                tx.insert("1.0", json.dumps(scenes_now, ensure_ascii=False, indent=2))
+                                tx.yview_moveto(view[0])
+                            except tk.TclError:
+                                return
+                            ok, pmsg = on_persist_keep_open()
+                            print(("✅ " if ok else "⚠️ ") + f"场景 {idx + 1} 换参考图：{pmsg}")
+
+                        if not open_ref_image_review(dlg, scenes_now[idx], _picked, title=f"场景 {idx + 1} 的参考图"):
+                            show_auto_close_popup(dlg, "参考图", f"场景 {idx + 1} 没有参考图（或图片文件不在了）。")
+                        return "break"
+
+                    tx.bind("<Control-Double-Button-1>", _on_tx_ctrl_double)
 
                     # t112u: 「生成摘要」按钮去掉,场景生成后自动生成(见 _on_smart_saved)。
                     if callable(on_save_story):
@@ -3911,7 +4145,7 @@ class SceneEditorImpl:
                             label = (scene_ui["prompt_combo_var"].get() or "").strip()
                         except (tk.TclError, KeyError):
                             pass
-                        style = config_prompt.normalize_story_style(label) if "series" in label.lower() else ""
+                        style = config_channel.series_style_key(label)
                         if style == "story_act" or (not style and "story act" in label.lower()):
                             return
                         scenes = _story_scene_list(video_detail, scene_ui)
@@ -4055,6 +4289,14 @@ class SceneEditorImpl:
                         d = _story_avatar_dir(video_detail)
                         return d or os.path.join(config.AVATAR_PATH, "story")
 
+                    def _story_channel_path() -> str:
+                        """t444u：program/<频道>（翻候选肖像先用它的 avatar/<风格>/）。"""
+                        try:
+                            return ((channel_path or self.channel_path or "").strip()
+                                    or config.get_channel_path(self._channel_config_key()))
+                        except Exception:  # noqa: BLE001
+                            return ""
+
                     def _on_cast_change(text: str) -> None:
                         video_detail["story_actors"] = text
                         pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
@@ -4076,6 +4318,7 @@ class SceneEditorImpl:
                         text=_saved_cast,
                         on_change=_on_cast_change,
                         person_dir=_story_person_dir,
+                        channel_path=_story_channel_path,
                         style=lambda: (visual_style_var.get() or ""),
                         on_row_edit=lambda old, new: _cast_rewrite_scenes("edit", old, new),
                         on_row_delete=lambda old: _cast_rewrite_scenes("delete", old, None),

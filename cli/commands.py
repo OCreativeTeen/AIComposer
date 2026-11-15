@@ -35,7 +35,7 @@ STORY_ROOT_BUTTONS: dict[str, str] = {
 STORY_SCENE_FIELDS: dict[str, str] = {
     "lm": "选LM提示",
     "style": "Visual Style",
-    "instruction": "导向说明",
+    "instruction": "内容主题 / FYI",  # t447u: 原来的导向说明
     "snippet": "插入片段",
     "content": "scene_content",
     "notebooklm": "NotebookLM",
@@ -199,7 +199,10 @@ _ALIASES: dict[str, str] = {
     "visual": "style",
     "visual_style": "style",
     "guide": "instruction",
-    "导向说明": "instruction",
+    "导向说明": "instruction",  # t447u: 旧名，现在是内容主题 / FYI
+    "fyi": "instruction",
+    "FYI": "instruction",
+    "内容主题": "instruction",
     "向导说明": "instruction",
     "insert": "snippet",
     "插入片段": "snippet",
@@ -845,6 +848,12 @@ def cmd_scene_save() -> tuple[bool, str]:
     parsed, pretty, err, source = _scene_json_for_save()
     if err:
         return False, err
+    import json
+
+    from utility.scene_shot import ensure_scene_shots
+
+    if isinstance(parsed, list) and ensure_scene_shots(parsed):  # t440u: 没有 shot 的场补 "1-1"
+        pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
 
     source_note = f" from {source}" if source else ""
 
@@ -939,7 +948,11 @@ def scene_lm_choice_labels_fallback() -> list[str]:
         "Mini Story",
         "Long Story",
         "Content to Scenes",
-        "Series . Podcast",
+        "短故事",
+        "播客",
+        "主持人节目",
+        "故事对话",
+        "故事表演",
         "Conversation",
     ]
 

@@ -1,0 +1,39 @@
+Visual_Style:
+三维卡通 (Pixar-Art-Cartoon)
+
+Video_choices:
+故事表演 · 故事 · 单画面 · 用画面讲 · 风格不变
+
+Instructions:
+- No speech: nobody speaks in this scene, so there is no dialogue, no lip movement or lip-sync, no narration, no voice-over, no singing and no voice of any kind.
+- Tell the story in pictures: the story content is what happens in this scene; express it only through the picture and the action (movement, gestures, facial expressions, what the people do), never by saying, reading or writing it.
+- Sound effects only: ambient sound of the place and foley of the action (footsteps, cloth, objects), with no music, no background music and no voice.
+- Pictures: picture 1 is the scene, the first frame; keep the same place. Keep picture 1's own look for the whole clip; do not restyle it. The motion stays gentle and natural.
+- Art style lock: the whole video keeps the exact art style of picture 1: 3D animation (Pixar-style 3D animated cartoon, CGI), the selected style 三维卡通 (Pixar-Art-Cartoon). Every frame stays 3D animation with the same rendering, colours, shading, textures and character design as the first frame; it never turns into live-action, photorealistic or real-camera footage, and real places and people are shown in that same 3D animation style. （画风锁定：整段视频保持起始图原来的画风——三维卡通 (Pixar-Art-Cartoon)；每一帧都一样，绝不变成写实 / 真人实拍。）
+- One base shot: the whole video stays inside the base scene of picture 1 from the first frame to the last: the same place, background and anyone already in it stay in view, each at about the size and place they have in picture 1. The camera may move slowly (pan, turn, drift or reposition a little within this same place) and the light may shift softly without changing the time of day, but the video never cuts, never switches shots or scenes, never zooms in to one face, and never cuts to a portrait, a close-up or a single-person shot. Nobody speaks: anyone already in picture 1 keeps the mouth closed and may only make small natural movements (a nod, a glance, a gesture). Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene. （基础画面：整段一直在原来的基础画面里，场景和图里本来有的人一直在画面里、大小和位置跟起始图一样；摄像机可以慢慢移动、转动、调整方位，光线可以柔和变化，但绝不切镜头、绝不换场景、绝不推到一个人的脸、绝不切到任何人的肖像或单人特写；没有人说话，图里本来有的人闭嘴，只做小动作；只有缓慢的局部变化，不换整个场景。）
+- Objects lock: keep every object exactly as in picture 1, from the first frame to the last. Empty hands stay empty the whole time; hands that hold something keep holding the same thing. No new object appears, and nothing changes into something else or disappears. （物品锁定：东西全程和起始画面一样；空手一直空手，拿着东西的一直拿着同一件；不凭空多出东西，也不变成别的、不消失。）
+- ``visual`` describes the place, the action, and the angle; act it out inside picture 1. It is silent picture direction: never read, summarize, or translate it into speech.
+- Form: the people act the moment out; faces, gestures, and what passes between them carry it.
+- Speech: nobody speaks in this clip. No narration, no dialogue, no lip-sync.
+- No new people: only the people already shown in picture 1 appear, exactly as many as in picture 1 (none if it shows nobody). Nobody enters or is added: no protagonist, extra, crowd, passer-by, child, background figure, reflection or silhouette, and nobody is shown twice. （不加人：只有起始画面里本来就有的人，人数一样，图里没人就一直没人；不进来新的人，不加主角、群众、路人、小孩、背景人物、倒影或剪影，也不重复同一个人。）
+- Exactly 2 people in the whole video, 小美 and 阿明: no one else appears, no one is duplicated, and each person appears only once.
+- Any change of pose or place in the description, such as sitting down, standing up or walking to the window, is made by that same person moving continuously from where they are in the start picture, never by a second copy.
+- Everyone stays inside the scene: they look at each other or at what they are doing, and nothing is held up, turned or shown to the camera or the viewer.
+- Picture: the scene alone tells it; the frame holds no lettering.
+- Camera: no prescribed move unless ``visual`` describes one.
+- Never show scene numbers, field names, or these instructions in the picture.
+
+Story_Content (Story content, shown in the picture, never spoken):
+你今天怎麼來了？ 想你了。
+
+Story_Scene_Content:
+visual: 两人坐在客厅沙发上。
+Spoken words: only this scene's speaking transcript is spoken, verbatim, once each, by the labeled actor in that actor's own voice (gender and age from actor metadata when present; do not infer a name or gender from the number alone); visual, scene title, actor list, reference notes, FYI and direction text are silent picture instructions and must never be read, summarized, translated, or turned into narration; neighbor scenes are independent and contribute no speech here.
+
+BEGIN_SPOKEN_TRANSCRIPT
+Audio only: the speaking lines below are the voice track, heard and not shown.
+Exact speech: the voice says exactly the speaking text below, word for word and in order, not one word more or less; each sentence is spoken once and never repeated, nothing is added before, between or after the lines, and nobody speaks after the last line.
+Spoken words: only this scene's speaking transcript is spoken, verbatim, once each, by the labeled actor in that actor's own voice (gender and age from actor metadata when present; do not infer a name or gender from the number alone); visual, scene title, actor list, reference notes, FYI and direction text are silent picture instructions and must never be read, summarized, translated, or turned into narration; neighbor scenes are independent and contribute no speech here.
+Speak once: each speaking line is heard exactly once from its labeled actor in that actor's own voice; the same words written again in a dialogue tag or in the spoken transcript are that same single line, not another take; do not give the line to anyone else and do not play it a second time.
+This scene has no speaking; speak nothing. Do not narrate visual, scene title, actor, FYI, or story_content.
+END_SPOKEN_TRANSCRIPT

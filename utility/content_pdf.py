@@ -36,6 +36,19 @@ FIELD_LABELS = {
     "Also dialogue": "讲话（续）/ Also dialogue",
     "Scene narration": "场景叙事 / Scene narration",
     "Narration content": "讲述内容 / Narration content",
+    "Slide caption": "说明文字（写在这一页上）/ Slide caption",
+}
+
+# t428u: 演示文稿：每一场写明这一页上能有什么字（按说明文字）
+DECK_TEXT_NOTES = {
+    "keywords": ("这一页的文字 / On-slide text",
+                 "只有 1 到 2 个关键词，融进背景画面；下面的内容只用来理解这一场，由声音讲出来。"
+                 "Only 1-2 keywords woven into the background; the content below is for understanding and is spoken."),
+    "keep": ("这一页的文字 / On-slide text",
+             "画面 + 一块说明文字区，写这一页的要点小结（有「说明文字 / Slide caption」就照它写）。"
+             "Picture plus a caption area with a short summary (the Slide caption text when given)."),
+    "express": ("这一页的文字 / On-slide text",
+                "没有文字，全部用画面讲。Picture only; the picture tells the content."),
 }
 
 _FONT_CANDIDATES = (
@@ -91,8 +104,15 @@ def build_content_pdf(
     actor_override: str = "",
     dest: str = CONTENT_PDF_PATH,
     episodes: list | None = None,
+    output: str = "",
+    style: str = "",
+    place: str = "",
+    text: str = "",
 ) -> str:
     """生成 content.pdf（覆盖），返回路径。
+
+    t427u: ``output == "slides"`` 时开头写「共 N 场 = 正好 N 页」（+ 画风、地域时代），每场标题写「第 k 页（共 N 页）」，
+    结尾写「场景到此结束」，让 NotebookLM 一场对一页。别的产物不变。
 
     ``episodes``（和 scenes 等长，每场所属的集名）跨了不止一集时，每集开头加「第N集 / Episode N」分隔标题；
     场景编号始终是 1..M 连续，不按集重新编号。
@@ -107,6 +127,7 @@ def build_content_pdf(
         raise ValueError("本集没有场景")
     has_speaker = config_prompt._prompt_has_speaker(narrative, use_actor, scenes)
     silent = (not has_speaker) and config_prompt.prompt_silent_cast(narrative, use_actor, scenes)
+    deck_text = config_prompt.slide_text_choice(text) if (output == "slides" and text) else ""  # t428u
     payload = config_prompt.slide_flow_scene_payload(
         scenes,
         use_visual=use_visual,
@@ -115,6 +136,7 @@ def build_content_pdf(
         keywords=keywords,
         narrative=narrative,
         silent_cast=silent,
+        caption_text=deck_text == "keep" and narrative not in ("tech", "exec"),
     )
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="aicomposer_content_")
@@ -134,11 +156,27 @@ def build_content_pdf(
     groups = [str(g or "").strip() for g in (episodes or [])]
     multi = len(groups) == len(scenes) and len(set(groups)) > 1
     last_group = None
+    total = len(payload)
+    deck = output == "slides"
+    if deck:  # t427u
+        parts.append(f"<h1>共 {total} 场 = 演示文稿正好 {total} 页 / {total} scenes = exactly {total} slides</h1>")
+        parts.append(f'<p class="text">一场一页，按顺序：第 k 页 = 场景 k（k = 1–{total}）。'
+                     f"Slide k shows scene k (k = 1–{total}), in this order, one scene per slide.</p>")
+        if (style or "").strip():
+            parts.append(f'<p class="text">画风 / Art style（每一页 / every slide）：{html.escape(style.strip())}</p>')
+        if (place or "").strip():
+            parts.append(f'<p class="text">地域 · 时代 / Place and period（每一页 / every slide）：{html.escape(place.strip())}</p>')
+        if deck_text:  # t428u
+            parts.append(f'<p class="text">说明文字 / On-slide text（每一页 / every slide）：'
+                         f'{html.escape(DECK_TEXT_NOTES[deck_text][1])}</p>')
     for n, (scene, item) in enumerate(zip(scenes, payload), start=1):
         if multi and groups[n - 1] != last_group:
             last_group = groups[n - 1]
             parts.append(f"<h1>第{html.escape(last_group)}集 / Episode {html.escape(last_group)}</h1>")
-        parts.append(f"<h2>场景 {n} / Scene {n}</h2>")
+        if deck:
+            parts.append(f"<h2>场景 {n} / Scene {n} · 第 {n} 页（共 {total} 页）/ Slide {n} of {total}</h2>")
+        else:
+            parts.append(f"<h2>场景 {n} / Scene {n}</h2>")
         if use_image:
             src = _scene_image(scene)
             if src:
@@ -149,6 +187,8 @@ def build_content_pdf(
                     rgb.save(os.path.join(tmp, name), "JPEG", quality=85)
                 parts.append(f'<p><img src="{name}"/></p>')
         fields = _split_fields(item.get("show_this_content", ""))
+        if deck and deck_text:  # t428u: 先写这一页上能有什么字
+            fields.insert(0, DECK_TEXT_NOTES[deck_text])
         if override and (has_speaker or silent):
             fields.append(("换成 / People override", f"draw every person as {override}"))
         for label, text in fields:
@@ -156,6 +196,8 @@ def build_content_pdf(
                 parts.append(f'<p class="label">{html.escape(label)}:</p>')
             body = html.escape(text).replace("\n", "<br/>")
             parts.append(f'<p class="text">{body}</p>')
+    if deck:
+        parts.append(f"<h2>场景到此结束：共 {total} 场 = {total} 页 / End of scenes: {total} scenes = {total} slides</h2>")
     parts.append("</body>")
     archive = fitz.Archive(tmp)
     if font:

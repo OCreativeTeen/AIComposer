@@ -46,10 +46,11 @@ class StoryActorPanel(ttk.Frame):
 
     ``person_dir``：可调用，返回人物形象图目录（有项目时用项目 avatar，没有时用 AVATAR_PATH/story）。
     ``style``：可调用，返回当前画面风格（找讲员形象图用）。
+    ``channel_path``：可调用，返回频道目录 program/<频道>（t444u：翻候选肖像先用它的 avatar/<风格>/）。
     """
 
     def __init__(self, master, *, text: str = "", on_change=None, person_dir=None, style=None,
-                 on_row_edit=None, on_row_delete=None, on_reorder=None):
+                 on_row_edit=None, on_row_delete=None, on_reorder=None, channel_path=None):
         super().__init__(master)
         # 改 / 删一个演员时通知外面（STORY 预览：同步改所有场景的 actor / speaking）
         self._on_row_edit = on_row_edit
@@ -59,6 +60,7 @@ class StoryActorPanel(ttk.Frame):
         self._on_change = on_change
         self._person_dir = person_dir
         self._style = style
+        self._channel_path = channel_path
         self._chips: list = []
         self._drag_index = None
         self._drag_moved = False
@@ -238,6 +240,16 @@ class StoryActorPanel(ttk.Frame):
         except Exception:  # noqa: BLE001
             return ""
 
+    def channel_avatar_dir(self) -> str:
+        """频道自己的 avatar 目录（program/<频道>/avatar）；不知道频道返回 ""。"""
+        from utility.portrait_candidates import channel_avatar_dir
+
+        try:
+            path = self._channel_path() if callable(self._channel_path) else (self._channel_path or "")
+        except Exception:  # noqa: BLE001
+            path = ""
+        return channel_avatar_dir(path or "")
+
     def _person_folder(self) -> str:
         folder = ""
         if callable(self._person_dir):
@@ -341,114 +353,170 @@ class StoryActorPanel(ttk.Frame):
 
 
 class ActorEditDialog(tk.Toplevel):
-    """一位讲员 / 人物的预览与修改：样子、名字、形象图（Ctrl+V 贴图）。"""
+    """一位讲员 / 人物的预览与修改。t443u: 和魔法工作流的「人物」窗同一套部件（gui/actor_portrait_widgets）：
+    最上面是大图；性别 / 年龄 / 民族 / 名字，下一行括号描述（可写）；声音。
+    左右键不换人：人物翻 D:\\AI_MEDIA\\avatar\\<画面风格>\\ 里的图，「用这张」或确认 = 设为这一位的形象图。"""
 
     def __init__(self, panel: StoryActorPanel, row, *, allow_host: bool, on_done):
+        from gui.actor_portrait_widgets import PersonEditBlock, PortraitBrowser, focus_in_text_field
+
         super().__init__(panel.winfo_toplevel())
         self.panel = panel
         self.on_done = on_done
         self.is_new = row is None
         row = row or {"role": "person", "body": "woman/mature/chinese"}
+        self._opened = dict(row)
         self.title("新增人物" if self.is_new else "人物")
         self.transient(panel.winfo_toplevel())
-        self.resizable(False, False)
-        self._photo = None
+        self.resizable(True, True)
+        self.minsize(660, 820)
 
-        body = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
-        parts = [p for p in body.split("/") if p]
+        full = (row.get("body") or "").strip()
+        body = project_manager.split_actor_motion(full)[0]
         self.role_var = tk.StringVar(value=row.get("role") or "person")
         self.host_var = tk.StringVar(value=body if row.get("role") == "host" else "")
-        self.gender_var = tk.StringVar(value=parts[0] if len(parts) > 0 else "woman")
-        self.age_var = tk.StringVar(value=parts[1] if len(parts) > 1 else "mature")
-        self.eth_var = tk.StringVar(value=parts[2] if len(parts) > 2 else "chinese")
-        self.name_var = tk.StringVar(value="/".join(parts[3:]) if len(parts) > 3 else "")
 
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill=tk.BOTH, expand=True)
-        left = ttk.Frame(frm)
-        left.pack(side=tk.LEFT, fill=tk.Y, anchor=tk.N)
-        role_row = ttk.Frame(left)
-        role_row.pack(anchor=tk.W, pady=(0, 6))
+        # 图在最上面，占满宽度
+        self.img_lbl = tk.Label(frm, text="（没有形象图）\nCtrl+V 贴图", bg="#eee", relief="sunken")
+        self.img_lbl.pack(fill=tk.X, pady=(0, 2))
+        self.caption_var = tk.StringVar()
+        ttk.Label(frm, textvariable=self.caption_var, foreground="#555", wraplength=620).pack(pady=(0, 4))
+        self.browser = PortraitBrowser(self.img_lbl, self.caption_var, size=(560, 600))
+        self.title_var = tk.StringVar()
+        ttk.Label(frm, textvariable=self.title_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(2, 6))
+
+        role_row = ttk.Frame(frm)
+        role_row.pack(pady=(0, 6))
         rb_host = ttk.Radiobutton(role_row, text="讲员", value="host", variable=self.role_var, command=self._sync)
         rb_host.pack(side=tk.LEFT)
         ttk.Radiobutton(role_row, text="人物", value="person", variable=self.role_var, command=self._sync).pack(side=tk.LEFT, padx=(8, 0))
         if not allow_host and self.role_var.get() != "host":
             rb_host.state(["disabled"])
 
-        self.host_frm = ttk.Frame(left)
-        ttk.Label(self.host_frm, text="讲员（音色表）").pack(anchor=tk.W)
+        self.host_frm = ttk.Frame(frm)
+        ttk.Label(self.host_frm, text="讲员（音色表）").pack(side=tk.LEFT, padx=(0, 6))
         opts = [x for x in config.narrator_person_options() if (x or "").strip()]
         if self.host_var.get() and self.host_var.get() not in opts:
             opts = [self.host_var.get()] + opts
         if not self.host_var.get() and opts:
             self.host_var.set(opts[0])
         host_combo = ttk.Combobox(self.host_frm, textvariable=self.host_var, values=opts, width=30)
-        host_combo.pack(anchor=tk.W)
-        host_combo.bind("<<ComboboxSelected>>", lambda _e: self._show_portrait())
+        host_combo.pack(side=tk.LEFT)
+        host_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_fields())
 
-        self.person_frm = ttk.Frame(left)
-        for lbl, var, vals in (("性别", self.gender_var, GENDERS), ("年龄段", self.age_var, AGES), ("民族", self.eth_var, ETHNICITIES)):
-            r = ttk.Frame(self.person_frm)
-            r.pack(anchor=tk.W, pady=1)
-            ttk.Label(r, text=lbl, width=6).pack(side=tk.LEFT)
-            cb = ttk.Combobox(r, textvariable=var, values=vals, width=14)
-            cb.pack(side=tk.LEFT)
-            cb.bind("<<ComboboxSelected>>", lambda _e: self._show_portrait())
-        r = ttk.Frame(self.person_frm)
-        r.pack(anchor=tk.W, pady=1)
-        ttk.Label(r, text="名字", width=6).pack(side=tk.LEFT)
-        name_entry = ttk.Entry(r, textvariable=self.name_var, width=16)
-        name_entry.pack(side=tk.LEFT)
-        name_entry.bind("<FocusOut>", lambda _e: self._show_portrait())
-        ttk.Label(self.person_frm, text="例：woman/mature/chinese/封氏", foreground="#777").pack(anchor=tk.W, pady=(2, 0))
+        self.person_frm = PersonEditBlock(frm)
+        self.person_frm.fill(full if row.get("role") != "host" else "woman/mature/chinese")
+        self.person_frm.on_change(self._on_fields)
 
         self.voice_var = tk.StringVar()
-        self.voice_frm = ttk.Frame(left)
-        ttk.Label(self.voice_frm, text="\u58f0\u97f3", width=6).pack(side=tk.LEFT)
-        self.voice_box = ttk.Combobox(self.voice_frm, textvariable=self.voice_var, values=(), width=14, state="readonly")
+        self.voice_frm = ttk.Frame(frm)
+        ttk.Label(self.voice_frm, text="声音").pack(side=tk.LEFT, padx=(0, 8))
+        self.voice_box = ttk.Combobox(self.voice_frm, textvariable=self.voice_var, values=(), width=18, state="readonly")
         self.voice_box.pack(side=tk.LEFT)
-        for w in (host_combo,):
-            w.bind("<<ComboboxSelected>>", lambda _e: (self._show_portrait(), self._refresh_voice()), add="+")
-        for child in self.person_frm.winfo_children():
-            for cb in child.winfo_children():
-                if isinstance(cb, ttk.Combobox):
-                    cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_voice(), add="+")
 
-        btns = ttk.Frame(left)
-        btns.pack(side=tk.BOTTOM, anchor=tk.W, pady=(10, 0))
-        ttk.Button(btns, text="贴图 (Ctrl+V)", command=self._paste).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(btns, text="确认", command=self._ok).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side=tk.LEFT)
+        self.hint_var = tk.StringVar()
+        self.hint_lbl = ttk.Label(frm, textvariable=self.hint_var, wraplength=620, foreground="#555")
 
-        self.img_lbl = tk.Label(frm, text="（没有形象图）\nCtrl+V 贴图", width=24, height=12, bg="#eee", relief="sunken")
-        self.img_lbl.pack(side=tk.LEFT, padx=(12, 0))
+        self.btns = ttk.Frame(frm)
+        ttk.Button(self.btns, text="贴图 (Ctrl+V)", command=self._paste).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(self.btns, text="用这张", command=self._use_picked).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(self.btns, text="确认", command=self._ok).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(self.btns, text="取消", command=self.destroy).pack(side=tk.LEFT)
+
+        self.img_lbl.bind("<Button-1>", lambda _e: self.browser.step(1))
+        self.img_lbl.bind("<Button-3>", lambda _e: self.browser.step(-1))
+        self.bind("<Left>", lambda _e: None if focus_in_text_field(self) else self._step(-1))
+        self.bind("<Right>", lambda _e: None if focus_in_text_field(self) else self._step(1))
         self.bind("<Control-v>", lambda _e: self._paste())
         self.bind("<Control-V>", lambda _e: self._paste())
         self.bind("<Return>", lambda _e: self._ok())
         self.bind("<Escape>", lambda _e: self.destroy())
+        self._ident = None
         self._sync()
         self.grab_set()
+        self.focus_set()
+
+    def _step(self, delta: int) -> str:
+        self.browser.step(delta)  # 没有候选图就什么都不做
+        return "break"
 
     def _row(self) -> dict:
         if self.role_var.get() == "host":
             return {"role": "host", "label": "讲员", "body": (self.host_var.get() or "").strip()}
-        bits = [self.gender_var.get(), self.age_var.get(), self.eth_var.get()]
-        bits = [(b or "").strip() for b in bits]
-        name = (self.name_var.get() or "").strip().replace("|", "").replace("/", "")
-        body = "/".join(b for b in bits if b) + (f"/{name}" if name else "")
+        from utility.actor_edit_fields import actor_paren_is_motion, parse_actor_edit_fields
+
+        body = self.person_frm.body().replace("|", "")
+        if self._opened.get("role") != "host":
+            _base, orig = project_manager.split_actor_motion((self._opened.get("body") or "").strip())
+            if body and actor_paren_is_motion(orig) and not parse_actor_edit_fields(body)["note"]:
+                body = project_manager._with_actor_motion(project_manager.split_actor_motion(body)[0], orig)
         return {"role": "person", "label": "人物", "body": body}
 
     def _sync(self) -> None:
+        for w in (self.host_frm, self.person_frm, self.voice_frm, self.hint_lbl, self.btns):
+            w.pack_forget()
         if self.role_var.get() == "host":
-            self.person_frm.pack_forget()
-            self.host_frm.pack(anchor=tk.W)
+            self.host_frm.pack(pady=(0, 6))
+            self.hint_var.set("讲员的形象在 D:\\AI_MEDIA\\avatar\\<风格>\\ 里按音色表名字固定；Ctrl+V 可以换图。")
         else:
-            self.host_frm.pack_forget()
-            self.person_frm.pack(anchor=tk.W)
-        self.voice_frm.pack_forget()
-        self.voice_frm.pack(anchor=tk.W, pady=(4, 0))
+            self.person_frm.pack(pady=(0, 6))
+            self.hint_var.set("左右键翻 D:\\AI_MEDIA\\avatar\\<画面风格>\\ 里的图（不换人），「用这张」或确认 = 设为这一位的形象图；"
+                              "原来的改名 .bak 备份。Ctrl+V 贴图。括号描述写进人物名单。")
+        self.voice_frm.pack(pady=(4, 6))
+        self.hint_lbl.pack(pady=(0, 6))
+        self.btns.pack(pady=(4, 0))
+        self._ident = None
+        self._on_fields()
+
+    def _on_fields(self) -> None:
+        row = self._row()
+        self.title_var.set(row.get("body") or "")
+        ident = (row["role"], project_manager.split_actor_motion(row.get("body") or "")[0])
+        if ident == self._ident:
+            return  # 只改括号描述：不重翻图、不重置声音
+        self._ident = ident
         self._refresh_voice()
         self._show_portrait()
+
+    def _candidates(self, row: dict) -> tuple:
+        if row.get("role") == "host":
+            return [], ""
+        from utility.portrait_candidates import library_candidates
+
+        token = config.visual_style_token(self.panel._style_now())
+        own = self.panel.portrait_path(row)
+        paths, label = library_candidates(config.AVATAR_PATH, token, row.get("body") or "",
+                                          channel_root=self.panel.channel_avatar_dir())
+        own_key = os.path.normcase(os.path.abspath(own)) if own else ""
+        return [p for p in paths if os.path.normcase(os.path.abspath(p)) != own_key], label
+
+    def _show_portrait(self) -> None:
+        row = self._row()
+        cands, label = self._candidates(row)
+        self.browser.reset(self.panel.portrait_path(row), cands, label,
+                           empty_text="（没有形象图）  ← → 翻图库 / Ctrl+V 贴图")
+
+    def _use_picked(self) -> bool:
+        src = self.browser.picked()
+        row = self._row()
+        if not src or row.get("role") == "host":
+            return False
+        dest = self.panel.portrait_dest(row)
+        if not dest:
+            messagebox.showwarning("形象图", "先填好这一位的名字 / 样子。", parent=self)
+            return False
+        from utility.portrait_candidates import apply_portrait_choice
+
+        try:
+            apply_portrait_choice(src, dest)
+        except OSError as exc:
+            messagebox.showerror("形象图", f"设为形象图失败：{exc}", parent=self)
+            return False
+        self._ident = None
+        self._show_portrait()
+        return True
 
     def _refresh_voice(self) -> None:
         """t95u: \u58f0\u97f3\u4e0b\u62c9:\u7528\u6237\u9009\u5b9a\u4f18\u5148,\u5426\u5219\u6309\u6027\u522b/\u5e74\u9f84/\u65cf\u88d4\u9ed8\u8ba4\u3002"""
@@ -483,22 +551,6 @@ class ActorEditDialog(tk.Toplevel):
         except Exception:  # noqa: BLE001
             pass
 
-    def _show_portrait(self) -> None:
-        path = self.panel.portrait_path(self._row())
-        if not path:
-            self._photo = None
-            self.img_lbl.configure(image="", text="（没有形象图）\nCtrl+V 贴图", width=24, height=12)
-            return
-        try:
-            from PIL import Image, ImageTk
-
-            img = Image.open(path)
-            img.thumbnail((220, 260))
-            self._photo = ImageTk.PhotoImage(img)
-            self.img_lbl.configure(image=self._photo, text="", width=img.width, height=img.height)
-        except Exception:  # noqa: BLE001
-            self.img_lbl.configure(image="", text=os.path.basename(path))
-
     def _paste(self) -> str:
         if self.panel.paste_portrait(self._row(), parent=self):
             self._show_portrait()
@@ -509,6 +561,7 @@ class ActorEditDialog(tk.Toplevel):
         if not (row.get("body") or "").strip():
             messagebox.showwarning("人物", "先选 / 填好这一位。", parent=self)
             return
+        self._use_picked()  # t443u: 正在看图库里的候选图 → 先设为这一位的形象图
         self._save_voice(row)
         self.destroy()
         self.on_done(row)

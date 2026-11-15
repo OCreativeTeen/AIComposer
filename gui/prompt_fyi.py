@@ -65,10 +65,13 @@ def _label(i: int, text: str) -> str:
 
 
 def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0),
-                  title: str = "注意 / FYI"):
+                  title: str = "注意 / FYI", on_change=None, include: bool = True):
     """FYI history combobox + 新增 button + editor + include checkbox (default ON).
 
     ``title`` is the LabelFrame caption. 节目生成 passes 内容主题; picture/video keep the default.
+
+    t447u: ``on_change()`` 在文字 / 历史选择 / 新增 / 勾选变了之后调用（STORY 窗用来存进这一条）；
+    ``include`` 是勾选框初值；``frame.set_text(value)`` 改当前这条的文字。
 
     Returns ``(frame, get_text, include_var, get_history)``.
     ``get_text()`` is the selected/edited note. ``get_history()`` returns the
@@ -85,7 +88,7 @@ def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0),
 
     top = ttk.Frame(box)
     top.pack(fill=tk.X)
-    include_var = tk.BooleanVar(value=True)
+    include_var = tk.BooleanVar(value=bool(include))
     ttk.Checkbutton(top, text="写入提示词（放在最前面）", variable=include_var).pack(side=tk.LEFT)
 
     row = ttk.Frame(box)
@@ -111,9 +114,17 @@ def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0),
         text.insert("1.0", entries[idx])
         refresh()
 
+    def changed() -> None:
+        if callable(on_change):
+            try:
+                on_change()
+            except Exception as exc:  # noqa: BLE001
+                print(f"FYI：保存失败 {exc}")
+
     def on_select(_event=None) -> None:
         commit()
         load(combo.current())
+        changed()
 
     def on_new() -> None:
         commit()
@@ -121,11 +132,26 @@ def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0),
         del entries[FYI_MAX:]
         load(0)
         text.focus_set()
+        changed()
+
+    def on_key(_e=None) -> None:
+        commit()
+        refresh()
+        changed()
+
+    def set_text(value) -> None:
+        text.delete("1.0", tk.END)
+        text.insert("1.0", str(value or ""))
+        commit()
+        refresh()
+        changed()
 
     ttk.Button(row, text="新增", command=on_new).pack(side=tk.LEFT, padx=(6, 0))
     combo.bind("<<ComboboxSelected>>", on_select)
-    text.bind("<KeyRelease>", lambda _e: (commit(), refresh()))
+    text.bind("<KeyRelease>", on_key)
     load(0)
+    include_var.trace_add("write", lambda *_a: changed())
+    box.set_text = set_text
 
     def get_text() -> str:
         return text.get("1.0", "end-1c").strip()

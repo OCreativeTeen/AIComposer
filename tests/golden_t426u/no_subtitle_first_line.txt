@@ -1,0 +1,3 @@
+NO SUBTITLES: subtitles / captions mean the speaking content (dialogue, narration, self-talk); it is heard as voice only and is never written on screen, in any language. This is not about text already in the image. （字幕 = 讲话内容，只用声音，不上屏；不是图片里已有的文字。）
+
+integrated_multimodal_description: x

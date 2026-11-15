@@ -355,7 +355,7 @@ class GuiWiringTest(unittest.TestCase):
     def test_picker_no_longer_requires_pdf(self):
         src = _src("gui/workflow/wf_images.py")
         body = src[src.index("def _open_clip_image_pdf_review"):src.index("def _is_approx_16_9_landscape")]
-        a = body.index("self.workflow.ref_image_pool(group_name)")
+        a = body.index("self.workflow.ref_image_pool(group_name, current=scene)")
         b = body.index("if not pdf_path and not pages")
         self.assertLess(a, b)
         self.assertIn("sync_project_ref_images(legacy_first=True)", body)
@@ -363,7 +363,7 @@ class GuiWiringTest(unittest.TestCase):
 
     def test_review_media_source_uses_pool_and_select(self):
         src = _src("gui/workflow/wf_pdf_episode.py")
-        self.assertIn("return self.workflow.ref_image_pool(group_name)", src)
+        self.assertIn("return self.workflow.ref_image_pool(group_name, current=focus_scene)", src)
         self.assertIn("self.workflow.select_scene_ref_image(scene, src)", src)
         assign = src[src.index("def _assign_scene_clip_image_from_file"):src.index("def _tag_scene_pdf_page")]
         self.assertIn("select_ref_image(scene, image_path", assign)

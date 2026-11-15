@@ -12,16 +12,104 @@ import re
 from typing import List, Optional
 
 
+# t447u: 坏掉的标签两头会多出 [ ] ' " \ （列表被当成字符串反复存 / 按逗号切开的结果）
+_TAG_JUNK = "[]\"'\\ \t\r\n"
+_TAG_QUOTED_START = ("[", "'", '"', "\\")
+
+
+def _clean_tag_piece(piece) -> str:
+    s = str(piece if piece is not None else "").strip()
+    prev = None
+    while s != prev:
+        prev = s
+        s = s.strip(_TAG_JUNK)
+    return s
+
+
+def _literal_tags(s: str):
+    import ast
+    import json
+
+    for fn in (ast.literal_eval, json.loads):
+        try:
+            got = fn(s)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(got, (list, tuple, str)) and got != s:
+            return got
+    return None
+
+
+def normalize_tags(value) -> List[str]:
+    """t447u: 任何存法的 tags → 干净的去重列表。
+
+    认得：列表；``"a, b"`` / ``"A=x | B=y"`` 文本；``"['a', 'b']"`` 这种列表被写成字符串的；
+    以及来回存了好几层、每层多一层引号 / 反斜杠、被逗号切碎的（``["['a'", "'b']"]``）。"""
+    out: List[str] = []
+
+    def add(piece) -> None:
+        t = _clean_tag_piece(piece)
+        if t and t not in out:
+            out.append(t)
+
+    def add_broken(piece) -> None:
+        # 坏掉的标签常把几枚用全角逗号连在一起：['存在之哀，神圣连接，真·光环']
+        if "=" in str(piece):
+            add(piece)
+            return
+        for q in re.split(r"[，、；;]", str(piece)):
+            add(q)
+
+    def walk(v, depth: int, top: bool, broken: bool = False) -> None:
+        if v is None:
+            return
+        if isinstance(v, (list, tuple, set)):
+            for x in v:
+                walk(x, depth + 1, False, broken)
+            return
+        s = str(v).strip()
+        if not s:
+            return
+        if depth < 16 and s.startswith(_TAG_QUOTED_START):
+            got = _literal_tags(s)
+            if got is not None:  # 列表被写成了字符串：坏掉的
+                walk(got, depth + 1, top or isinstance(got, str), True)
+                return
+            broken = True
+        if s.endswith(("]", "'", '"')):
+            broken = True
+        if top or s.startswith("[") or s.endswith("]"):
+            for p in _split_tags_text(s):
+                (add_broken if broken else add)(p)
+        else:
+            (add_broken if broken else add)(s)
+
+    walk(value, 0, True)
+    return out
+
+
 def parse_tags_list(text: Optional[str]) -> List[str]:
     """
     从输入框单行文本解析为标签列表。
     - 含 | 时：按 | 分段（推荐分隔多枚 KEY=value，避免与值内逗号冲突）。
     - 否则若含 KEY=value：在「逗号 + 下一段 KEY=」处切开。
     - 否则：按逗号分段（旧版纯文本标签）。
+    - t447u: ``"['a', 'b']"`` 这种列表字符串（含多层坏掉的）交给 normalize_tags。
     """
     if text is None:
         return []
+    if isinstance(text, (list, tuple)):
+        return normalize_tags(text)
     s = str(text).strip()
+    if not s:
+        return []
+    if s.startswith(_TAG_QUOTED_START):
+        return normalize_tags(s)
+    return _split_tags_text(s)
+
+
+def _split_tags_text(s: str) -> List[str]:
+    s = str(s or "").strip()
     if not s:
         return []
     if "|" in s:

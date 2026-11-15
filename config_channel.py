@@ -1009,7 +1009,14 @@ Output format:
 # 动态场景模板：Step Story（步数可选）与「直接生成系列节目」（第 k 集 / 共 N 集）
 # 下拉里只放一个 label；真正的模板在生成提示词时按参数现拼。
 # ---------------------------------------------------------------------------
-STEP_STORY_LABEL = "Step Story"
+STEP_STORY_LABEL = "短故事"  # t447u: 旧名 Step Story
+# t447u: 场景生成的四种节目方式（中文名；内部存值 podcast / counselor / story_speak / story_act 不变）
+SERIES_STYLE_LABELS = {
+    "podcast": "播客",
+    "counselor": "主持人节目",
+    "story_speak": "故事对话",
+    "story_act": "故事表演",
+}
 STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 4  # t205u: 默认 4 步
 STEP_IMAGE_LABEL = "图片分解 (Step Image)"
 SCENE_SUMMARY_IMAGE_LABEL = "场景总图 (Scene Summary Image)"
@@ -1133,6 +1140,62 @@ def build_series_direct(episode: int = 1, episodes: int = SERIES_DIRECT_DEFAULT_
 
 SERIES_DIRECT_DEFAULT = build_series_direct(1, SERIES_DIRECT_DEFAULT_EPISODES)
 
+
+SERIES_DIRECT_ALL_CORE = """
+*** ROLE: Writer and host of a recorded series program. The material below describes the WHOLE series. Write ALL ###N### episodes in this one answer.
+
+## STEP 1 — PLAN THE ###N### EPISODES (internal only; do NOT output)
+    ** From the material alone, work out at a high level how the series falls into exactly ###N### episodes in watch order: ###N### stages of one story's development, ###N### separate stories, or the ###N### main parts the material itself gives. For each episode: its theme, its key points, any dialogue or examples the material already gives for it, and where it stops and the next one begins.
+    ** Do not add facts, cases or teachings the material does not contain.
+
+## STEP 2 — WRITE EVERY EPISODE
+    ** For each episode a complete, detailed script that can be recorded as is: real spoken lines, not an outline.
+    ** Flow of each episode: title → opening → dialogue → explanation → connection to daily life → transitions → ending → teaser (only when a next episode follows). Keep the existing dialogue of the material, made natural to say aloud.
+    ** Episode 1 opens the series: greet the audience, say in a few natural sentences what these ###N### episodes will walk through and why it matters, then enter its theme. Every later episode opens with one or two natural sentences that pick up where the previous one left off (no full recap). Every episode but the last leaves a short hook for the next one. The last episode closes the whole series, gathers in a few natural sentences what the ###N### episodes walked through, and leaves one warm, concrete takeaway.
+    ** Voice: first person, natural and warm, the way people really talk. Tell it as a story; no numbered lists, no headings read aloud.
+    ** Never mention the material, a PDF, a document, a book or "the source". Speak as if this is simply our program.
+
+## STEP 3 — SCENES FOR THE VIDEO
+    ** Each episode's script is cut into scenes in watch order. One scene is one relatively independent, complete story fragment or beat of the script (opening, each dialogue run, each explanation, life connection, ending, teaser). Transitions sit inside the scenes they join.
+    ** Every scene has "episode": the number of its episode, "1" to "###N###", as a string. Every number from 1 to ###N### is used; the scenes of one episode sit next to each other. The first scene of episode k has the caption "第k集 · " + that episode's title; other captions are short scene titles.
+    ** Host look for this run: {narrator}. The host or explainer is this 讲员, not a separate 人物. A host-only scene: ``actor`` is exactly ``讲员：{narrator}`` and the lines are marked ``<1>``.
+    ** visual: a film-still of the place and how the people act on each other, and a cut or another angle when the picture should move. No words on the image.
+    ** One scene per page does NOT apply: when the source is a PDF, it describes the whole series. Omit start and end.
+
+*** OUTPUT
+    * One JSON array with the scenes of all ###N### episodes in watch order, all text in {language}:
+
+[
+    {{
+        "episode": "1",
+        "caption": "第1集 · title in {language}.",
+        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
+        "speaking": "The whole spoken text of this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. A fourth person in actor only appears and does not speak. Never write <4>. If a line is self-talk monologue by a story person (not a narrator), mark it <Ns> (same person N; s is not a new speaker). Self-talk may ONLY be the first utterance(s) or the last utterance(s) of that scene, never the middle and never both ends. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx。<1> xxx。 In {language}.",
+        "actor": "Everyone visible, at most four, the one 讲员 included, joined with | only. Each 人物 is gender/age band/ethnicity/name: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. Age band is kids, youth, teenager, mature, or senior; no number. If the narrator presents this scene, 讲员：{narrator} is position 1. Never put mood, gesture, or camera direction in actor."
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Series material (analyzed_content, or the PDF named for this run):
+    {content}
+"""
+
+
+def build_series_direct_all(episodes: int = SERIES_DIRECT_DEFAULT_EPISODES) -> str:
+    """t436u「直接生成系列节目」共 N 集：一次生成全部 N 集（N = 1 就是单集节目）。"""
+    _k, n = _clamp_episode(1, episodes)
+    if n <= 1:
+        return build_series_direct(1, 1)
+    return SERIES_DIRECT_ALL_CORE.replace("###N###", str(n))
+
 _LEGACY_STEP_RE = __import__("re").compile(r"^\s*([1-9])\s*step\s*story\s*$", __import__("re").I)
 
 
@@ -1152,8 +1215,39 @@ def is_scene_summary_image_label(label: str) -> bool:
     return (label or "").strip() == SCENE_SUMMARY_IMAGE_LABEL
 
 
+def canonical_prompt_label(label: str) -> str:
+    """t447u: 存过的 / CLI 传来的旧 label → 现在的中文 label（其它原样）。
+
+    "Step Story"、"Short Story"、"N Step Story" → 短故事；"Series · Podcast" / "Series . Podcast"（两种点号）→ 播客；
+    Counselor → 主持人节目；Story Speak / Story Only → 故事对话；Story Act → 故事表演。"""
+    raw = (label or "").strip()
+    if not raw:
+        return ""
+    if raw in STORY_PROMPT_LABEL_RENAMES:
+        return STORY_PROMPT_LABEL_RENAMES[raw]
+    low = " ".join(raw.lower().replace("·", ".").split())
+    if low == "step story" or legacy_step_label(raw):
+        return STEP_STORY_LABEL
+    if low.startswith("series") and not is_series_direct_label(raw):
+        rest = low[len("series"):].lstrip(" .")
+        for key, words in (("podcast", ("podcast",)), ("counselor", ("counselor",)),
+                           ("story_act", ("story act",)), ("story_speak", ("story speak", "story only"))):
+            if rest in words:
+                return SERIES_STYLE_LABELS[key]
+    return raw
+
+
+def series_style_key(label: str) -> str:
+    """label（新旧都认）→ podcast / counselor / story_speak / story_act；不是这四种返回 ""。"""
+    want = canonical_prompt_label(label)
+    for key, lbl in SERIES_STYLE_LABELS.items():
+        if want == lbl:
+            return key
+    return ""
+
+
 def is_step_story_label(label: str) -> bool:
-    return (label or "").strip() == STEP_STORY_LABEL
+    return canonical_prompt_label(label) == STEP_STORY_LABEL
 
 
 def is_series_direct_label(label: str) -> bool:
@@ -1168,29 +1262,35 @@ def resolve_dynamic_scene_template(label: str, template: str, params: dict | Non
         if core:
             return build_step_story(core, params.get("steps") or STEP_STORY_DEFAULT)
     elif is_series_direct_label(label):
-        return build_series_direct(
-            params.get("episode") or 1,
-            params.get("episodes") or SERIES_DIRECT_DEFAULT_EPISODES,
-        )
+        # t436u: 共 N 集默认一次生成全部 N 集；勾了「只重新生成第 k 集」才只写第 k 集
+        n = params.get("episodes") or SERIES_DIRECT_DEFAULT_EPISODES
+        if episode_only(params):
+            return build_series_direct(params.get("episode") or 1, n)
+        return build_series_direct_all(n)
     elif is_series_label(label):
-        return series_episode_template(template, params.get("episode") or 1, params.get("episodes") or 1)
-    return template
+        return series_episode_template(template, params.get("episode") or 1, params.get("episodes") or 1,
+                                       only=episode_only(params))
+    if is_step_image_label(label) or is_scene_summary_image_label(label):
+        return template
+    return with_episode_plan(template, params.get("episodes") or 1, params.get("episode") or 1,
+                             only=episode_only(params))
 
 
 def is_series_label(label: str) -> bool:
-    """四个 Series 选项（Podcast / Counselor / Story Speak / Story Act；旧名 Story Only 也算）。"""
-    low = (label or "").strip().lower()
-    return low.startswith("series") and not is_series_direct_label(label)
+    """四种节目方式（播客 / 主持人节目 / 故事对话 / 故事表演；旧的 Series · … 写法也算）。t447u: 按存值判断，不看前缀。"""
+    return bool(series_style_key(label))
 
 
-def series_episode_template(template: str, episode=1, episodes=1) -> str:
-    """Series 选项 + 共 N 集（N > 1）：这一次只写第 k 集；N = 1 原样（整套节目）。"""
+def series_episode_template(template: str, episode=1, episodes=1, *, only: bool = False) -> str:
+    """Series 选项。t436u: 共 1 集 = 不分集；共 N 集 = 一次生成全部 N 集（EPISODES 规则换成「正好 N 集」）；
+    only=True（只重新生成第 k 集）才是旧的「这一次只写第 k 集」。"""
     k, n = _clamp_episode(episode, episodes)
-    if n <= 1:
-        return template
+    if n <= 1 or not only:
+        return with_episode_plan(template, n, k)
     # Podcast 里那条"多集时的开场 / 收尾"由下面的连续性一句代替，不重复
     body = "\n".join(
-        ln for ln in (template or "").split("\n") if not ln.startswith("    ** Several episodes: episode 1 opens the series")
+        ln for ln in with_episode_plan(template, n, k, only=True).split("\n")
+        if not ln.startswith("    ** Several episodes: episode 1 opens the series")
     )
     head = (
         f"*** THIS RUN: EPISODE {k} OF {n}\n"
@@ -1201,6 +1301,137 @@ def series_episode_template(template: str, episode=1, episodes=1) -> str:
         + "\n\n"
     )
     return head + body
+
+
+# ---- t436u: 分集 = 手工选的「共 N 集」 ----
+EPISODES_BLOCK_HEAD = "*** EPISODES:"
+_INPUT_MARKER = "\n--------------------------------------------------\nINPUT\n"
+
+
+def episode_only(params) -> bool:
+    """「只重新生成第 k 集」勾上了没有（共 1 集时没有意义）。"""
+    params = params or {}
+    try:
+        n = int(params.get("episodes") or 1)
+    except (TypeError, ValueError):
+        n = 1
+    return bool(params.get("episode_only")) and n > 1
+
+
+def episode_plan_block(episodes=1, episode=1, *, only: bool = False) -> str:
+    """EPISODES 规则：共 1 集 = 不分集；共 N 集 = 先在大的层面把内容分成正好 N 集，再在每集里分场；
+    only = 只写第 k 集（其它集保持不变）。"""
+    k, n = _clamp_episode(episode, episodes)
+    if n <= 1:
+        return (
+            "*** EPISODES: ONE EPISODE\n"
+            '    ** This program is not split into episodes. Every scene has "episode": "1". This replaces any episode '
+            "grouping, episode count or episode numbering written above.\n"
+        )
+    if only:
+        return (
+            f"*** EPISODES: ONLY EPISODE {k} OF {n}\n"
+            f"    ** The content is one program of exactly {n} episodes. First work out, at a high level, how the whole "
+            f"content falls into these {n} episodes in watch order: {n} stages of one story's development, {n} separate "
+            f"stories, or the {n} main parts the content itself gives.\n"
+            f"    ** Write the scenes of episode {k} only: its part of the content, nothing from "
+            f"{_series_others(k, n)}, nothing the content lacks. Inside the episode, one scene is one relatively "
+            "independent, complete story fragment.\n"
+            f'    ** Every scene has "episode": "{k}". This replaces any episode grouping, episode count or episode '
+            "numbering written above.\n"
+        )
+    return (
+        f"*** EPISODES: EXACTLY {n} EPISODES\n"
+        f"    ** First plan the whole content at a high level and divide it into exactly {n} episodes in watch order: "
+        f"{n} stages of one story's development, {n} separate stories, or the {n} main parts the content itself gives. "
+        "Each episode stands on its own as one part of the program.\n"
+        "    ** Then cut each episode into scenes. One scene is one relatively independent, complete story fragment.\n"
+        f'    ** Fill "episode" on every scene: "1" to "{n}" in watch order, as a string and nothing else. Every number '
+        f"from 1 to {n} is used. The scenes of one episode sit next to each other. Do not interleave episodes and do "
+        "not use any other number.\n"
+        "    ** This block alone decides the episodes. It replaces any episode grouping, episode count or episode "
+        "numbering written above. A caption that says 第N集 uses the same N as that scene's \"episode\".\n"
+    )
+
+
+def with_episode_plan(template: str, episodes=1, episode=1, *, only: bool = False) -> str:
+    """模板里的 EPISODES 规则换成手工选的集数。模板里没有这一段：共 1 集且没提到 EPISODES 就原样；
+    否则插在 INPUT 之前（没有 INPUT 就放最后）。"""
+    template = template or ""
+    block = episode_plan_block(episodes, episode, only=only)
+    a = template.find(EPISODES_BLOCK_HEAD)
+    if a >= 0:
+        b = template.find(_INPUT_MARKER, a)
+        end = b if b >= 0 else len(template)
+        return template[:a] + block.rstrip("\n") + template[end:]
+    _k, n = _clamp_episode(episode, episodes)
+    if n <= 1 and "EPISODES block" not in template:
+        return template
+    if _INPUT_MARKER in template:
+        return template.replace(_INPUT_MARKER, "\n" + block.rstrip("\n") + "\n" + _INPUT_MARKER, 1)
+    return template.rstrip("\n") + "\n\n" + block
+
+
+def scene_episode_number(scene) -> str:
+    """场景的集号（"1"、"2"…）；没写 / 写不成数字的返回 ""。"""
+    if not isinstance(scene, dict):
+        return ""
+    raw = str(scene.get("episode") or "").strip()
+    m = __import__("re").search(r"\d+", raw)
+    return str(int(m.group(0))) if m else ""
+
+
+def normalize_scene_episodes(scenes: list, episodes=1, episode=1, *, only: bool = False) -> list:
+    """t436u: 生成场景后由程序保证集号。共 1 集 → 全部 "1"；只重生第 k 集 → 全部 "k"；
+    共 N 集 → 不改，只检查（正好 N 个集号、1..N、不交叉）。返回提醒（中文）。"""
+    k, n = _clamp_episode(episode, episodes)
+    rows = [s for s in (scenes or []) if isinstance(s, dict)]
+    notes: list = []
+    if n <= 1 or only:
+        want = "1" if n <= 1 else str(k)
+        for s in rows:
+            s["episode"] = want
+        return notes
+    seq = []
+    for i, s in enumerate(rows, 1):
+        ep = scene_episode_number(s)
+        if not ep:
+            notes.append(f"第{i}场没有集号")
+            continue
+        s["episode"] = ep
+        if not seq or seq[-1] != ep:
+            seq.append(ep)
+    got = sorted({int(e) for e in seq})
+    if got != list(range(1, n + 1)):
+        notes.append(f"要求共 {n} 集，生成的集号是 {', '.join(str(x) for x in got) or '无'}")
+    if len(seq) != len(set(seq)):
+        notes.append("有的集的场景没有挨在一起（集号交叉）")
+    return notes
+
+
+def merge_episode_scenes(existing: list, new: list, episode) -> list:
+    """t436u「只重新生成第 k 集」：existing 里第 k 集的场换成 new（放在原来第 k 集的位置），其它集不动。
+    原来没有第 k 集：按集号插到合适的位置。"""
+    k = str(int(episode))
+    old = [s for s in (existing or []) if isinstance(s, dict)]
+    out: list = []
+    placed = False
+    for s in old:
+        if scene_episode_number(s) == k:
+            if not placed:
+                out.extend(new)
+                placed = True
+            continue
+        out.append(s)
+    if not placed:
+        pos = len(out)
+        for i, s in enumerate(out):
+            ep = scene_episode_number(s)
+            if ep and int(ep) > int(k):
+                pos = i
+                break
+        out[pos:pos] = list(new)
+    return out
 
 
 def visual_style_prompt_block(visual_style: str) -> str:
@@ -1323,15 +1554,15 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
     ** WHO IS WHO, decided only by the CAST:
         * CAST is EMPTY: nobody is on screen as a speaker. Every counselor beat is a default narrator voice-over (``<1>``, ``actor`` ""), exactly like a podcast voice-over. Story scenes still show the life, the people acting silently in the visual.
         * The 讲员 is the counselor and the protagonist of the program. Every counselor beat (naming the problem, background, transitions, unpacking, remedy) is the 讲员. Only one 讲员. Do not invent another age, gender, or face.
-        * The 人物 are ACTORS in the story, not guests. They perform the spoken content: through dialogue with each other, actions, exclamations, and visible emotion, inside the place where the life happens. They speak as the people in the story, never as commentators about it.
+        * The 人物 are ACTORS in the story, not guests. They act the life silently, inside the place where it happens: actions, behavior, facial expression, gesture, visible emotion. They NEVER speak: no lines, no dialogue, no exclamations, no lip-sync. Only the 讲员 speaks in this program.
         * No 讲员 but 人物 listed: there is no on-screen counselor. Counselor beats become voice-over scenes: ``actor`` is "", the counselor narration is ``<1>``, and the visual shows the life silently. The 人物 still act the story in the story scenes.
 
 *** SHARED RULES
     ** visual is a film-still with no words on the image. Also the place, how the people act on each other, and a cut or another angle when the picture should move.
     ** THIS IS A SWITCH, NOT A PODCAST. A podcast stays in one conversation about someone else's life and nobody performs it. Here the picture changes job.
     ** Counselor beat: the 讲员 speaks as a third person, giving the background of this story, this scene, or what the audience is about to see. On a beat that is only the 讲员, ``actor`` is exactly ``讲员：<look>``. No 人物.
-    ** Then switch into the life. The 人物 are in that place, performing. They talk to each other, act, exclaim, show emotion. They are acting this life, not discussing it from outside.
-    ** The 讲员 may stand in that same scene and speak to them. The 人物 can answer the 讲员. While that is happening they are still performing the life, not sitting as guests.
+    ** Then switch into the life. The 人物 are in that place, performing it silently: what they do, how they move toward or away from each other, their faces and hands. They are acting this life, not discussing it from outside. The 讲员's speaking tells what we are watching.
+    ** The 讲员 may stand in that same scene and speak to the audience about them. The 人物 never answer and never speak; they keep performing the life, not sitting as guests.
     ** Then it may switch back. The 讲员 narrates again. A performance scene is still the life being acted, even when the 讲员 is in it. Do not turn that scene into a studio discussion about those people.
     ** List everyone visible, at most four people in all, the 讲员 included, using the CAST looks. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Only the first three people listed may speak. If the 讲员 is presenting, 讲员 is position 1.
     ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
@@ -1370,10 +1601,10 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
 
 *** OUTPUT
     * One JSON array in watch order. All text in {language}.
-    * Every scene object MUST include "episode" (a string "1", "2", "3", … with no other text). It follows the EPISODES block: 5 to 15 scenes per episode.
-    * PATH A: scene 1 caption is the program title. No "第N集". The episode numbers come from the EPISODES block. When the whole program is 15 scenes or fewer, every scene, including the remedy, is "episode": "1".
-    * PATH B: episode open is "第N集 · ". Episode close is "第N集 · 承接". Every scene of case N (open, story, close) is "episode": "N" when that case holds 5 to 15 scenes.
-    * PATH B remedy scenes are captioned "方案 · " and share the next number after the last case. Three cases → remedy is "episode": "4". If the remedy holds fewer than 5 scenes, the EPISODES block decides where it goes.
+    * Every scene object MUST include "episode" (a string "1", "2", "3", … with no other text). It follows the EPISODES block.
+    * PATH A: scene 1 caption is the program title. No "第N集". The episode numbers come from the EPISODES block.
+    * PATH B: episode open is "第N集 · ". Episode close is "第N集 · 承接". The EPISODES block decides the episode numbers; a caption that says 第N集 uses the same N as that scene's "episode".
+    * PATH B remedy scenes are captioned "方案 · ". The EPISODES block decides their episode number.
 
 [
     {{
@@ -1420,15 +1651,15 @@ COUNSELING_SERIES_STORY_ONLY = """
         * The 讲员, when listed, is the narrator only: a short introduction and background at the start, brief transitions between parts or episodes, and a brief closing. 2 to 4 sentences each. The 讲员 never takes over a story scene and never explains what the audience can already see. A narrator-only scene has ``actor`` exactly ``讲员：<look>`` and the lines marked ``<1>``.
         * Wherever the PATH sections below say "the host's lines", that is this 讲员, kept brief. Remedy explanations are kept short and the steps are shown by the 人物 acting them out.
         * No 讲员 in the CAST: the whole program is purely acted. No narrator, no voice-over. The opening, transitions, closing, and remedy are carried by the 人物 themselves (a line of dialogue, a gesture, a changed action), and by the caption.
-        * CAST is EMPTY: invent the story people from the material (still pure drama, no narrator), giving each a look ``gender/age band/ethnicity/name``.
+        * The CAST always lists the story people (set with 人物设置). Use only them. Do not invent other story people, and do not change their looks.
     ** List everyone visible, at most four people in all, the 讲员 included, using the CAST looks. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Only the first three listed may speak. Never write <4>.
     ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
 
-*** PATH A — one story. When the whole program is 15 scenes or fewer it is one episode, every scene "episode": "1". A longer one follows the EPISODES block.
+*** PATH A — one story. Its episode numbers follow the EPISODES block.
     ** Start — 1 scene. Caption is the program title. The host's lines in speaking names the problem and enters this life. No remedy.
     ** Story — 5 to 8 consecutive scenes. Same people. From how the life was, through the problem in detail, to where they are stuck.
     ** End — 1 scene. The host's lines in speaking holds what we saw and leaves a question. No method yet.
-    ** Remedy — several scenes, still in the same episode while it holds 15 scenes or fewer.
+    ** Remedy — several scenes, in the episode the EPISODES block gives them.
         * 2 to 3 scenes with the host's lines in speaking: take the problem apart, then the response, step by step.
         * Then 2 to 3 scenes with the same people: one concrete step per scene, shown, not announced.
 
@@ -1441,7 +1672,7 @@ COUNSELING_SERIES_STORY_ONLY = """
     ** End — 1 scene. Caption "第N集 · 承接". "episode": "N".
         * The host's lines in speaking: not a plot summary and not an answer. A question that points under the problem. No method. No "next time".
         * If another case follows, the last line can lead into the next start. If this is the last case, the question stays open for the remedy.
-    ** Only after every case: remedy. Caption "方案 · ". "episode" is the next number after the last case (three cases → "4"), unless the EPISODES block says otherwise.
+    ** Only after every case: remedy. Caption "方案 · ". its "episode" number comes from the EPISODES block.
         * 2 to 3 scenes, the host's lines in speaking: unpack the shared problem across the lives just shown.
         * Then each response in its own short run. Say which episodes it fits. One may fit only some; another may fit all.
         * When a response is shown in a life, 2 to 3 scenes with those people, one step per scene. The host's lines in speaking may be one short line, not a speech.
@@ -1454,7 +1685,7 @@ COUNSELING_SERIES_STORY_ONLY = """
 
 *** OUTPUT
     * One JSON array in watch order. All text in {language}.
-    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field. It follows the EPISODES block: 5 to 15 scenes per episode.
+    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field. It follows the EPISODES block.
 
 [
     {{
@@ -1490,7 +1721,10 @@ def _story_act_from_speak(speak: str) -> str:
     tail = speak[speak.index("--------------------------------------------------\nINPUT"):]
     return (
         """
-*** ROLE: Silent story program (Series · Story Act), told like a silent film. The characters ACT the story out. Nobody speaks.
+*** ROLE: Acted story program (Series · Story Act), told like a silent film. The characters ACT the story out and never speak. The story scenes carry only sound effects, never music.
+    ** TWO CASES, decided ONLY by whether the CAST lists a 讲员:
+        * NO 讲员 in the CAST: a pure performance. Every scene is an acted story scene. Nobody opens, introduces, gives background, links, or closes: no narrator scene, no voice-over, no ``speaking`` anywhere.
+        * A 讲员 in the CAST: the same acted story scenes, plus the 讲员's narrator scenes: the opening with background, short links between parts or episodes, and the closing. The 讲员 is the only voice.
     ** Read the analysis and choose ONE path.
     ** PATH A — one life, one relationship, one timeline. One episode.
     ** PATH B — two or more distinct situations. Each situation is one episode that can be played alone. Do not merge them into one couple.
@@ -1500,40 +1734,45 @@ def _story_act_from_speak(speak: str) -> str:
         + speak[cast_start:cast_end]
         + """    ** WHO DOES WHAT, decided only by the CAST:
         * The 人物 carry the story by acting only: action, behavior, facial expression, gesture, how they move toward or away from each other, what they do with the things around them. They never speak: no dialogue, no lines, no lip-sync.
-        * There is no narrator and no voice-over. A 讲员 in the CAST, if any, appears at most as a silent presence in the first and last scene (watching, turning a page, a small gesture); never in a story scene and never speaking.
-        * Openings, transitions, the turn, and the remedy are all carried by what the 人物 do, and by the caption.
-        * CAST is EMPTY: invent the story people from the material, giving each a look ``gender/age band/ethnicity/name``.
+        * ONLY when the CAST lists a 讲员: the 讲员 is the narrator and the only voice of the program. The 讲员 speaks only in narrator scenes: an opening (introduction and background), a short link between parts or episodes, background where the audience needs it, and a closing. 2 to 4 sentences each. A narrator scene has ``actor`` exactly ``讲员：<look>``, a ``speaking`` field with the lines marked ``<1>``, and no ``story_content``. The 讲员 never appears in a story scene and never tells what the audience can already see.
+        * Story scenes have no ``speaking``: nobody talks, no voice-over. The turn and the remedy are carried by what the 人物 do, and by the caption.
+        * No 讲员 in the CAST: a pure performance by the 人物. There are no narrator scenes at all and no ``speaking`` field in any scene: no opening, background, link, or closing by anyone. Openings and transitions are carried by what the 人物 do, and by the caption.
+        * The CAST always lists the story people (set with 人物设置). Use only them. Do not invent other story people, and do not change their looks.
     ** List everyone visible, at most four people in all, using the CAST looks.
     ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
 
-*** PATH A — one story. When the whole program is 15 scenes or fewer it is one episode, every scene "episode": "1". A longer one follows the EPISODES block.
+*** PATH A — one story. Its episode numbers follow the EPISODES block.
     ** Start — 1 scene. Caption is the program title. An establishing moment: the place and the people in their ordinary life, with one hint of the problem.
     ** Story — 5 to 8 consecutive scenes. Same people. From how the life was, through the problem in detail, to where they are stuck.
     ** Turn — 1 scene. One moment where their way of coping visibly fails.
     ** Remedy — 3 to 5 scenes with the same people: one concrete step per scene, acted, ending on an echo of the opening moment with a different response.
+    ** Only with a 讲员 in the CAST: one narrator scene before Start (opening and background), one short narrator link before Remedy, and one narrator scene at the very end (closing). Without a 讲员: none of these.
 
 *** PATH B — one episode per situation. Different people. Do not reuse the same spouse, home, and argument.
     ** Each episode: start (caption "第N集 · "), 4 to 7 story scenes until they are stuck, an end scene (caption "第N集 · 承接") that holds the stuck moment. "episode": "N".
     ** Only after every case: remedy. Caption "方案 · ". "episode" is the next number after the last case. Each response is a short run of 2 to 3 acted scenes with those people, one step per scene.
+    ** Only with a 讲员 in the CAST: one narrator scene opening each episode (background for this case), a short narrator link before the remedy, and one closing narrator scene at the very end. Without a 讲员: none of these.
 
 *** RULES
     ** ``visual`` is the picture: the place, the framing, where each person is, the light. No on-image words.
     ** ``story_content`` is what HAPPENS in this scene, to be acted: who does what, in what order, with what emotion, and how it changes by the end. 2 to 5 short sentences in the present tense. No quoted speech, no "he says", no narration to the audience. Thoughts and feelings are shown through behavior (a hand that stops, a look away, a door left open).
     ** The actor parentheses say each person's performance in this scene, and must match ``story_content``.
+    ** SOUND. Story scenes have sound effects only, never music: footsteps, a door, rain, dishes, breathing, street noise. End ``story_content`` with one short sentence that starts with 音效： and names this scene's sound effects. No music, no song, no score.
     ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it. Do not fix it there.
     ** No DSM labels. Do not write 根, 根儿, or 病根.
 
 *** OUTPUT
     * One JSON array in watch order. All text in {language}.
-    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field. It follows the EPISODES block: 5 to 15 scenes per episode.
-    * There is NO ``speaking`` field and no ``voiceover`` field.
+    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field. It follows the EPISODES block.
+    * Story scenes have NO ``speaking`` field. Only narrator scenes (the 讲员, and only when the CAST lists one) have ``speaking``, and they have no ``story_content``. No 讲员 in the CAST: no scene has ``speaking``. There is no ``voiceover`` field.
 
 [
     {{
         "episode": "1",
         "caption": "第1集 · title, or the program title on PATH A. In {language}.",
         "visual": "The picture: place, framing, where each person is, light. No on-image text. In {language}.",
-        "story_content": "What happens in this scene, acted without words: who does what, in order, with what emotion. 2 to 5 short sentences, present tense, no dialogue. In {language}.",
+        "story_content": "Story scenes only. What happens in this scene, acted without words: who does what, in order, with what emotion. 2 to 5 short sentences, present tense, no dialogue. Last sentence: 音效：the sound effects (no music). In {language}.",
+        "speaking": "Narrator scenes only (actor is 讲员：<look>): the 讲员's opening, background, link, or closing, marked <1>. Leave this field out of story scenes, and out of every scene when the CAST has no 讲员. In {language}.",
         "actor": "People in this picture, at most four. Join with | only. The portrait id is woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. After every id, parentheses with this person's performance in this scene: 人物1：woman/mature/chinese/封氏（低头，慢慢放下碗） | 人物2：man/youth/chinese/阿明（转身走向门口）"
     }}
 ]
@@ -1572,8 +1811,8 @@ COUNSELING_TALK_SCENES = """
     ** Do not say 根, 根儿, or 病根. Do not use DSM labels.
     ** End the episode on what they now see, said in their own words. One concrete thing a listener could notice or try. Not a worksheet.
 
-*** SCENES (5 to 15 for each episode, one beat each)
-    ** This describes the shape of ONE episode. It is not the scene count of the whole program. When the source is an audio file or a video, the SCENES FOLLOW THE SOURCE rules below decide the scene count and where each scene cuts (about 30 seconds each), so a long recording has many scenes and several episodes. Each episode then follows this shape in its own way.
+*** SCENES (one beat each)
+    ** This describes the shape of ONE episode. It is not the scene count of the whole program. When the source is an audio file or a video, the SCENES FOLLOW THE SOURCE rules below decide the scene count and where each scene cuts (one complete story fragment each), so a long recording has many scenes and several episodes. Each episode then follows this shape in its own way.
     ** 1. The program opens. The host (or the voice-over) names this episode's question and steps into the story.
     ** Next several. A real moment from that life is told: how it repeats, what it costs. With guests, each scene is one exchange between host and guest(s). The visual shows that moment silently.
     ** Then the turn. A question (or, with only one voice, a turn in the telling) names what is underneath.
@@ -1587,7 +1826,7 @@ COUNSELING_TALK_SCENES = """
     * ``visual`` illustrates the content being spoken: the story's place, moment, and people, acting silently. No words on the image. It may cut back to the speakers in the studio when nothing in the story is being described.
     * When a picture or a PDF page shows a person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number.
     * caption: scene 1 is the program title; later scenes are short beat titles.
-    * Every scene includes "episode", set by the EPISODES block: 5 to 15 scenes per episode.
+    * Every scene includes "episode", set by the EPISODES block.
 
 [
     {{
@@ -1805,7 +2044,7 @@ COMIC_STRIP_SCENES = """
     ** Story scenes: list everyone in the picture, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last, ``woman/mature/chinese/封氏``. Look at each person in the picture and set the age band from the face and body: kids, youth, teenager, mature, or senior. The words on the page rarely give an age. Do not write a number. A name, when the picture or the words give one, goes last. The same person keeps that age band in every scene. There is no voiceover field. ``speaking`` holds every line. ``<N>`` is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 
 *** STORY
-    ** The scenes group into episodes by the EPISODES block: 5 to 15 scenes per episode. A story of 15 scenes or fewer is one episode, every scene "episode": "1". Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
+    ** The scenes group into episodes by the EPISODES block. Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
     ** ``speaking`` and ``speaking`` sound like people talking: natural, vivid, not a summary.
     ** ``visual`` is that same picture, made vivid: place, light, faces, the action that hits the eye. When the shot should move, say so (push in, pull back, pan, hold). No words on the image.
 
@@ -2009,21 +2248,17 @@ SOURCE_SCENE_RULES = """
     ** These rules decide how many scenes there are and where they cut. When the source is a PDF, an audio file, or a video, they replace any scene count written above.
     ** Written text. The scene count and the cuts are free, as written above. Still, one scene is one independent point told in a few whole sentences. Its length is whatever that point needs, so scenes differ in length. Do not make a scene that is only a few words, and do not pile a whole page of talk into one scene.
     ** PDF. Each page is a picture, like a picture-story book. One page is one scene, in page order. The array length equals the page count. Do not merge two pages. Do not split one page. Do not add a scene and do not drop one. Whatever the program needs, such as the host's or the counselor's opening, the closing, or the remedy, is written inside the scenes of the pages it belongs to. It does not get extra scenes. Each scene follows what its own page shows.
-    ** Audio file or video. The content is the speech. Take the words that are spoken, understand them, then cut the timeline into scenes by sentence, by meaning, and by length.
-        * Length of a scene. Aim for about 30 seconds. Every scene must be between 15 and 50 seconds. A scene shorter than 15 seconds is not allowed. A scene longer than 50 seconds is not allowed. Most scenes should land between 20 and 40 seconds. So a recording of N seconds has about N divided by 30 scenes: a 10-minute recording has about 20 scenes, a 20-minute recording about 40. Do not write a handful of long scenes. A podcast or a long talk is MANY scenes.
-        * How to measure. When the speech comes as a transcript, every sentence starts with its time. A scene starts at the start time of its first sentence. Its end is the start time of the first sentence of the next scene, and the last scene ends at N. The length of a scene is its end minus its start. Do this subtraction for every scene before you answer. Fix every scene that is not 15 to 50 seconds: if it is too long, split it at a sentence end; if it is too short, join it to the neighbour whose matter is closest. Then check the count against N divided by 30.
-        * Where to cut. Never cut in the middle of a sentence. Inside the 15 to 50 second window, cut at a sentence end where a small point is finished, or where a question has been answered, or where the matter turns. Do not cut a question away from its answer if that keeps the scene inside the window. If one single sentence runs longer than 50 seconds by itself, it stays whole as its own scene.
-        * Variety. Scenes need not be equal. Do not let every scene land on the same length, and do not write round numbers such as 30.00 or 60.00 as ends again and again: the ends follow the sentence times, so most of them are not round.
-        * When the speaker moves on to another matter or another direction, that is a good place for the next scene, as long as the scenes stay inside 15 to 50 seconds. When one matter runs long, split it by level at sentence ends. Do not mix two matters in one scene.
+    ** Audio file or video. The content is the speech. Take the words that are spoken, understand them, then cut the timeline into scenes by sentence and by meaning.
+        * Size of a scene. One scene is one relatively independent, complete story fragment: a story moment, one exchange, or one point being made, as long as that fragment needs. There is no time limit and no length limit for a scene; the program refines long scenes later when the project is built. Do not cut one fragment in two just to keep scenes short, and do not glue two fragments into one scene.
+        * Timing. When the speech comes as a transcript, every sentence starts with its time. A scene starts at the start time of its first sentence. Its end is the start time of the first sentence of the next scene, and the last scene ends at N.
+        * Where to cut. Never cut in the middle of a sentence. Cut at a sentence end where a story fragment or a point is finished, or where a question has been answered, or where the matter turns. Do not cut a question away from its answer.
+        * Variety. Scenes need not be equal. Do not write round numbers such as 30.00 or 60.00 as ends again and again: the ends follow the sentence times, so most of them are not round.
+        * When the speaker moves on to another matter or another direction, that is the place for the next scene. Do not mix two matters in one scene.
         * Keep the order of the speech. Read across the scenes and the story, or the levels, must be clear from one scene to the next, with no confusion in between.
         * Every scene carries start and end, in seconds on the file's own timeline, as written in the INPUT section. Do not add a scene that has no speech behind it.
 
-*** EPISODES: GROUP THE SCENES (every source)
-    ** There may be many scenes, so group them. An episode is a run of consecutive scenes that talk about the same matter or the same side of a matter, or that do the same thing, so the run stands on its own as one small part. The scenes inside one episode may each show a different side of that matter, one side per scene.
-    ** A long recording therefore has many scenes (about N divided by 30) and several episodes: 40 scenes become about 3 to 8 episodes of 5 to 15 scenes each. Do not put a whole long recording into one episode. One episode is enough only when the whole source holds 15 scenes or fewer.
-    ** Each episode has at least 5 scenes and at most 15 scenes. Cut by meaning first and stay inside that range. If a matter gives fewer than 5 scenes, join it to the neighbouring episode whose content is closest. If it gives more than 15, split it where the matter turns. When the whole source gives fewer than 5 scenes, it is one episode. Check the count of every episode before you answer.
-    ** Fill "episode" on every scene: "1", "2", "3", and so on in watch order, as a string and nothing else. The scenes of one episode sit next to each other and share the same number. Do not interleave episodes.
-    ** This block alone decides the "episode" number and how many scenes an episode holds. It replaces any one-episode wording or episode count written above. When the structure above already makes one case or one part an episode, keep it as an episode as long as it holds 5 to 15 scenes. A caption that says 第N集 uses the same N as that scene's "episode".
+*** EPISODES: ONE EPISODE
+    ** This program is not split into episodes. Every scene has "episode": "1". This replaces any episode grouping, episode count or episode numbering written above.
 """
 
 
@@ -2041,7 +2276,14 @@ COUNSELING_SERIES_STORY_ONLY = _with_source_scene_rules(COUNSELING_SERIES_STORY_
 COUNSELING_SERIES_STORY_SPEAK = COUNSELING_SERIES_STORY_ONLY
 COUNSELING_SERIES_STORY_ACT = _with_source_scene_rules(COUNSELING_SERIES_STORY_ACT)
 # 旧标签 → 新标签（存过的 scene_prompt_label）
-STORY_PROMPT_LABEL_RENAMES = {"Series · Story Only": "Series · Story Speak", "Series . Story Only": "Series · Story Speak"}
+STORY_PROMPT_LABEL_RENAMES = {
+    "Step Story": STEP_STORY_LABEL,
+    "Series · Podcast": SERIES_STYLE_LABELS["podcast"], "Series . Podcast": SERIES_STYLE_LABELS["podcast"],
+    "Series · Counselor": SERIES_STYLE_LABELS["counselor"], "Series . Counselor": SERIES_STYLE_LABELS["counselor"],
+    "Series · Story Speak": SERIES_STYLE_LABELS["story_speak"], "Series . Story Speak": SERIES_STYLE_LABELS["story_speak"],
+    "Series · Story Only": SERIES_STYLE_LABELS["story_speak"], "Series . Story Only": SERIES_STYLE_LABELS["story_speak"],
+    "Series · Story Act": SERIES_STYLE_LABELS["story_act"], "Series . Story Act": SERIES_STYLE_LABELS["story_act"],
+}
 # 图片分解 (Step Image) 和场景总图 (Scene Summary Image) 已从预览下拉里移走；
 # 旧项目存的这两个 label 不在下拉里，scene_editor 会自动回到频道下拉的第一项（默认项）。
 COMIC_STRIP_SCENES = _with_source_scene_rules(COMIC_STRIP_SCENES)

@@ -933,7 +933,9 @@ def _env_list(name: str, default: str, sep: str = ",") -> list:
 
 
 # 本机 Strata（OpenAI 兼容）
-STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.186:8080/v1") # "http://192.168.1.30:8080/v1")
+STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.140:8080/v1")
+#STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.30:8080/v1")
+#STRATA_BASE_URL = _env("STRATA_BASE_URL", "http://192.168.1.186:8080/v1")
 # Voicebox TTS / ASR（旧变量名 VOICEBOX_BASE_URL 不变）
 VOICEBOX_BASE_URL = _env("VOICEBOX_BASE_URL", "http://127.0.0.1:17493")  # t195u: Voicebox 装在本机
 # 以下是 sd_image_processor 里已停用（DEPRECATED）的服务；10.0.0.x 是占位、不可达，照原样保留
@@ -2588,10 +2590,10 @@ CHANNEL_CONFIG = {
 
         "scenes_prompt_choices": [
             (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),  # t205u: 第一个 = 新条目默认
-            ("Series . Podcast", config_channel.COUNSELING_TALK_SCENES),
-            ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
-            ("Series · Story Speak", config_channel.COUNSELING_SERIES_STORY_SPEAK),
-            ("Series · Story Act", config_channel.COUNSELING_SERIES_STORY_ACT),
+            (config_channel.SERIES_STYLE_LABELS["podcast"], config_channel.COUNSELING_TALK_SCENES),  # t447u: 播客
+            (config_channel.SERIES_STYLE_LABELS["counselor"], config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),  # 主持人节目
+            (config_channel.SERIES_STYLE_LABELS["story_speak"], config_channel.COUNSELING_SERIES_STORY_SPEAK),  # 故事对话
+            (config_channel.SERIES_STYLE_LABELS["story_act"], config_channel.COUNSELING_SERIES_STORY_ACT),  # 故事表演
         ],
 
         "channel_prompt": {

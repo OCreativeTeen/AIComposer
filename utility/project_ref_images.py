@@ -19,6 +19,8 @@ REF_FIELD = "ref_images"
 IMAGE_EXTS = (".webp", ".png", ".jpg", ".jpeg", ".bmp", ".gif")
 _PAGE_RANK = {".webp": 0, ".jpg": 1, ".jpeg": 1, ".png": 2}
 _SCENE_NAME_RE = re.compile(r"^(\d+)_(\d+)$")
+# t442u: 视频来源拆开的每一段自己的中间帧（utility/scene_prep.attach_part_frames 写的 source）
+SHOT_FRAME_SOURCE = "shot_frame"
 
 
 def norm(path: str) -> str:
@@ -130,20 +132,27 @@ def _with_path(entry, new_path: str, old_path: str = ""):
     return rec
 
 
+def is_shot_frame(entry) -> bool:
+    return isinstance(entry, dict) and entry.get("source") == SHOT_FRAME_SOURCE
+
+
 def import_scene_ref_images(scene: dict, folder: str, scene_no: int, *, media_root: str = "",
-                            copy=shutil.copy2) -> int:
+                            copy=shutil.copy2, done: dict | None = None) -> int:
     """把这一场 ref_images 里不在项目 media 里的图复制进 folder，名字 <scene_no>_<k><扩展名>，并改写路径。
 
     已经在 media_root（或 folder）里面的图不动、不改名（名字第一次进项目时就定了）。
     磁盘上已经没有的图保持原样。同一个文件只留一条。返回这次复制了几张。
+    t442u: done = 整个项目共用的「(folder, 原文件) → 已复制的新文件」：同一个原文件只复制一次，
+    名字跟第一个用到它的场（拆开的几段都指向同一批文件）。
+    拆段中间帧（source = shot_frame）编号排在原图后面（例如 3_4），但在 ref_images 里位置不变（还是第一张）。
     """
     refs = ref_entries(scene)
     if not refs:
         return 0
     root = media_root or folder
     os.makedirs(folder, exist_ok=True)
-    out, seen, copied = [], set(), 0
-    k = 1
+    done = {} if done is None else done
+    items, seen = [], set()
     for e in refs:
         p = entry_path(e)
         if not p:
@@ -152,17 +161,35 @@ def import_scene_ref_images(scene: dict, folder: str, scene_no: int, *, media_ro
         if key in seen:
             continue
         seen.add(key)
+        items.append(e)
+    mapped, copied = {}, 0
+    k = 1
+    for i in sorted(range(len(items)), key=lambda j: (is_shot_frame(items[j]), j)):
+        e = items[i]
+        p = entry_path(e)
         if not os.path.isfile(p) or inside(p, root) or inside(p, folder):
-            out.append(e)
+            mapped[i] = e
+            continue
+        dkey = (norm(folder), norm(p))
+        prev = done.get(dkey)
+        if prev and os.path.isfile(prev):
+            mapped[i] = _with_path(e, prev, os.path.abspath(p))
             continue
         ext = os.path.splitext(p)[1] or ".png"
         dest, k = free_scene_image_path(folder, scene_no, ext, start=k)
         copy(p, dest)
         k += 1
         new = os.path.abspath(dest)
-        seen.add(norm(new))
-        out.append(_with_path(e, new, os.path.abspath(p)))
+        done[dkey] = new
+        mapped[i] = _with_path(e, new, os.path.abspath(p))
         copied += 1
+    out, seen_out = [], set()
+    for i in range(len(items)):
+        key = norm(entry_path(mapped[i]))
+        if key in seen_out:
+            continue
+        seen_out.add(key)
+        out.append(mapped[i])
     scene[REF_FIELD] = out
     return copied
 
@@ -233,17 +260,22 @@ def _folder_images(folder: str) -> list:
     return pages + [p for _k, p in sorted(scene_imgs)]
 
 
-def image_pool(scenes: list, extra_folders=()) -> list:
-    """选图翻页用的图：按场景顺序，每一场自己的 ref_images（还在的）；然后是这些文件夹里还没出现过的图。"""
+def image_pool(scenes: list, extra_folders=(), current=None) -> list:
+    """选图翻页用的图：按场景顺序，每一场自己的 ref_images（还在的）；然后是这些文件夹里还没出现过的图。
+    t442u: 给了 current（当前场景）→ 当前场景的图（含和别的场共用的）连成一块放在它自己的位置，
+    前面的场就不再列这些图。"""
     out, seen = [], set()
+    cur_keys = {norm(p) for p in scene_ref_paths(current)} if isinstance(current, dict) else set()
     for sc in scenes or []:
         if not isinstance(sc, dict):
             continue
+        is_cur = sc is current
         for p in scene_ref_paths(sc):
             k = norm(p)
-            if k not in seen:
-                seen.add(k)
-                out.append(p)
+            if k in seen or (k in cur_keys and not is_cur):
+                continue
+            seen.add(k)
+            out.append(p)
     for folder in extra_folders or ():
         for p in _folder_images(folder):
             k = norm(p)

@@ -546,11 +546,9 @@ class ConfigMixin:
         self._topic_choices = choices
         category = (config_data.get("topic_category") or "").strip()
         subtype = (config_data.get("topic_subtype") or "").strip()
-        tags = config_data.get("tags")
-        if isinstance(tags, list):
-            tags_text = " | ".join(str(t) for t in tags if str(t).strip())
-        else:
-            tags_text = (tags or "").strip() if isinstance(tags, str) else ""
+        from utility.tags_text import normalize_tags
+
+        tags_text = " | ".join(normalize_tags(config_data.get("tags")))  # t447u: 坏掉的字符串标签也显示干净
         if category and category not in categories:
             categories = list(categories) + [category]
         self.topic_category_combo["values"] = categories

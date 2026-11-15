@@ -17,7 +17,7 @@ from gui.video_prompt_dialog import _place_popup_near
 _DEFAULT_CHOICE = {
     "narrative": "narration",
     "target": "slideshow",  # 只做幻灯片；旧项目里存的 "single" 也按幻灯片
-    "text": "erase",
+    "text": "express",  # t428u: 没有「去掉文字」了
     "visual": True,
     "speaking": True,
     "actor": False,
@@ -54,8 +54,8 @@ def _clean_choice(saved) -> dict:
     ):
         if saved.get(key) in allowed:
             choice[key] = saved[key]
-    if saved.get("text") == "none":
-        choice["text"] = "erase"
+    if saved.get("text") in ("none", "erase"):  # t428u: 去掉文字 → 用画面讲
+        choice["text"] = "express"
     for key in ("visual", "speaking", "actor", "image"):
         if key in saved:
             choice[key] = bool(saved[key])
@@ -97,6 +97,30 @@ def pack_narrative_choices(parent, narrative_var, *, title: str = "叙事风格"
         actor_var.trace_add("write", _update)
         _update()
     return box, buttons
+
+
+def pack_program_mode(parent, mode_label: str, story_style=None, *, padx=(0, 8), actor_var=None):
+    """t448u: 节目生成里只读显示主窗口选的方式（不再有单选）。返回 (box, [], 故事风格 key, 叙事方式)。"""
+    from utility.cast_preset import program_mode_narrative
+
+    shown, key, narrative = program_mode_narrative(mode_label, story_style)
+    box = ttk.LabelFrame(parent, text="节目方式（在主窗口改）", padding=(8, 4))
+    box.pack(side=tk.LEFT, anchor=tk.N, padx=padx)
+    ttk.Label(box, text=shown, font=("Microsoft YaHei UI", 10, "bold")).pack(anchor=tk.W)
+    mode = ttk.Label(box, foreground="#1f5fbf", wraplength=340, justify=tk.LEFT)
+    mode.pack(anchor=tk.W, pady=(4, 0))
+
+    def _update(*_a):
+        try:
+            actor_on = bool(actor_var.get()) if actor_var is not None else True
+            mode.config(text=config_prompt.story_style_mode_text(key, actor_on))
+        except tk.TclError:
+            pass
+
+    if actor_var is not None:
+        actor_var.trace_add("write", _update)
+    _update()
+    return box, [], key, narrative
 
 
 def big_submit_button(dlg, parent, command, text: str = "提交", *, compact: bool = False):
@@ -200,6 +224,9 @@ def open_slide_prompt_dialog(
     initial_source: str = "",
     on_source_change=None,
     title: str = "全集生成",
+    program_mode=None,
+    story_style=None,
+    get_fyi=None,
 ) -> None:
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
@@ -217,6 +244,10 @@ def open_slide_prompt_dialog(
     魔法工作流不给 ``get_analysis``：上面一节灰掉（「只在 STORY 窗口可用」），行为和以前一样。
     「注意 / FYI」（节目生成窗里标题是「内容主题」）：用户临时补充的短说明，勾上才放在提示词最前面；
     历史存在 ``saved_choice['fyi_history']``。内容主题会另外写进 NotebookLM 自定义框，不勾也送。
+
+    t448u（节目生成）：给了 ``program_mode``（主窗口场景生成方式：短故事 / 播客 / 主持人节目 / 故事对话 / 故事表演）
+    就不显示任何风格单选，只读显示这个方式，叙事方式由它决定（``story_style`` 是主窗口不是这五种时的后备）。
+    给了 ``get_fyi() -> (文字, 勾不勾)`` 就用 STORY 窗的内容主题 / FYI，这里不再单独放一栏。
     """
     story_mode = get_analysis is not None
     dlg = tk.Toplevel(parent)
@@ -267,7 +298,13 @@ def open_slide_prompt_dialog(
         scenes_e = [s for s in (get_scenes() or []) if isinstance(s, dict)]
         return scenes_e, []
 
-    _narr_box, narr_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
+    if program_mode is not None:
+        _narr_box, narr_buttons, _mode_key, _mode_narr = pack_program_mode(
+            groups, program_mode, story_style, actor_var=actor_var
+        )
+        narrative_var.set(_mode_narr)
+    else:
+        _narr_box, narr_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
     narr_note = ttk.Label(_narr_box, text="", foreground="#1f5fbf", wraplength=340, justify=tk.LEFT)
     narr_note.pack(anchor=tk.W, pady=(4, 0))
 
@@ -473,12 +510,45 @@ def open_slide_prompt_dialog(
     from gui.prompt_fyi import clean_fyi_history, pack_fyi_note, prepend_fyi
 
     _fyi_title = "内容主题" if title == "节目生成" else "注意 / FYI"
-    _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
-        main, history=clean_fyi_history(saved_choice) if isinstance(saved_choice, dict) else [], pady=(0, 8),
-        title=_fyi_title,
-    )
-    _fyi_box.pack_forget()
-    _fyi_box.pack(fill=tk.X, pady=(0, 8), before=lower)
+    if get_fyi is not None:
+        # t447u: 用 STORY 窗里的内容主题 / FYI（写入提示词的勾也用那边的）
+        def _fyi_now() -> tuple:
+            try:
+                got = get_fyi() or ("", False)
+                return str(got[0] or ""), bool(got[1])
+            except Exception:  # noqa: BLE001
+                return "", False
+
+        def get_fyi_text() -> str:
+            return _fyi_now()[0]
+
+        class _FyiInclude:
+            @staticmethod
+            def get() -> bool:
+                return _fyi_now()[1]
+
+        fyi_include_var = _FyiInclude()
+        _fyi_saved_hist = clean_fyi_history(saved_choice) if isinstance(saved_choice, dict) else []
+
+        def get_fyi_history() -> list:
+            return _fyi_saved_hist
+
+        _fyi_text0, _fyi_inc0 = _fyi_now()
+        _fyi_show = (_fyi_text0.strip().splitlines() or [""])[0][:60]
+        _fyi_box = ttk.Label(
+            main,
+            text="内容主题 / FYI（STORY 窗里那一份" + ("，写入提示词" if _fyi_inc0 else "，这次不写入提示词") + "）："
+            + (_fyi_show or "（空）"),
+            foreground="#1f5fbf", wraplength=760, justify=tk.LEFT,
+        )
+        _fyi_box.pack(anchor=tk.W, pady=(0, 8), before=lower)
+    else:
+        _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
+            main, history=clean_fyi_history(saved_choice) if isinstance(saved_choice, dict) else [], pady=(0, 8),
+            title=_fyi_title,
+        )
+        _fyi_box.pack_forget()
+        _fyi_box.pack(fill=tk.X, pady=(0, 8), before=lower)
 
     hints = {
         "story": "故事：人物在画面里演这个故事。有 actor 时，讲员是故事外的评述者，其他人物是演员。",
@@ -620,6 +690,8 @@ def open_slide_prompt_dialog(
             fyi_include=bool(fyi_include_var.get()),
             cast_block=_safe_cast_block(get_cast_block, output_var.get()),
         )
+        prompt = _with_text_lock(prompt, output_var.get(), style, text_var.get(), region, era,
+                                 bool(bg_include_var.get()))  # t428u
         try:
             copy_text(prompt)
         except (tk.TclError, OSError):
@@ -680,6 +752,8 @@ def open_slide_prompt_dialog(
                     f"exactly {pages} sections, one per page, in page order (page 1 first). Do not merge, skip, or add sections."
                     + "\n" + config_prompt.INFOGRAPHIC_NO_INDEX_RULE
                 )
+        prompt = _with_text_lock(prompt, output_var.get(), style, text_var.get(), region, era,
+                                 bool(bg_include_var.get()))  # t428u
         try:
             copy_text(prompt)
         except (tk.TclError, OSError):
@@ -766,6 +840,14 @@ def open_slide_prompt_dialog(
             prompt, region, era, host_narrator, include=bool(bg_include_var.get()), stage=stage_info,
         )
         prompt = prepend_fyi(prompt, get_fyi_text(), include=bool(fyi_include_var.get()))
+        _bg_on = bool(bg_include_var.get())
+        _deck = output_var.get() == "slides"
+        if _deck:  # t427u: 页数 + 画风 + 地域时代：放在最前面，也是填进 NotebookLM 自定义框的第一段
+            prompt = config_prompt.with_notebooklm_deck_lock(prompt, config_prompt.notebooklm_deck_lock(
+                len(scenes), style, region=region if _bg_on else "", era=era if _bg_on else "",
+                content_source=CONTENT_PDF_NAME, text=text_var.get()))  # t428u: 说明文字紧跟画风
+            print(f"全集生成：演示文稿硬性要求 = 正好 {len(scenes)} 页，画风 {style}"
+                  + (f"，{region} · {era}" if _bg_on and config_prompt.setting_place_phrase(region, era) else ""))
         try:
             copy_text(prompt)
         except (tk.TclError, OSError):
@@ -786,6 +868,11 @@ def open_slide_prompt_dialog(
                 actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
                 dest=CONTENT_PDF_PATH,
                 episodes=scene_groups,
+                output=output_var.get(),  # t427u: 演示文稿：开头写页数，每场写「第 k 页（共 N 页）」
+                style=style if _deck else "",
+                text=text_var.get() if _deck else "",  # t428u: 每页写明这一页上能有什么字
+                place=(f"{region} · {era}" if (_deck and _bg_on and config_prompt.setting_place_phrase(region, era))
+                       else ""),
             )
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("全集生成", f"生成 {CONTENT_PDF_NAME} 失败：{exc}", parent=dlg)
@@ -991,6 +1078,14 @@ def _analysis_to_material_wording(prompt: str) -> str:
     for a, b in _MATERIAL_WORDING:
         prompt = prompt.replace(a, b)
     return prompt
+
+
+def _with_text_lock(prompt: str, output: str, style: str, text: str, region: str, era: str, bg_on: bool) -> str:
+    """t428u: 分析内容 / 材料 PDF 做演示文稿：没有场景数，但画风 + 说明文字 + 地域时代也放进硬性要求（自定义框最前面）。"""
+    if output != "slides":
+        return prompt
+    return config_prompt.with_notebooklm_deck_lock(prompt, config_prompt.notebooklm_deck_lock(
+        0, style, region=region if bg_on else "", era=era if bg_on else "", text=text))
 
 
 def _safe_cast_block(get_cast_block, output: str, source: str = "panel") -> str:

@@ -10,7 +10,7 @@ import config_prompt
 from datetime import datetime
 from utility.file_util import show_auto_close_popup
 from gui.choice_dialog import askchoice
-from utility.tags_text import parse_tags_list
+from utility.tags_text import parse_tags_list, normalize_tags
 import project_manager
 import tkinter as tk
 import tkinter.ttk as ttk
@@ -590,11 +590,7 @@ class ChannelVideosDialogImpl:
                 # 获取主题相关字段
                 topic_category = video.get('topic_category', '')
                 topic_subtype = video.get('topic_subtype', '')
-                problem_tags = video.get('tags', '')
-                if isinstance(problem_tags, list):
-                    problem_tags = " | ".join(str(t) for t in problem_tags if t is not None)
-                elif not isinstance(problem_tags, str):
-                    problem_tags = str(problem_tags) if problem_tags else ""
+                problem_tags = " | ".join(normalize_tags(video.get('tags')))  # t447u
 
                 tag_cell = problem_tags
                 if len(tag_cell) > 120:
@@ -1006,12 +1002,8 @@ class ChannelVideosDialogImpl:
                     if parsed:
                         return parsed
                 if cfg and cfg.get("tags") is not None:
-                    return cfg.get("tags")
-                tags = vd.get("tags")
-                if isinstance(tags, list):
-                    return tags or None
-                if isinstance(tags, str) and tags.strip():
-                    return parse_tags_list(tags) or None
+                    return normalize_tags(cfg.get("tags"))  # t447u: 一律列表
+                return normalize_tags(vd.get("tags")) or None
                 return None
 
             channel_videos = self.downloader.channel_videos or []
@@ -1273,6 +1265,27 @@ class ChannelVideosDialogImpl:
                 if scene_style is None and vd.get("scene_style") is not None:
                     scene_style = vd.get("scene_style")
                 lang = (language or getattr(self, "language", None) or "tw").strip() or "tw"
+                # t436u: 建项目前整理场景（Strata 改写视觉、讲话超过 115 字的场拆开、分镜视觉连贯、写 shot）。
+                # Strata 出错或取消 → 照原来的场景建项目。
+                try:
+                    from gui.dl.scene_prep_runner import run_scene_prep_modal, scene_list_of
+
+                    _sc_list = scene_list_of(scene_content)
+                    if _sc_list:
+                        _prepped, _msg = run_scene_prep_modal(parent, _sc_list, vd, lang, title="建项目前整理场景")
+                        print(f"整理场景：{_msg}")
+                        if _prepped:
+                            scene_content = _prepped
+                            vd["scene_content"] = _prepped
+                        else:  # t440u: 没整理也要有 shot
+                            from utility.scene_shot import ensure_scene_shots
+
+                            ensure_scene_shots(_sc_list)
+                            scene_content = _sc_list
+                            vd["scene_content"] = _sc_list
+                        show_auto_close_popup(parent, "整理场景", _msg, duration_ms=2600)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 整理场景没有做，用原来的场景：{exc}")
                 # t235u: 没显式传入时优先用这一条 / profile 上的全场内容，避免落回全局 LAST_*
                 if narrator is None or visual_style is None or dialogue_mode is None:
                     _lv, _lt, _ln = _project_look_from_row(vd)
@@ -1734,11 +1747,7 @@ class ChannelVideosDialogImpl:
             topic_type = video_detail.get('topic_subtype', '')
             topic_category = video_detail.get('topic_category', '')
             topic_subtype = video_detail.get('topic_subtype', '')
-            topic_tags = video_detail.get('tags', '')
-            if isinstance(topic_tags, list):
-                topic_tags = ' | '.join(topic_tags)
-            elif not isinstance(topic_tags, str):
-                topic_tags = str(topic_tags) if topic_tags else ''
+            topic_tags = ' | '.join(normalize_tags(video_detail.get('tags')))  # t447u
             if not low_priority or not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() :
                 # show a messagebox to let user know the summary is generating (non-blocking)
                 # self.root.after(0, lambda: messagebox.showinfo("提示", "摘要生成中，请稍后...", parent=self.root))
@@ -1746,11 +1755,7 @@ class ChannelVideosDialogImpl:
                 topic_type = video_detail.get('topic_subtype', '')
                 topic_category = video_detail.get('topic_category', '')
                 topic_subtype = video_detail.get('topic_subtype', '')
-                topic_tags = video_detail.get('tags', '')
-                if isinstance(topic_tags, list):
-                    topic_tags = ' | '.join(topic_tags)
-                elif not isinstance(topic_tags, str):
-                    topic_tags = str(topic_tags) if topic_tags else ''
+                topic_tags = ' | '.join(normalize_tags(video_detail.get('tags')))  # t447u
 
             # 摘要窗口：首次新建，之后 Ctrl+左/右切换条目时复用同一窗口并重建内容
             if summary_window_ref.get("w") and summary_window_ref["w"].winfo_exists():

@@ -299,6 +299,70 @@ def _remix_scene(visual: str, image_path: str, *, names=(), language_label: str 
     return visual2, notes, added
 
 
+# ---- t436u: 一场讲话太长拆成几段以后，几段的视觉一起改写，动作连贯 ----
+SPLIT_GROUP_SYSTEM = """你是视频分镜编辑。同一场戏的讲话太长，已经按句子拆成了几段连续的镜头（分镜），每段是一个短视频。
+用户给你这一场原来的视觉描述、人物名单和每一段的讲话（按顺序）。请给每一段写一段视觉描述：
+- 几段合起来就是原来这一场：同一个地点、同样的人物（人数、衣着、左右座位都不变）、同样的光线和气氛；不加新的人。
+- 把原来那个大的动作拆细，变成一串连贯的小动作：第 1 段从原来画面的状态开始，后一段从前一段结束时的状态接着往下发生，
+  不跳、不重复；整体的发展跟讲话一段一段的节奏同步。
+- 每一段按自己那段讲话一拍一拍写：谁在说、说的人做什么、听的人怎么反应；至少一个具体的动作、手势、视线或道具变化。
+- 每段 2 到 4 句，用和原文相同的语言和字体；用人物的名字，不写 <1> <2>；不把台词写进视觉；人物不看镜头。
+- 只输出 JSON（不要别的文字、不要 ```）：{"visuals": ["第 1 段的视觉", "第 2 段的视觉", ...]}，段数必须和讲话段数一样。
+You are a storyboard editor. One scene was split into consecutive shots by its dialogue. Write one visual per shot: same place,
+same people (count, clothing, seats), same light and mood, no new people; break the original big action into finer continuous
+actions, each shot starting where the previous one ended, in step with that shot's lines. 2-4 sentences each, same language
+and script as the original. Output only JSON {"visuals": [...]} with exactly one entry per shot."""
+
+
+def _split_group_user_text(visual: str, parts, names=(), language_label: str = "") -> str:
+    names = [str(n) for n in (names or ()) if n]
+    note = ""
+    if names:
+        note += "这一场的人物：" + "、".join(names) + "。\n"
+        note += "说话人对应：" + "，".join(f"<{i}> = 人物{i} {n}" for i, n in enumerate(names, 1)) + "。\n"
+    if language_label:
+        note += f"输出语言：{language_label}。\n"
+    note += "这一场原来的视觉描述：\n" + (visual or "").strip() + "\n\n"
+    note += f"拆成 {len(parts)} 段，每段的讲话：\n"
+    for i, sp in enumerate(parts, 1):
+        note += f"第 {i} 段：{(sp or '').strip()}\n"
+    return note
+
+
+def parse_split_group_visuals(out: str, count: int) -> list:
+    """Strata 的回答 → 每段的视觉（段数不对 / 有空的就抛异常）。"""
+    import json
+    import re
+
+    text = (out or "").strip()
+    m = re.search(r"\{.*\}", text, re.S)
+    data = json.loads(m.group(0) if m else text)
+    vis = data.get("visuals") if isinstance(data, dict) else data
+    if not isinstance(vis, list) or len(vis) != int(count):
+        raise RuntimeError(f"Strata 返回的段数不对（要 {count} 段）")
+    vis = [str(v or "").strip() for v in vis]
+    if not all(vis):
+        raise RuntimeError("Strata 有一段视觉是空的")
+    return vis
+
+
+def remix_split_group(visual: str, parts, *, names=(), language_label: str = "", image_path: str = "") -> list:
+    """t436u: 同一场拆出来的几段（parts = 每段的讲话），一起改写成连贯的几段视觉。
+    有图（这一场的参考图）就一起看图。返回和 parts 一样多的视觉；失败抛异常。"""
+    user_text = _split_group_user_text(visual, parts, names, language_label)
+    if image_path and os.path.isfile(image_path):
+        user = [
+            {"type": "text", "text": user_text},
+            {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}},
+        ]
+    else:
+        user = user_text
+    out = _chat([{"role": "system", "content": SPLIT_GROUP_SYSTEM}, {"role": "user", "content": user}])
+    if not out:
+        raise RuntimeError("Strata 分镜改写返回空")
+    return parse_split_group_visuals(out, len(parts))
+
+
 def accept_auto_remix(old: str, new: str) -> str:
     """t198u: 自动调整视觉（不经过对话框）能不能直接写回：返回 '' = 可以，否则返回不用的原因。"""
     o, n = (old or "").strip(), (new or "").strip()

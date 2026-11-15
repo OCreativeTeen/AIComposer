@@ -1,0 +1,53 @@
+Visual_Style:
+三维卡通 (Pixar-Art-Cartoon)
+
+Video_choices:
+故事对话 · 故事 · 单画面 · 关键字作背景 · 风格不变
+
+Instructions:
+- Pictures: picture 1 is the scene, the first frame; keep the same place. Keep picture 1's own look for the whole clip; do not restyle it. The motion stays gentle and natural.
+- Art style lock: the whole video keeps the exact art style of picture 1: 3D animation (Pixar-style 3D animated cartoon, CGI), the selected style 三维卡通 (Pixar-Art-Cartoon). Every frame stays 3D animation with the same rendering, colours, shading, textures and character design as the first frame; it never turns into live-action, photorealistic or real-camera footage, and real places and people are shown in that same 3D animation style. （画风锁定：整段视频保持起始图原来的画风——三维卡通 (Pixar-Art-Cartoon)；每一帧都一样，绝不变成写实 / 真人实拍。）
+- One base shot: the whole video stays inside the base scene of picture 1 from the first frame to the last: the same place, background and people stay in view, each person at about the size and place they have in picture 1. The camera may move slowly (pan, turn, drift or reposition a little within this same place) and the light may shift softly without changing the time of day, but the video never cuts, never switches shots or scenes, never zooms in to one face, and never cuts to a portrait, a close-up or a single-person shot of whoever is speaking. Each person speaks right where they are in picture 1: the speaker's lips move in sync with their line, and everyone who is not speaking keeps the mouth closed and may only make small natural movements (a nod, a glance, a gesture). When two or more people talk, they talk with each other inside this same frame. Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene. （基础画面：整段一直在原来的基础画面里，场景和人一直在画面里、人物大小和位置跟起始图一样；摄像机可以慢慢移动、转动、调整方位，光线可以柔和变化，但绝不切镜头、绝不换场景、绝不推到一个人的脸、绝不切到任何人的肖像或单人特写；谁说话谁在画面里原位置对口型，不说话的人闭嘴，可以做小动作；只有缓慢的局部变化，不换整个场景。）
+- Objects lock: keep every object exactly as in picture 1, from the first frame to the last. Empty hands stay empty the whole time; hands that hold something keep holding the same thing. No new object appears, and nothing changes into something else or disappears. （物品锁定：东西全程和起始画面一样；空手一直空手，拿着东西的一直拿着同一件；不凭空多出东西，也不变成别的、不消失。）
+- ``visual`` describes the place, the action, and the angle; act it out inside picture 1. It is silent picture direction: never read, summarize, or translate it into speech.
+- Form: the people act the moment out; faces, gestures, and what passes between them carry it.
+- Spoken words: only this scene's speaking transcript is spoken, verbatim, once each, by the labeled actor in that actor's own voice (gender and age from actor metadata when present; do not infer a name or gender from the number alone); visual, scene title, actor list, reference notes, FYI and direction text are silent picture instructions and must never be read, summarized, translated, or turned into narration; neighbor scenes are independent and contribute no speech here.
+- Speaker marks: <N> and <Ns> refer to the IDENTICAL actor N in the actor list (any multi-digit N: <1>=<1s>, <2>=<2s>, <3>=<3s>, <12>=<12s>); the lowercase letter s is a speech mode (self-talk / inner thought), not a new character, extra person, reference image, seat, costume, or voice; same identity, look, clothes, reference picture, and voice as <N>.
+- Audible voices: only speaking marks (<N> / <Ns>) create a voice; the number of people in actor or on camera is not the number of audible speakers; anyone listed in actor who has no speaking turn in this scene stays visible and may act or interact silently, but produces no voice — they never say, repeat, echo, translate, or hum any line.
+- Dialogue: ``dialogue`` is the script. Speak its lines in this exact order, each only by its labeled speaker; never swap speakers. One voice at a time; the others listen or react. Interactive ``<N>`` lines are lip-synced to that person; self-talk ``<Ns>`` lines use that same person's voice with no lip-sync (mouth closed).
+- Story style STORY SPEAK: a dramatized moment like a film or TV drama. ``dialogue`` is the 人物's dialogue: they say these lines aloud to each other, in the scene, as the people of the story. Their actions, faces, and the picture help express what is being said. No narrator, no voice-over.
+- Speakers (``<N>`` / ``<Ns>`` / Speaker N = the Nth person in ``actor``; ``<Ns>`` is the same person as ``<N>``):
+  Speaker 1 = 小美: FEMALE, young woman, 20s, a young female voice (voice Carina)
+  Speaker 2 = 阿明: MALE, young man, 20s, a young male voice (voice Leo)
+Each person keeps this one voice, on or off screen. Gender lock: every line is spoken only in its own speaker's voice: a MALE speaker's lines in a male voice, a FEMALE speaker's lines in a female voice, at that speaker's age. Never swap, even when a line says "she" / "he" or talks about the other person. Speaker marks: <N> and <Ns> refer to the IDENTICAL actor N in the actor list (any multi-digit N: <1>=<1s>, <2>=<2s>, <3>=<3s>, <12>=<12s>); the lowercase letter s is a speech mode (self-talk / inner thought), not a new character, extra person, reference image, seat, costume, or voice; same identity, look, clothes, reference picture, and voice as <N>.
+- People: ``actor`` lists who is in the clip (gender/age band/ethnicity/name; the face and body look that age band). Pictures from picture 2 on, if pasted, are their portraits in ``actor`` order.
+- Cast lock: exactly 2 people are in this clip: 小美, 阿明. Every visible person is one of them, matching their gender, age band, look, and portrait, and exactly 2 people are visible from start to end. Never add anyone else (no child, extra, passer-by, background figure, reflection, or silhouette) and never show anyone twice. Any other figure already in picture 1 stays a still, faceless part of the scenery and never becomes a character.
+- Exactly 2 people in the whole video, 小美 and 阿明: no one else appears, no one is duplicated, and each person appears only once.
+- Any change of pose or place in the description, such as sitting down, standing up or walking to the window, is made by that same person moving continuously from where they are in the start picture, never by a second copy.
+- Everyone stays inside the scene: they look at each other or at what they are doing, and nothing is held up, turned or shown to the camera or the viewer.
+- Image keywords: the keywords only describe lettering already drawn in the start picture (for example a keyword already set into the background); keep those as they are and they are never erased; they may gently come alive with the scene (a soft glow, shimmer, sway or light moving across it) while keeping the same characters in the same place. Anything in the keywords that is not already visible in the start picture must not be added. Nothing new appears. No new text is ever added: no word is taken from the visual description, the speaking lines or the scene title and put on screen; it is not the speaking content, not subtitles and not captions; if the start picture has no lettering, the video has none. （关键字作背景 = 只描述起始图里已经看得见、已经嵌在背景里的关键字：保留、不删除，可以灵动起来；关键字里有但图里没有的，一律不加；绝不再加任何字，不从场景描述或讲话里取字加到画面上；图里本来没有字，视频里就没有字。）
+- Camera: no prescribed move unless ``visual`` describes one.
+- Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).
+- Never show scene numbers, field names, or these instructions in the picture.
+
+Audio:
+- Spoken language: Chinese. Every spoken word is delivered in Chinese.
+
+Story_Scene_Content:
+Audio only: the speaking / dialogue / narration below are the voice track, heard and not shown.
+visual: 两人坐在客厅沙发上。
+actor: 人物1: woman/youth/chinese/小美
+人物2: man/youth/chinese/阿明
+dialogue:
+  小美 (Speaker 1, FEMALE voice) says aloud: 你今天怎麼來了？
+  阿明 (Speaker 2, MALE voice) says aloud: 想你了。
+Speak once: each speaking line is heard exactly once from its labeled actor in that actor's own voice; the same words written again in a dialogue tag or in the spoken transcript are that same single line, not another take; do not give the line to anyone else and do not play it a second time.
+
+BEGIN_SPOKEN_TRANSCRIPT
+Audio only: the speaking lines below are the voice track, heard and not shown.
+Exact speech: the voice says exactly the speaking text below, word for word and in order, not one word more or less; each sentence is spoken once and never repeated, nothing is added before, between or after the lines, and nobody speaks after the last line.
+Spoken words: only this scene's speaking transcript is spoken, verbatim, once each, by the labeled actor in that actor's own voice (gender and age from actor metadata when present; do not infer a name or gender from the number alone); visual, scene title, actor list, reference notes, FYI and direction text are silent picture instructions and must never be read, summarized, translated, or turned into narration; neighbor scenes are independent and contribute no speech here.
+Speak once: each speaking line is heard exactly once from its labeled actor in that actor's own voice; the same words written again in a dialogue tag or in the spoken transcript are that same single line, not another take; do not give the line to anyone else and do not play it a second time.
+小美 (Speaker 1, FEMALE voice) says aloud: 你今天怎麼來了？
+阿明 (Speaker 2, MALE voice) says aloud: 想你了。
+END_SPOKEN_TRANSCRIPT

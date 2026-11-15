@@ -596,6 +596,17 @@ class ActorsMixin:
             removed.append(path)
         return removed
 
+    def _project_portrait_candidates(self, name: str, own_path: str = "") -> tuple:
+        """t443u: 人物窗左右键翻的候选肖像：项目 avatar（和 avatar/<风格>/）里别的图，不含这一位自己的。"""
+        from utility.portrait_candidates import project_candidates
+
+        try:
+            folder = self._project_avatar_dir()
+        except Exception:  # noqa: BLE001
+            return [], ""
+        token = config.visual_style_token(self._portrait_style())
+        return project_candidates(folder, token, exclude=[own_path], body=name), "项目 avatar"
+
     def _review_actor_portrait(self, body: str, kind: str = "new", parent=None) -> str:
         """t329u: 自动提取肖像时给人看这一位（双击人物的同一个窗口），不改这一场的人物栏。
 
@@ -813,15 +824,21 @@ class ActorsMixin:
         dlg.grab_set()
         dlg.resizable(False, False)
 
+        from gui.actor_portrait_widgets import PersonEditBlock, PortraitBrowser, focus_in_text_field
+
+        # t443u: 图放在最上面；左右键翻候选肖像（人物），不换人
+        image_label = ttk.Label(dlg, anchor="center")
+        image_label.pack(padx=16, pady=(12, 2), fill=tk.X)
+        caption_var = tk.StringVar()
+        ttk.Label(dlg, textvariable=caption_var, foreground="#555", wraplength=640).pack(pady=(0, 4))
+        browser = PortraitBrowser(image_label, caption_var, size=(480, 560))
         name_var = tk.StringVar()
-        ttk.Label(dlg, textvariable=name_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(12, 4))
+        ttk.Label(dlg, textvariable=name_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(4, 4))
         opened_motion = ""
         if actor_entry:
             _opened_body, opened_motion = project_manager.split_actor_motion((actor_entry.get("body") or "").strip())
         if opened_motion:
             ttk.Label(dlg, text=f"这一场：（{opened_motion}）", wraplength=640).pack(pady=(0, 4))
-        image_label = ttk.Label(dlg)
-        image_label.pack(padx=16, pady=4)
         voice_row = ttk.Frame(dlg)
         voice_row.pack(pady=(0, 8))
         ttk.Label(voice_row, text="声音").pack(side=tk.LEFT, padx=(0, 8))
@@ -830,33 +847,10 @@ class ActorsMixin:
         voice_box.pack(side=tk.LEFT)
         hear_btn = ttk.Button(voice_row, text="听声音")
         hear_btn.pack(side=tk.LEFT, padx=(8, 0))
-        # t116u / t400u: 人物可编辑：性别 / 年龄段 / 民族 / 名字，下一行是括号描述
-        edit_block = ttk.Frame(dlg)
+        # t116u / t400u / t443u: 人物可编辑：性别 / 年龄段 / 民族 / 名字，下一行是括号描述（和 STORY 预览共用 PersonEditBlock）
+        edit_block = PersonEditBlock(dlg)
         edit_block.pack(pady=(0, 8), before=voice_row)
-        edit_row = ttk.Frame(edit_block)
-        edit_row.pack()
-        edit_g = tk.StringVar()
-        edit_a = tk.StringVar()
-        edit_r = tk.StringVar()
-        edit_n = tk.StringVar()
-        edit_note = tk.StringVar()
-        _edit_guard = {"on": False}
-        edit_boxes = {}
-        for lab, var, vals, w, key in (
-            ("性别", edit_g, _ACTOR_GENDERS, 8, "g"),
-            ("年龄", edit_a, _ACTOR_AGES, 12, "a"),
-            ("民族", edit_r, _ACTOR_RACES, 10, "r"),
-        ):
-            ttk.Label(edit_row, text=lab).pack(side=tk.LEFT, padx=(0, 4))
-            box = ttk.Combobox(edit_row, textvariable=var, values=vals, state="normal", width=w)
-            box.pack(side=tk.LEFT, padx=(0, 10))
-            edit_boxes[key] = box
-        ttk.Label(edit_row, text="名字").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Entry(edit_row, textvariable=edit_n, width=14).pack(side=tk.LEFT)
-        edit_note_row = ttk.Frame(edit_block)
-        edit_note_row.pack(pady=(4, 0), fill=tk.X)
-        ttk.Label(edit_note_row, text="括号描述").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Entry(edit_note_row, textvariable=edit_note, width=52).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        edit_g, edit_a, edit_r, edit_n, edit_note = edit_block.vars
         hint_var = tk.StringVar(value=hint)
         ttk.Label(dlg, textvariable=hint_var, wraplength=640).pack(pady=(0, 8))
         holder = {
@@ -873,27 +867,15 @@ class ActorsMixin:
             "deleted": False,
         }
         host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。场景里写了讲员就出镜，没写就是画外旁白。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。全改讲员把选定范围内每一场的讲员换成当前这一位，讲稿收成只在开头标〈1〉。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
-        person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时不拷贝。Ctrl+V 可以贴上形象。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。"
+        person_hint = "左右键翻这个项目 avatar 目录里别的头像图，「用这张」或确认 = 设为这一位的肖像（原来的改名 .bak 备份，那张图本身不动）。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时不拷贝。Ctrl+V 可以贴上形象。确认照现在选的写进这一场并关掉。要删掉某一位，在人物栏点一下选中，再按 Delete。"
 
         def _fill_edit(name: str) -> None:
-            fields = parse_actor_edit_fields(name)
-            _edit_guard["on"] = True
-            try:
-                edit_g.set(fields["gender"])
-                edit_a.set(fields["age"])
-                edit_r.set(fields["race"])
-                edit_n.set(fields["name"])
-                edit_note.set(fields["note"])
-                edit_boxes["g"].configure(values=actor_edit_combo_values(_ACTOR_GENDERS, fields["gender"]))
-                edit_boxes["a"].configure(values=actor_edit_combo_values(_ACTOR_AGES, fields["age"]))
-                edit_boxes["r"].configure(values=actor_edit_combo_values(_ACTOR_RACES, fields["race"]))
-                shown = format_actor_edit_fields(
-                    fields["gender"], fields["age"], fields["race"], fields["name"], fields["note"]
-                )
-                if shown:
-                    name_var.set(shown)
-            finally:
-                _edit_guard["on"] = False
+            fields = edit_block.fill(name)
+            shown = format_actor_edit_fields(
+                fields["gender"], fields["age"], fields["race"], fields["name"], fields["note"]
+            )
+            if shown:
+                name_var.set(shown)
 
         def _person_body_from_fields() -> str:
             """按当前编辑栏拼回人物字符串；原来是进出方式且没写描述时，进出方式原样保留。"""
@@ -911,7 +893,7 @@ class ActorsMixin:
             return body
 
         def _on_edit_change(*_a) -> None:
-            if _edit_guard["on"] or holder.get("mode") != "person" or not holder["names"]:
+            if edit_block.guard or holder.get("mode") != "person" or not holder["names"]:
                 return
             ident = format_actor_edit_fields(
                 edit_g.get(), edit_a.get(), edit_r.get(), edit_n.get(), ""
@@ -941,8 +923,7 @@ class ActorsMixin:
                 voice_var.set("")
                 voice_box.state(["disabled"])
 
-        for _v in (edit_g, edit_a, edit_r, edit_n, edit_note):
-            _v.trace_add("write", _on_edit_change)
+        edit_block.on_change(_on_edit_change)
 
         def remember_voice(name: str, voice: str) -> None:
             pc = project_manager.PROJECT_CONFIG
@@ -1044,8 +1025,7 @@ class ActorsMixin:
             if not names_now:
                 holder["index"] = 0
                 name_var.set("还没有人物")
-                holder["photo"] = None
-                image_label.config(image="", text="还没有人物")
+                browser.reset("", (), "", empty_text="还没有人物")
                 show_voice("")
                 return
             holder["index"] = max(0, min(i, len(names_now) - 1))
@@ -1053,8 +1033,7 @@ class ActorsMixin:
             if not name:
                 name_var.set("不出现")
                 show_voice("")
-                holder["photo"] = None
-                image_label.config(image="", text="不出现")
+                browser.reset("", (), "", empty_text="不出现")
                 return
             name_var.set(name)
             show_voice(name)
@@ -1070,26 +1049,49 @@ class ActorsMixin:
                 holder["voice_ident"] = format_actor_edit_fields(
                     edit_g.get(), edit_a.get(), edit_r.get(), edit_n.get(), ""
                 )
-            path = holder["path_for"](name)
-            if not path:
-                holder["photo"] = None
-                image_label.config(image="", text="没有头像")
-                return
-            try:
-                img = Image.open(path)
-                img.thumbnail((420, 560), Image.Resampling.LANCZOS)
-                holder["photo"] = ImageTk.PhotoImage(img)
-                image_label.config(image=holder["photo"], text="")
-            except OSError:
-                holder["photo"] = None
-                image_label.config(image="", text="没有头像")
+            reset_browser(name)
+
+        def reset_browser(name: str) -> None:
+            """t443u: 大图显示这一位现在的肖像；人物（不是审核）可以左右键翻项目里别的头像图。"""
+            path = holder["path_for"](name) if name else ""
+            if holder.get("mode") == "person" and not review and name:
+                cands, source = self._project_portrait_candidates(name, path)
+            else:
+                cands, source = [], ""
+            browser.reset(path or "", cands, source)
 
         def shift(step: int) -> None:
-            names_now = holder["names"]
+            if holder.get("mode") == "person":
+                if not review:
+                    browser.step(step)  # t443u: 人物：翻候选肖像，不换人
+                return
+            names_now = holder["names"]  # 讲员：照旧在讲员名单里换
             if review or len(names_now) < 2:
                 return
             nxt = max(0, min(holder["index"] + step, len(names_now) - 1))
             show_at(nxt)
+
+        def apply_picked(name: str) -> bool:
+            """t443u: 正在看的候选图复制成 name 的肖像（原来的改名 .bak 备份；那张图本身不动）。"""
+            src = browser.picked()
+            if not src or not name or project_manager.actor_is_absent(name):
+                return False
+            from utility.portrait_candidates import apply_portrait_choice
+
+            dest = holder["dest_for"](name)
+            try:
+                apply_portrait_choice(src, dest)
+            except OSError as exc:
+                messagebox.showerror(title, f"设为肖像失败：{exc}", parent=dlg)
+                return False
+            return True
+
+        def use_picked() -> None:
+            if holder.get("mode") != "person" or not holder["names"]:
+                return
+            name = _person_body_from_fields() or holder["names"][holder["index"]]
+            if apply_picked(name):
+                reset_browser(name)
 
         def paste(_event=None) -> str:
             names_now = holder["names"]
@@ -1164,6 +1166,7 @@ class ActorsMixin:
                 if new_id != old:
                     holder["override_name"] = name
                     _commit_edited_person(name)
+                apply_picked(name)
                 portrait = holder["path_for"](name) or ""
                 if portrait:
                     self.copy_image_to_clipboard(portrait, silent=True)
@@ -1244,7 +1247,8 @@ class ActorsMixin:
             dlg.destroy()
 
         def confirm() -> None:
-            """确认：照现在选的这一位写进这一场（声音换了就已经存过），不拷贝图，然后关掉。"""
+            """确认：照现在选的这一位写进这一场（声音换了就已经存过），不拷贝图，然后关掉。
+            t443u: 正在看候选图时，先把它设为这一位的肖像。"""
             if holder.get("mode") == "person":
                 name = _person_body_from_fields()
                 if not name:
@@ -1255,6 +1259,7 @@ class ActorsMixin:
                 if new_id != old:
                     holder["override_name"] = name
                     _commit_edited_person(name)
+                apply_picked(name)
                 apply_choice(name, "")
                 holder["result"] = "ok"
                 dlg.destroy()
@@ -1382,6 +1387,9 @@ class ActorsMixin:
             switch_btn.pack(side=tk.LEFT, padx=6)
         force_btn = ttk.Button(btns, text="全改讲员", command=ask_force_host_speaking)
         add_btn = ttk.Button(btns, text="增加人物", command=add_person)
+        use_btn = ttk.Button(btns, text="用这张", command=use_picked)
+        if not review:
+            use_btn.pack(side=tk.LEFT, padx=6)
         delete_btn = ttk.Button(btns, text="删除肖像", command=delete_portrait)
         delete_btn.pack(side=tk.LEFT, padx=6)
         confirm_btn = ttk.Button(btns, text="确认", command=confirm)
@@ -1399,8 +1407,8 @@ class ActorsMixin:
         voice_box.bind("<<ComboboxSelected>>", on_voice_picked)
         image_label.bind("<Button-1>", lambda _e: shift(1))
         image_label.bind("<Button-3>", lambda _e: shift(-1))
-        dlg.bind("<Left>", lambda _e: shift(-1))
-        dlg.bind("<Right>", lambda _e: shift(1))
+        dlg.bind("<Left>", lambda _e: None if focus_in_text_field(dlg) else shift(-1))
+        dlg.bind("<Right>", lambda _e: None if focus_in_text_field(dlg) else shift(1))
         dlg.bind("<Control-v>", paste)
         # t343u: Enter = 确认（原来调 finish 时多传了一个参数，按 Enter 会报错）；Esc = 忽略（重新提取时）/ 停止 / 取消。
         dlg.bind("<Return>", lambda _e: confirm())

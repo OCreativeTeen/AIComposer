@@ -50,24 +50,23 @@ def backup_file(path: str, backup_dir: str = "") -> str:
 
 
 def tags_as_list(v) -> list:
+    from utility.tags_text import normalize_tags
+
     if isinstance(v, (list, tuple)):
-        return [str(t).strip() for t in v if str(t).strip()]
+        return normalize_tags(v)
     s = str(v or "").strip()
     if not s:
         return []
-    if s.startswith("["):
-        try:
-            got = ast.literal_eval(s)
-            if isinstance(got, (list, tuple)):
-                return [str(t).strip() for t in got if str(t).strip()]
-        except Exception:  # noqa: BLE001
-            pass
-    return [t.strip() for t in re.split(r"[|,，、;；]", s) if t.strip()]
+    if s.startswith(("[", "'", '"', "\\")):
+        return normalize_tags(s)  # t447u: 列表字符串（含多层坏掉的）
+    return normalize_tags([t.strip() for t in re.split(r"[|,，、;；]", s) if t.strip()])
 
 
 def _tags_like(old, tags: list):
-    """按原来的存法写回：原来是 "['a', 'b']" 字符串就还写字符串，是列表就写列表。"""
-    return str(list(tags)) if isinstance(old, str) else list(tags)
+    """t447u: 一律存列表（以前原来是字符串就写 str(list)，再读回来会被逗号切碎，一层层坏掉）。"""
+    from utility.tags_text import normalize_tags
+
+    return normalize_tags(tags)
 
 
 # ---------------------------------------------------------------- topics.json

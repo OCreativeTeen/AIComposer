@@ -142,11 +142,9 @@ def build_queue_item_from_video_detail(
     row_keys = _row_lookup_keys(vd)
     row_key = row_keys[0] if row_keys else ""
 
-    tags = vd.get("tags", "")
-    if isinstance(tags, list):
-        tags_text = " | ".join(str(t) for t in tags if t is not None)
-    else:
-        tags_text = str(tags) if tags else ""
+    from utility.tags_text import normalize_tags
+
+    tags_text = " | ".join(normalize_tags(vd.get("tags")))  # t447u: 队列里是显示用的文字；坏掉的标签也显示干净
 
     sc = vd.get("scene_content")
     has_scene = False

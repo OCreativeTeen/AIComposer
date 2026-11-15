@@ -271,7 +271,14 @@ FLOW_CAPTION_CHOICES = (
     ("keywords", "关键字作背景"),
     ("express", "用画面讲"),
 )
-SLIDE_FLOW_TEXT_CHOICES = FLOW_CAPTION_CHOICES
+# t428u: 节目生成窗不再有「去掉文字」（用画面讲就是没有文字）；旧存值 erase / none 都当用画面讲。
+SLIDE_FLOW_TEXT_CHOICES = tuple(c for c in FLOW_CAPTION_CHOICES if c[0] != "erase")
+
+
+def slide_text_choice(value) -> str:
+    """t428u: 节目生成的说明文字存值 → keep / keywords / express（erase、none、不认识的都 → express）。"""
+    v = str(value or "").strip()
+    return v if v in {k for k, _ in SLIDE_FLOW_TEXT_CHOICES} else "express"
 SLIDE_FLOW_NARRATIVE_CHOICES = (
     ("narration", "讲述（用场景和背景文字讲；若有人物，人物不说话）"),
     ("story", "故事（人物在场景中表演对话）"),
@@ -646,6 +653,7 @@ def slide_flow_scene_payload(
     keywords: bool,
     narrative: str = "story",
     silent_cast: bool = False,
+    caption_text: bool = False,
 ) -> list[dict]:
     """幻灯/图片提示用的场景内容：只留用户勾选的项。
 
@@ -663,6 +671,9 @@ def slide_flow_scene_payload(
         caption = short_keyword_hint(base.get("caption") or "")
         if keywords and caption:
             lines.append(f"Keyword hint: {caption}")
+        full_caption = " ".join(str(base.get("caption") or "").split())
+        if caption_text and full_caption:  # t428u: 演示文稿 · 说明文字保留：这一页写出来的小结
+            lines.append(f"{SLIDE_CAPTION_FIELD}: {full_caption}")
         vis = (base.get("visual") or "").strip()
         if use_visual and vis:
             lines.append(f"Shown: {vis}")
@@ -688,6 +699,24 @@ def slide_flow_scene_payload(
                     lines.append(f"Also dialogue: {voiceover}")
         out.append({"show_this_content": "\n".join(lines)} if lines else {})
     return out
+
+
+SLIDE_CAPTION_FIELD = "Slide caption"
+# t428u: 演示文稿 · 说明文字保留：每页 = 画面 + 一块说明文字区
+SLIDE_CAPTION_INPUT_NOTE = (
+    "- ``Slide caption`` (说明文字): the written summary for that slide. It is printed in the slide's caption area."
+)
+SLIDE_KEEP_CAPTION_RULE = (
+    "Slide caption (keep): each slide is the scene's picture plus a caption area below or beside it. The caption area "
+    "holds a short written summary of that slide in 1 to 2 sentences: the ``Slide caption`` text when it is given, "
+    "otherwise a summary of that scene's content in the same language. Clear, readable type, laid out apart from the "
+    "picture; the picture stays the main part of the slide. The caption area is the one place with text, and it is "
+    "the exception to the rule below about scene titles."
+)
+SLIDE_KEEP_CAPTION_RULE_ZH = (
+    "- 说明文字（保留）：每页幻灯片 = 这一场的画面 + 一块说明文字区（画面下方或一侧），写这一页的要点小结，1 到 2 句；"
+    "有「说明文字 / Slide caption」就照它写，没有就用同一种语言概括这一场。字清楚好读，和画面分开排版，画面仍是主体。"
+)
 
 
 def slide_flow_choice_label(
@@ -956,6 +985,10 @@ def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
                 + INFOGRAPHIC_NO_INDEX_RULE
             )
         return INFOGRAPHIC_KEYPHRASE_RULE + "\n" + INFOGRAPHIC_NO_INDEX_RULE
+    if output == "slides" and text == "keep":  # t428u: 保留 = 每页有一块说明文字区
+        return SLIDE_KEEP_CAPTION_RULE_ZH + "\n- " + SLIDE_KEEP_CAPTION_RULE
+    if output == "slides" and text == "keywords":  # t428u: 和信息图同一套关键词做法，每页一套
+        return SLIDE_KEYPHRASE_RULE
     if text == "keywords":
         return (
             f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是 {KEYWORD_COUNT_ZH}，融进场景。{NO_BUBBLE_ZH}\n"
@@ -970,6 +1003,20 @@ def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
             "No text box, panel, board, card, title bar, or caption area. The picture tells it all."
         )
     return ""
+
+
+# t428u: 演示文稿 · 关键字作背景：和信息图（INFOGRAPHIC_KEYPHRASE_RULE）同一套做法，只是每页一套关键词。
+SLIDE_KEYPHRASE_RULE = (
+    INFOGRAPHIC_KEYPHRASE_RULE
+    .replace("信息图关键词（必须遵守）", "幻灯片关键词（必须遵守，和信息图的关键词同一种做法）")
+    .replace("每个场景部分只有这几个关键词，没有别的字。", "每页幻灯片只有这几个关键词，没有别的字：没有标题、正文、小结或要点列表；"
+             "这一场的讲述内容由声音讲出来，画面里只有场景和融进背景的关键词。")
+    .replace("Infographic key phrase (must follow):", "Slide key phrase (must follow, the same way as the infographic keywords):")
+    .replace("That phrase is the only text in each scene section.",
+             "Those keywords are the only text on each slide: no title, body text, summary or bullet list. The scene's "
+             "narration is told by the voice; the slide shows the scene with the keywords woven into its background.")
+    .replace("每一场", "每一场（每页）")
+)
 
 
 def build_slide_flow_prompt(
@@ -1019,6 +1066,7 @@ def build_slide_flow_prompt(
         raise ValueError("至少要选场景描述或讲话中的一项。")
     presentation = narrative in ("tech", "exec")
     keywords = text == "keywords" and not presentation
+    caption_text = output == "slides" and text == "keep" and not presentation and target != "single"  # t428u
     style = (visual_style or "").strip() or "realistic"
     scenes = scene_content if isinstance(scene_content, list) else []
     # 叙事: needs a 讲员. 故事/汇报: any non-empty actor entry.
@@ -1034,6 +1082,7 @@ def build_slide_flow_prompt(
             keywords=keywords,
             narrative=narrative,
             silent_cast=silent,
+            caption_text=caption_text,
         ),
         ensure_ascii=False,
         indent=2,
@@ -1082,6 +1131,8 @@ def build_slide_flow_prompt(
     inputs_note = _slide_flow_inputs_note(use_visual, use_speaking, has_speaker, keywords, narrative)
     if silent:
         inputs_note = inputs_note.replace("No other field is given.", SILENT_ACTORS_INPUT_NOTE + "\nNo other field is given.")
+    if caption_text:
+        inputs_note = inputs_note.replace("No other field is given.", SLIDE_CAPTION_INPUT_NOTE + "\nNo other field is given.")
     lines.append(inputs_note)
     lines.append("")
     if narrative == "story":
@@ -1106,10 +1157,15 @@ def build_slide_flow_prompt(
     if presentation:
         lines.append(SLIDE_FLOW_SLIDE_TEXT_NOTE)
     else:
-        lines.append(
-            "Keyword: follow the infographic key phrase rule in Output_rules."
-            if output == "infographic" and text == "keywords" else flow_caption_rule(text)
-        )
+        if caption_text:  # t428u
+            lines.append(SLIDE_KEEP_CAPTION_RULE)
+        elif output == "slides" and keywords:  # t428u
+            lines.append("Keyword: follow the slide key phrase rule in Output_rules (the same way as the infographic).")
+        else:
+            lines.append(
+                "Keyword: follow the infographic key phrase rule in Output_rules."
+                if output == "infographic" and text == "keywords" else flow_caption_rule(text)
+            )
     lines.append(SLIDE_FLOW_META_NOTE)
     if keywords:
         lines.append(
@@ -3234,9 +3290,11 @@ def build_video_fyi_only_prompt(
     lines += [
         "Keep the place, the people, their faces and clothes, and the objects of the picture. "
         "Only what the main action asks for moves; the objects stay as they are.",  # t388u
-        "Do not add people. Do not remove anyone unless the main action says so.",
+        "Do not remove anyone unless the main action says so.",
     ]
-    lines.append(video_one_shot_rule("picture 1"))  # t382u
+    lines.append(video_faithful_rule("picture 1"))  # t422u: 只让图本身忠实地动起来
+    lines.append(video_no_new_people_rule("picture 1"))  # t422u: 不加人
+    lines.append(video_one_shot_rule("picture 1", speaking=False))  # t382u / t422u: 没有对口型那段
     lines.append(video_props_lock_rule("picture 1"))  # t388u
     if evolve == "keep":
         lines.append(f"Keep the visual style of picture 1 for the whole clip. Do not restyle it toward {style}.")
@@ -3443,13 +3501,12 @@ def _video_prompt_scene_payload(
 
 
 # 故事风格（STORY 窗口的三种 Series 提示）：决定视频里谁说话、讲员出不出镜、人物怎么演。
+# t447u: 中文名（和场景生成下拉同名）；技术方案汇报 / 高管简报去掉了，旧存值归到主持人节目（技术报告写在 FYI 里）。
 STORY_STYLE_CHOICES = (
-    ("podcast", "Series · Podcast"),
-    ("counselor", "Series · Counselor"),
-    ("story_speak", "Series · Story Speak"),
-    ("story_act", "Series · Story Act"),
-    ("tech", "技术方案汇报"),
-    ("exec", "高管简报"),
+    ("podcast", "播客"),
+    ("counselor", "主持人节目"),
+    ("story_speak", "故事对话"),
+    ("story_act", "故事表演"),
 )
 # 故事风格是唯一的权威：生场视频的「叙事风格」也用这一套。每个故事风格对应提示词里的叙事方式（narrative）。
 STORY_STYLE_NARRATIVE = {
@@ -3458,18 +3515,24 @@ STORY_STYLE_NARRATIVE = {
     "tech": "tech", "exec": "exec",
 }
 # 旧的生场视频「叙事风格」存值 → 故事风格（迁移用）
-NARRATIVE_TO_STORY_STYLE = {"narration": "podcast", "story": "story_speak", "tech": "tech", "exec": "exec"}
+NARRATIVE_TO_STORY_STYLE = {"narration": "podcast", "story": "story_speak", "tech": "counselor", "exec": "counselor"}
 STORY_STYLE_LABELS = tuple(label for _k, label in STORY_STYLE_CHOICES)
 
 
 def normalize_story_style(value) -> str:
-    """存值 / 标签（含旧写法 "Series . Podcast"、旧的 Story Only）→ podcast / counselor / story_speak / story_act；认不出返回空。"""
+    """存值 / 标签（中文名；旧写法 "Series . Podcast"、旧的 Story Only）→ podcast / counselor / story_speak / story_act；认不出返回空。
+
+    t447u: 旧的 tech / exec（技术方案汇报 / 高管简报）→ counselor（主持人节目）；短故事 / Step Story → story_speak。"""
     text = re.sub(r"\s+", " ", str(value or "")).strip().lower().replace("·", ".")
     if not text:
         return ""
     for key, label in STORY_STYLE_CHOICES:
         if text in (key, label.lower().replace("·", ".")):
             return key
+    if text in ("tech", "exec", "技术方案汇报", "高管简报"):
+        return "counselor"
+    if text in ("短故事", "step story", "short story") or re.fullmatch(r"[1-9] ?step story", text):
+        return "story_speak"
     if "podcast" in text:
         return "podcast"
     if "counselor" in text:
@@ -4063,6 +4126,18 @@ def _speech_scene_flags(scenes, *, allow_story_content: bool = False) -> dict:
     }
 
 
+def _story_act_narrator_scene(scene) -> bool:
+    """t447u: 故事表演的讲员场：actor 只有讲员，有 speaking，没有 story_content。"""
+    if not isinstance(scene, dict):
+        return False
+    actor = str(scene.get("actor") or "")
+    return (
+        "讲员" in actor and "人物" not in actor
+        and bool(str(scene.get("speaking") or "").strip())
+        and not str(scene.get("story_content") or "").strip()
+    )
+
+
 def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
                         host_narrator: str, use_speaking: bool) -> tuple:
     """返回 (说明行, 内容字段名)。故事风格决定谁说话；叙事风格只管画面怎么表现（见 _video_form_line）。"""
@@ -4071,6 +4146,9 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
     real = [s for s in scenes if isinstance(s, dict)]
     if real and all(project_manager.scene_is_story_act(s) for s in real):
         story_style = "story_act"  # 场景本身是 Story Act 生成的（只有 story_content）
+    elif story_style == "story_act" and real and all(_story_act_narrator_scene(s) for s in real):
+        # t447u: 故事表演里的讲员场（开场 / 背景 / 衔接 / 结尾）：只有讲员、有 speaking，讲员照常说话
+        story_style = "counselor"
     if story_style == "story_act":
         has_content = any(
             str(s.get("story_content") or s.get("speaking") or s.get("voiceover") or "").strip() for s in real
@@ -4382,11 +4460,12 @@ VIDEO_AUDIO_MODE_LINES = {
 }
 
 
-def video_guard_block(scenes, transition=None, start_image: str = "", audio_mode: str = "") -> str:
+def video_guard_block(scenes, transition=None, start_image: str = "", audio_mode: str = "",
+                      spoken: bool = True) -> str:
     """t159u/t163u: 视频提示词最前面的要点（所有后端共用），只用正面、具体的描述：
     画面干净（台词只用声音）；光线 / 时间写成具体样子（视觉或起始图亮度）；有对话时加实时连续性（视觉写了光线变化就不加）。"""
     talk, changes, light = _guard_parts(scenes, transition, start_image)
-    rules = [VIDEO_NO_CAPTION_RULE, SPOKEN_SOURCE_RULE]
+    rules = [VIDEO_NO_CAPTION_RULE] + ([SPOKEN_SOURCE_RULE] if spoken else [])  # t422u: 只按 FYI 时没有讲话
     if light:
         rules.append(light)
     if talk and not changes:
@@ -5243,7 +5322,21 @@ def video_art_style_lock_rule(style: str, pic: str = "the start picture") -> str
 VIDEO_ONE_SHOT_PREFIX = "One base shot:"
 
 
-def video_one_shot_rule(pic: str = "the start picture") -> str:
+def video_one_shot_rule(pic: str = "the start picture", speaking: bool = True) -> str:
+    """t422u: speaking=False（没有讲话 / 只让图动起来）时不写「谁说话谁对口型」那段，只写没人说话、闭嘴、小动作。"""
+    if not speaking:
+        return (f"{VIDEO_ONE_SHOT_PREFIX} the whole video stays inside the base scene of {pic} from the first frame to the "
+                f"last: the same place, background and anyone already in it stay in view, each at about the size and "
+                f"place they have in {pic}. The camera may move slowly (pan, turn, drift or reposition a little within "
+                f"this same place) and the light may shift softly without changing the time of day, but the video never "
+                f"cuts, never switches shots or scenes, never zooms in to one face, and never cuts to a portrait, a "
+                f"close-up or a single-person shot. Nobody speaks: anyone already in {pic} keeps the mouth closed and may "
+                f"only make small natural movements (a nod, a glance, a gesture). "
+                f"Any change is slow, small and local (faces, hands, hair, cloth, light), never the whole scene. "
+                f"（基础画面：整段一直在原来的基础画面里，场景和图里本来有的人一直在画面里、大小和位置跟起始图一样；"
+                f"摄像机可以慢慢移动、转动、调整方位，光线可以柔和变化，但绝不切镜头、绝不换场景、绝不推到一个人的脸、"
+                f"绝不切到任何人的肖像或单人特写；没有人说话，图里本来有的人闭嘴，只做小动作；"
+                f"只有缓慢的局部变化，不换整个场景。）")
     # t391u: 摄像机可以慢慢移动 / 转动 / 调整方位，光线可以柔和变化；场景和人一直在画面里、人物大小和位置跟起始图一样，
     # 绝不推到一个人的脸、绝不切到肖像。不点名任何物品（t390u）。
     return (f"{VIDEO_ONE_SHOT_PREFIX} the whole video stays inside the base scene of {pic} from the first frame to the "
@@ -5308,6 +5401,99 @@ def video_props_lock_rule(pic: str = "the start picture") -> str:
             f"No new object appears, and nothing changes into something else or disappears. "
             f"（物品锁定：东西全程和起始画面一样；空手一直空手，拿着东西的一直拿着同一件；"
             f"不凭空多出东西，也不变成别的、不消失。）")
+
+
+# ---------------------------------------------------------------------------
+# t422u/t424u: 没勾「人物」时不加图里没有的人（No new people），也不写地域 / 时代 / 舞台 / 默认讲员；
+# 场景描述、讲话、讲话当故事内容、人物都没勾（只按 FYI）时只让图本身忠实地动起来（Faithful animation）。
+# Grok / Gemini / 过渡 / MiniMax 都写；Strata 精简后原样补回（restore_video_locked_rules），
+# 丢了或多写了人 / 地域时代的词 validate 不通过。
+# ---------------------------------------------------------------------------
+VIDEO_NO_NEW_PEOPLE_PREFIX = "No new people:"
+VIDEO_FAITHFUL_PREFIX = "Faithful animation:"
+
+
+def video_no_new_people_rule(pic: str = "the start picture") -> str:
+    return (f"{VIDEO_NO_NEW_PEOPLE_PREFIX} only the people already shown in {pic} appear, exactly as many as in {pic} "
+            f"(none if it shows nobody). Nobody enters or is added: no protagonist, extra, crowd, passer-by, child, "
+            f"background figure, reflection or silhouette, and nobody is shown twice. "
+            f"（不加人：只有起始画面里本来就有的人，人数一样，图里没人就一直没人；不进来新的人，"
+            f"不加主角、群众、路人、小孩、背景人物、倒影或剪影，也不重复同一个人。）")
+
+
+def video_faithful_rule(pic: str = "the start picture") -> str:
+    return (f"{VIDEO_FAITHFUL_PREFIX} bring {pic} itself to life and nothing else. Keep exactly what it shows: its "
+            f"people (only those already there), its background, its scene content and any keyword lettering already "
+            f"in it. The motion and the meaning come only from what {pic} and its keywords show; add no place, country, "
+            f"period or culture description, no story, character or object that is not in {pic}. "
+            f"（忠实动画：只让起始画面本身动起来；图里本来就有的人、背景、场景内容和图里已有的关键字都照原样；"
+            f"动作和意思只从这张图和它的关键字来，不加图里没有的地域、国家、时代、文化描述、故事、人物或东西。）")
+
+
+def restore_no_new_people_rules(original: str, polished: str) -> str:
+    """t422u: 「Faithful animation:」「No new people:」两句 Strata 改了 / 丢了就换回原句，恰好一次。"""
+    out = _restore_rule(original, polished, VIDEO_FAITHFUL_PREFIX)
+    return _restore_rule(original, out, VIDEO_NO_NEW_PEOPLE_PREFIX)
+
+
+_PEOPLE_WORDS = ("people", "person", "persons", "crowd", "crowds", "villager", "villagers", "merchant", "merchants",
+                 "priest", "priests", "soldier", "soldiers", "child", "children", "kid", "kids", "figure", "figures",
+                 "passer-by", "passers-by", "pedestrian", "pedestrians", "protagonist", "extras", "onlooker",
+                 "onlookers", "bystander", "bystanders", "人们", "人群", "路人", "商人", "士兵", "小孩", "主角", "讲员",
+                 "群众")
+_PLACE_ERA_WORDS = ("ancient", "medieval", "dynasty", "century", "era", "period", "historical", "biblical",
+                    "babylon", "babylonian", "mesopotamia", "mesopotamian", "middle east", "middle-eastern",
+                    "middle eastern", "persian", "arab", "arabian", "egypt", "egyptian", "roman", "greek", "israel",
+                    "jerusalem", "oriental", "setting region", "stage", "地域", "时代", "古代", "朝代",
+                    "巴比伦", "中东", "舞台")
+
+
+def _setting_words() -> tuple:
+    out = []
+    for name, place in SETTING_PLACES.items():
+        out.append(str(name))
+        out.append(str(place.get("en") or ""))
+        for era_name, era_en in place.get("eras") or []:
+            out += [str(era_name), str(era_en)]
+    return tuple(w.lower() for w in out if w and len(w) >= 2)
+
+
+def _word_count(text: str, w: str) -> int:
+    if w.isascii():
+        return len(re.findall(rf"(?<![a-z]){re.escape(w)}(?![a-z])", text))
+    return text.count(w)
+
+
+def _strip_locked_people_rules(text: str) -> str:
+    s = text or ""
+    for prefix in (VIDEO_FAITHFUL_PREFIX, VIDEO_NO_NEW_PEOPLE_PREFIX, VIDEO_ONE_SHOT_PREFIX):
+        sp = _rule_span(s, prefix)
+        while sp:
+            s = s[:sp[0]] + " " + s[sp[1]:]
+            sp = _rule_span(s, prefix)
+    return s.lower()
+
+
+def added_people_words(original: str, polished: str) -> str:
+    """t422u: 原文有「No new people:」时，Strata 多写了人（people / crowd / merchant / 主角……）就返回那个词。"""
+    if VIDEO_NO_NEW_PEOPLE_PREFIX not in (original or ""):
+        return ""
+    lo, lp = _strip_locked_people_rules(original), _strip_locked_people_rules(polished)
+    for w in _PEOPLE_WORDS:
+        if _word_count(lp, w) > _word_count(lo, w):
+            return w
+    return ""
+
+
+def added_place_era_words(original: str, polished: str) -> str:
+    """t424u: 原文有「No new people:」/「Faithful animation:」时，Strata 多写了地域 / 时代 / 舞台的词就返回那个词。"""
+    if VIDEO_NO_NEW_PEOPLE_PREFIX not in (original or "") and VIDEO_FAITHFUL_PREFIX not in (original or ""):
+        return ""
+    lo, lp = _strip_locked_people_rules(original), _strip_locked_people_rules(polished)
+    for w in _PLACE_ERA_WORDS + _setting_words():
+        if _word_count(lp, w) > _word_count(lo, w):
+            return w
+    return ""
 
 
 # t390u: Strata 不许写出原提示词里没有的物品名（尤其是手里的东西），否则模型会凭空画出来。
@@ -5425,7 +5611,7 @@ def _rule_span(text: str, prefix: str):
     line_end = text.find("\n", i)
     line_end = len(text) if line_end < 0 else line_end
     for other in (VIDEO_IMAGE_KEYWORDS_PREFIX, ART_STYLE_LOCK_PREFIX, VIDEO_ONE_SHOT_PREFIX,
-                  VIDEO_PROPS_LOCK_PREFIX):  # 不跨到下一条锁定句
+                  VIDEO_PROPS_LOCK_PREFIX, VIDEO_FAITHFUL_PREFIX, VIDEO_NO_NEW_PEOPLE_PREFIX):  # 不跨到下一条锁定句
         o = text.find(other, i + len(prefix), line_end)
         if o >= 0:
             line_end = o
@@ -5600,6 +5786,7 @@ def restore_video_locked_rules(original: str, polished: str) -> str:
     out = restore_one_shot_rule(original, out)  # t382u: 基础画面、不切镜头
     out = restore_props_lock_rule(original, out)  # t388u: 物品不变
     out = restore_speaking_story_rules(original, out)  # t416u: 讲话当故事内容：没人说话、只有音效
+    out = restore_no_new_people_rules(original, out)  # t422u: 忠实动画 / 不加人
     return restore_art_style_rule(original, out)
 
 
@@ -5669,11 +5856,22 @@ def _strip_critical_line_prefix(text: str) -> tuple:
     return "", t
 
 
+H3_PROFILE_FIRST_LINE = "subject_definitions:"  # t426u: 档位提示词（prompt_profiles）的第一行
+
+
+def is_profile_prompt(prompt: str) -> bool:
+    """t426u: 档位提示词（MiniMax 无讲话档，Pixaroma Act 结构）：第一行是 subject_definitions:。"""
+    return (prompt or "").lstrip().startswith(H3_PROFILE_FIRST_LINE)
+
+
 def ensure_video_no_subtitle_first_line(prompt: str) -> str:
     """t244/t321u: 禁字幕句恰好一次，且是视频提示词的物理第一行（所有后端）。
 
     旧提示词里的重复版本（三遍「永远不许加任何字幕」、H3 三遍句）和多余副本都清掉；幂等。
-    REFERENCE PICTURES 等元数据留在它后面。"""
+    REFERENCE PICTURES 等元数据留在它后面。
+    t426u: 档位提示词不加这句（这句把字幕定义成讲话内容，无讲话档里会引出说话），原样返回。"""
+    if is_profile_prompt(prompt):
+        return (prompt or "").strip()
     critical = VIDEO_NO_SUBTITLE_CRITICAL_LINE
     text = strip_video_no_subtitle_lines(prompt)
     return critical + "\n\n" + text if text else critical
@@ -5797,8 +5995,11 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
                     language: str = "", camera: str = "none", audio_mode: str = "none", start_image: str = "",
                     seconds: float = 6.0, use_visual: bool = True, use_speaking: bool = True, fyi: str = "",
                     stage=None, speaker_notes: dict | None = None, portrait_pictures: dict | None = None,
-                    speech_speed: float = 1.0, text: str = "", speaking_as_story: bool = False) -> str:
+                    speech_speed: float = 1.0, text: str = "", speaking_as_story: bool = False,
+                    use_actor: bool = True, faithful: bool = False) -> str:
     """t165u: 场景内容 → MiniMax H3 官方格式提示词。
+    t422u/t424u: ``use_actor`` False = 没勾人物：不加人（No new people），不写地域 / 时代 / 舞台；
+    ``faithful`` = 场景描述、讲话、讲话当故事内容、人物都没勾：只让 <Picture 1> 本身动起来，不用场景里的人物 / 讲话。
     t416u: ``speaking_as_story`` = 讲话当故事内容：讲话不说出来，用画面演；没人说话，只有音效、没有音乐。t191u: stage = 故事舞台（一句 Story stage:）。
     t150u: speaker_notes = {说话人序号: 括号描述}（Strata 看图写的；没有就用画面描述里讲这个人的小句）；
     portrait_pictures = {说话人序号: <Picture k> 的 k}（参考图工作流）。"""
@@ -5809,6 +6010,10 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
         scs = speaking_story_scenes(scs)
         use_speaking = False
         audio_mode = "none"
+    if faithful:  # t422u: 只按图：场景资料（人物、讲话、画面描述）一概不用
+        scs, use_visual, use_speaking, use_actor, audio_mode = [], False, False, False, "none"
+    if not use_actor:  # t424u: 没勾人物：不写地域 / 时代 / 舞台
+        region, era, stage = "", "", None
     sc = scs[0] if scs else {}
     two = frames == "two" or isinstance(transition, dict)
     lang = ""
@@ -5826,8 +6031,12 @@ def build_h3_prompt(scenes, *, frames: str = "one", transition=None, style: str 
     place = era_s if (reg_s and reg_s in era_s) else ", ".join(x for x in (era_s, reg_s) if x)
     shot = [f"[Shot 1] {_h3_style(style)}" + (f", set in {place}" if place else "") + "."]
     shot.append(video_art_style_lock_rule(style, pic="<Picture 1>"))  # t369u: 画风锁定
-    shot.append(video_one_shot_rule("<Picture 1>"))  # t382u: 基础画面里对话，不切到肖像
+    shot.append(video_one_shot_rule("<Picture 1>", speaking=bool(use_speaking or audio_mode in ("talk", "sing"))))
     shot.append(video_props_lock_rule("<Picture 1>"))  # t388u: 手里 / 桌上的东西不变
+    if faithful:
+        shot.append(video_faithful_rule("<Picture 1>"))  # t422u
+    if not use_actor:
+        shot.append(video_no_new_people_rule("<Picture 1>"))  # t422u
     try:
         from utility import story_stage as _ss
 
@@ -6120,8 +6329,8 @@ PEOPLE_NO_CAST_LINE = (
 
 
 def _video_people_lines(cast: list, frames: str, host_narrator: str, override: str, narrative: str) -> list:
-    if not cast:
-        return [PEOPLE_NO_CAST_LINE]
+    if not cast:  # t422u: 没勾人物：不加图里没有的人（锁定句）
+        return [video_no_new_people_rule("picture 1 and picture 2" if frames == "two" else "picture 1")]
     first_ref = 3 if frames == "two" else 2
     lines = [
         f"People: ``actor`` lists who is in the clip (gender/age band/ethnicity/name; the face and body look that age band). "
@@ -6188,7 +6397,7 @@ def build_video_flow_prompt(
     instruction = [_video_style_line(frames, evolve, style)]
     if evolve == "keep":  # t369u: 画风锁定（演进到目标风格时不锁）
         instruction.append(video_art_style_lock_rule(style, pic="picture 1"))
-    instruction.append(video_one_shot_rule("picture 1"))  # t382u: 基础画面里对话，不切到肖像
+    instruction.append(video_one_shot_rule("picture 1", speaking=use_speaking))  # t382u / t422u
     instruction.append(video_props_lock_rule("picture 1"))  # t388u: 手里 / 桌上的东西不变
     if use_visual:
         instruction.append(
@@ -8412,14 +8621,14 @@ SPEECH_PAUSE_ELLIPSIS = 0.4
 SPEECH_PAUSE_SWITCH = 0.3
 # t157u: 实测 MiniMax H3（p20261103132942 四段 7 秒片，s=1.0）：208 字 / 28.7 秒讲话 ≈ 7.25 字/秒（含停顿），
 # 范围 6.4–8.6；8.6 那段明显赶。MiniMax 会把台词塞进要求的长度，所以用偏舒适的 6.5 字/秒（含停顿）估算。
-MINIMAX_CJK_PER_SEC = 4.4  # t209u: 再放慢约 20%（5.3 → 4.4，5.3/4.4 ≈ 1.2）：生成的讲话还是太赶；例 44 字 ≈ 10 秒（原 t196u 实测 204 字 / 34.8 秒 = 5.86）
-MINIMAX_WORDS_PER_SEC = 2.3  # t209u: 同样放慢约 20%
+MINIMAX_CJK_PER_SEC = 4.6  # t433u: 4.4 → 4.6（生成的讲话有点慢）；例 46 字 ≈ 10 秒。t209u 曾从 5.3 放慢到 4.4（原 t196u 实测 204 字 / 34.8 秒 = 5.86）
+MINIMAX_WORDS_PER_SEC = 2.5  # t433u: 2.3 → 2.5；例 25 词 ≈ 10 秒
 MINIMAX_PAUSE_ELLIPSIS = 0.4
 MINIMAX_AUDIO_TRUST = 0.3  # 场景音频 / 时间轴跟字数估算差超过 30% → 不信（多半是上一段 MiniMax 片子的音频）
 
 
 def minimax_speech_seconds(text: str) -> float:
-    """t157u: MiniMax 实测语速的讲话秒数（字数 / MINIMAX_CJK_PER_SEC(5.3) + 英文词 / 2.8 + 省略号 0.4）。"""
+    """t157u: 生成视频用的讲话秒数（汉字 / MINIMAX_CJK_PER_SEC(4.6) + 英文词 / MINIMAX_WORDS_PER_SEC(2.5) + 省略号 0.4）。"""
     _, d = speaking_seconds_estimate(text)
     return round(d["cjk"] / MINIMAX_CJK_PER_SEC + d["words"] / MINIMAX_WORDS_PER_SEC
                  + d["ellipsis"] * MINIMAX_PAUSE_ELLIPSIS, 1)
@@ -9275,6 +9484,111 @@ NOTEBOOKLM_STUDIO_FYI_KINDS = frozenset({"slides", "audio_overview", "video_over
 # NotebookLM 自定义主题框偏短；只截用户的内容主题，不截 FYI。
 NOTEBOOKLM_TOPIC_MAX_CHARS = 1500
 
+# ---------------------------------------------------------------------------
+# t427u: 演示文稿（场景内容做来源）：自动化填进 NotebookLM 自定义框的只有「FYI + 内容主题」，长提示词（画风、
+# 场景对应）根本没送到 NotebookLM。所以页数 + 画风 + 地域时代写成一段短的「硬性要求」，放在提示词最前面，
+# 填框时放在框的最前面，永远不截（只截用户的内容主题）。
+NOTEBOOKLM_DECK_LOCK_HEAD = "Deck_Lock:"
+NOTEBOOKLM_DECK_LOCK_TITLE = "硬性要求（最重要，先读）/ MUST, read first:"
+NOTEBOOKLM_DECK_LONG_FROM = 11  # 场景数到这么多时，演示文稿「长度」选「长」（默认长度大约只出 15 页）
+# t428u: 说明文字三种（节目生成窗里没有「去掉文字」了），写进硬性要求、紧跟画风；都用正面说法。
+NOTEBOOKLM_DECK_TEXT_LINES = {
+    "keywords": (
+        "【说明文字 · 关键字作背景】每页只有 1 到 2 个关键词（最多 3 个，每个最多 4 个字），提炼这一页的核心"
+        "（情绪、根源、问题或转折；有「关键词 / Keyword hint」就从它来），像场景本来就有的东西融进背景：刻进木纹、"
+        "嵌在墙上、写在招牌或纸条上、由云或灯光雾气聚成，字大，同一种画风。讲述由声音讲，整页其余都是画面。",
+        "On-slide text: only 1-2 keywords per slide (3 at most, a few characters each) naming the slide's core, "
+        "woven into the background as part of the scene (carved in wood, set in a wall, on a sign or note, formed by "
+        "clouds or lit mist), large, same art style. The narration is spoken; the rest of each slide is picture.",
+    ),
+    "keep": (
+        "【说明文字 · 保留】每页 = 这一场的画面 + 一块说明文字区（画面下方或一侧），写这一页的要点小结，1 到 2 句"
+        "（有「说明文字 / Slide caption」就照它写），字清楚好读。",
+        "On-slide text: each slide is the scene's picture plus a caption area below or beside it with a 1-2 sentence "
+        "summary of that slide (the 说明文字 / Slide caption text when given), in clear readable type.",
+    ),
+    "express": (
+        "【说明文字 · 用画面讲】每页都是一整幅画，内容全部由画面里的人物、地点、动作、表情和光线讲出来，整页只有画面。",
+        "On-slide text: every slide is one full picture; the people, place, action, faces and light tell the whole "
+        "content, and the slide is picture only.",
+    ),
+}
+
+
+def _deck_style_en(style: str) -> str:
+    st = (style or "").strip() or "写实 (Realistic)"
+    if is_realistic_style(st):
+        return "photorealistic, like real photographs or cinematic film stills"
+    en, stylized = video_art_style_en(st)
+    if stylized and "3d" in en.lower():
+        return (f"{en}: stylized 3D cartoon characters and sets, soft rounded shapes and bright animated-film lighting, "
+                "like a still from a 3D animated movie")
+    return f"{en}, a fully stylized {en} look" if stylized else en
+
+
+def notebooklm_deck_lock(n: int, style: str, *, region: str = "", era: str = "",
+                         content_source: str = "content.pdf", text: str = "") -> str:
+    """t427u: 演示文稿的硬性要求：正好 n 页、第 k 页 = 场景 k；每页画面的画风；勾了背景时的地域 · 时代。
+    都用正面的说法，页数和画风放最前面。"""
+    n = int(n or 0)
+    style = (style or "").strip() or "写实 (Realistic)"
+    src = content_source or "content.pdf"
+    style_en = _deck_style_en(style)
+    lines = [NOTEBOOKLM_DECK_LOCK_TITLE]
+    if n > 0:
+        lines += [
+            f"【页数】正好 {n} 页：{src} 共 {n} 场，一场一页，按顺序第 k 页 = 场景 k（k = 1–{n}）；"
+            f"每页都是场景页，第 1 页是场景 1，第 {n} 页是场景 {n}（没有封面、目录、总结页）。",
+            f"Slide count: exactly {n} slides; slide k is scene k of {src} (k = 1–{n}), in order, one scene per slide; "
+            f"slide {n} is scene {n} and every slide is a scene slide.",
+        ]
+    lines += [
+        f"【画风】每一页的画面都是「{style}」，所有页同一种画风。",
+        f"Art style: every picture on every slide is {style_en}; the same look on "
+        + (f"all {n} slides." if n > 0 else "all slides."),
+    ]
+    if text:  # t428u: 说明文字，紧跟画风
+        lines += list(NOTEBOOKLM_DECK_TEXT_LINES[slide_text_choice(text)])
+    phrase = setting_place_phrase(region, era)
+    if phrase:
+        lines += [
+            f"【地域 · 时代】{(region or '').strip()} · {(era or '').strip()}：每一页的人物、衣着、建筑和物品都属于这个地方、这个时代。",
+            f"Place and period: {phrase}. On every slide the people, clothing, buildings and objects belong to this place and time.",
+        ]
+    return "\n".join(lines)
+
+
+def with_notebooklm_deck_lock(prompt: str, lock: str) -> str:
+    """t427u: 把「Deck_Lock:」那段放在提示词最前面（原来有就换掉）。"""
+    body = strip_notebooklm_deck_lock(prompt)
+    lock = (lock or "").strip()
+    if not lock:
+        return body
+    return NOTEBOOKLM_DECK_LOCK_HEAD + "\n" + lock + ("\n\n" + body if body else "")
+
+
+def _deck_lock_match(prompt: str):
+    return re.search(r"(?ms)^" + re.escape(NOTEBOOKLM_DECK_LOCK_HEAD) + r"\n(.*?)(?:\n\s*\n|\Z)", prompt or "")
+
+
+def notebooklm_deck_lock_of(prompt: str) -> str:
+    m = _deck_lock_match(prompt)
+    return m.group(1).strip() if m else ""
+
+
+def strip_notebooklm_deck_lock(prompt: str) -> str:
+    text = prompt or ""
+    m = _deck_lock_match(text)
+    if m:
+        text = text[:m.start()] + text[m.end():]
+    return text.strip()
+
+
+def notebooklm_deck_slide_count(prompt_or_lock: str) -> int:
+    """t427u: 硬性要求里写的页数（没有就 0）。"""
+    m = re.search(r"exactly (\d+) slides", prompt_or_lock or "")
+    return int(m.group(1)) if m else 0
+
 
 def notebooklm_topic_box_text(kind: str, topic: str, *, prompt: str = "", max_chars: int | None = None) -> str:
     """拼进 NotebookLM 自定义框的文字。
@@ -9293,6 +9607,10 @@ def notebooklm_topic_box_text(kind: str, topic: str, *, prompt: str = "", max_ch
         limit = NOTEBOOKLM_TOPIC_MAX_CHARS
     if kind not in NOTEBOOKLM_STUDIO_FYI_KINDS:
         return topic or prompt
+    lock = notebooklm_deck_lock_of(prompt) if kind == "slides" else ""
+    if lock:  # t427u: 硬性要求（页数 + 画风 + 地域时代）在框的最前面，不截
+        rest = notebooklm_topic_box_text(kind, topic, max_chars=max(1, limit - len(lock) - 2))
+        return lock + ("\n\n" + rest if rest else "")
     fyi = (NOTEBOOKLM_STUDIO_FYI or "").strip()
     if not topic:
         return "FYI：\n" + fyi if fyi else ""

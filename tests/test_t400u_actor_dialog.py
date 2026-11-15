@@ -106,8 +106,11 @@ class ActorEditFieldsTest(unittest.TestCase):
         self.assertIn("parse_actor_edit_fields", src)
         self.assertIn("format_actor_edit_fields", src)
         dlg = src[src.index("    def _open_portrait_dialog("):src.index("    def _scene_actor_rows(")]
-        self.assertIn('text="括号描述"', dlg)
-        self.assertIn('state="normal"', dlg)
+        # t443u: 编辑栏移到共用部件 gui/actor_portrait_widgets.PersonEditBlock（STORY 预览也用它）
+        self.assertIn("PersonEditBlock(dlg)", dlg)
+        widgets = (ROOT / "gui/actor_portrait_widgets.py").read_text(encoding="utf-8")
+        self.assertIn('text="括号描述"', widgets)
+        self.assertIn('state="normal"', widgets)
         self.assertIn("edit_note", dlg)
         self.assertIn("new_id != opened_id", dlg)
         # 人物预览这三栏不再用只读下拉把「男女」一类值换成默认值
