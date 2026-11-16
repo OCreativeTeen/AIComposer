@@ -3,6 +3,7 @@ import os
 import string
 import config
 import config_channel
+from utility import narration_modes as _narration_modes
 from utility.tags_text import parse_tags_list
 import project_manager
 from utility.file_util import _media_kind_for_path
@@ -238,9 +239,8 @@ def _story_cast_rules_block(video_detail) -> str:
         "writing (girl + adult man: daughter and father; boy + adult woman: son and mother; two adults of similar "
         "age and opposite gender: usually a couple; senior + child: grandparent and grandchild; a shared family name "
         "strengthens a family tie). Build every scene, line and action on that relationship and keep it the same.\n"
-        "    ** If the list has no 讲员, do not invent one: the first listed 人物 carries any narration, or the "
-        "story is purely acted. If the list is empty, nobody is on screen as a speaker and the narration is a "
-        "voice-over behind the pictures (``actor`` is \"\").\n"
+        "    ** If the list has no 讲员, do not invent one: there is no narrator, host or voice-over, and nobody "
+        "speaks except as the mode rules say. A 讲员 in the list is the only narrator.\n"
         "    ** ``speaking`` marks every line with <N>, N being that person's place in ``actor`` from 1. At most "
         "four people in ``actor``, at most three of them speak. Never write <4>. A voice-over that nobody on "
         "screen speaks is not given to a listed person.\n"
@@ -259,28 +259,46 @@ _PROGRAM_OUTPUT_NAMES = {
 
 
 def program_mode_key(mode_label: str) -> str:
-    key = config_channel.series_style_key(mode_label)  # t447u: 中文名（播客 / 主持人节目 / 故事对话 / 故事表演）
+    """t262: 节目生成的方式 key：step_story / podcast / story_speak / story_act（短故事是自己的一种，不再并进故事对话；
+    旧的主持人节目 / Counselor 读作 story_act）；认不出返回 ""。名字和规则都来自 utility/narration_modes。"""
+    key = _narration_modes.normalize(config_channel.canonical_prompt_label(mode_label))
     if key:
-        return "story_only" if key == "story_speak" else key
-    low = (mode_label or "").lower()
-    if "podcast" in low:
-        return "podcast"
-    if "counselor" in low:
-        return "counselor"
-    if "story act" in low or "story_act" in low:
-        return "story_act"
-    if "story only" in low or "story_only" in low or "story speak" in low or "story_speak" in low:
-        return "story_only"
-    return ""
+        return key
+    return _narration_modes.normalize(mode_label)
+
+
+def scene_host_case(video_detail, style: str | None = None) -> str:
+    """场景生成 / 节目生成：人物栏里讲员的真实情况（narration_modes.HOST_*）。
+    人物栏没有讲员 → none；有讲员且讲员库里有他的肖像 → portrait；没有肖像 → voiceover。
+    讲员的肖像来自讲员库（按讲员的长相和画风，utility.content_pdf.actor_portrait_path），不需要项目的人物目录，
+    所以场景还没生成就能知道：这里和视频生成、生成 actor.pdf 用同一个查法。"""
+    import config_prompt
+
+    cast = _story_cast_text(video_detail)
+    return config_prompt.program_host_case([cast] if cast else [], style=style)
+
+
+def scene_cast_check(video_detail, prompt_label: str) -> tuple:
+    """场景生成前的人物检查（播客 / 故事对话 / 故事表演 / 短故事）：返回 (ok, 说明)。
+    人物栏是空的 → 说明里指向「人物设置」。其它场景生成方式不看人物栏，永远 ok。"""
+    from utility import cast_preset
+
+    mode = cast_preset.mode_for_label((prompt_label or "").strip())
+    if not mode:
+        return True, ""
+    return cast_preset.validate_cast_for_mode(mode, _story_cast_text(video_detail) or "")
 
 
 def build_program_cast_block(video_detail, mode_label: str = "", output: str = "slides",
-                             cast_source: str = "panel") -> str:
+                             cast_source: str = "panel", host_case: str | None = None) -> str:
     """NotebookLM 生成节目(幻灯片/信息图/音频概述/视频概述)用:人物名单 + 场景生成方案对应的人物规则。
-    跟场景生成里 Series · Podcast / Counselor / Story Speak / Story Act 的规则保持一致。
+    t262: 谁说话、人物怎么演的规则是 utility/narration_modes 的原文（短故事 / 播客 / 故事对话 / 故事表演），
+    和场景生成、视频生成同一份，一字不差。
 
     ``cast_source``:"scenes" = content.pdf 是场景内容且场景里写了 actor,以场景里的人物为准(预览窗名单只补空);
-    "panel"(默认) = 分析内容 / 材料 PDF / 场景里没有人物,以预览窗人物面板为准。"""
+    "panel"(默认) = 分析内容 / 材料 PDF / 场景里没有人物,以预览窗人物面板为准。
+    ``host_case``: 讲员的情况（narration_modes.HOST_*，调用方按真实 actor / 肖像查出来）；
+    t263: 没有「不知道」。没给时按人物面板里真实的讲员和他的肖像算（名单没设过 = 没有讲员）。"""
     cast = _story_cast_text(video_detail)
     mode = program_mode_key(mode_label)
     from_scenes = cast_source == "scenes"
@@ -320,36 +338,12 @@ def build_program_cast_block(video_detail, mode_label: str = "", output: str = "
             "child: grandparent and grandchild; a shared family name strengthens a family tie). Every picture, "
             "action and line is built on that relationship."
         )
-    if mode == "podcast":
-        lines += [
-            "    ** STYLE: Podcast. The 讲员 talks about the story; the pictures illustrate what is being said.",
-            "    ** No people listed: nobody appears as a speaker; one narrator voice tells it from behind the pictures.",
-            "    ** Only the 讲员: the 讲员 alone speaks. 讲员 + one 人物: host and guest talk with each other. "
-            "讲员 + several 人物: one host with several guests. No 讲员 but 人物: the first 人物 is the host.",
-            "    ** People who appear inside the story illustrations act silently: expression, gesture, movement, no lines.",
-        ]
-    elif mode == "counselor":
-        lines += [
-            "    ** STYLE: Counselor. No people listed: the counsel is a voice from behind the pictures.",
-            "    ** The 讲员 is the counselor and the main voice of the program.",
-            "    ** The other 人物 are the people of the story. They are performers, not guests: they act the story "
-            "silently in its own place, through action, expression and gesture, while the counselor explains. "
-            "They never speak: no lines, no lip-sync. Only the 讲员 speaks.",
-        ]
-    elif mode == "story_act":
-        lines += [
-            "    ** STYLE: Story act, like a silent film. The 人物 act the story out through action, behavior and "
-            "expression. The 人物 never speak: no dialogue. The story parts carry sound effects only, no music.",
-            "    ** The 讲员, if listed, is the only voice: the opening and background, short links between parts, "
-            "and the closing. The 讲员 never tells the story for them. No 讲员: no narrator at all.",
-        ]
-    elif mode == "story_only":
-        lines += [
-            "    ** STYLE: Story only, like a film or TV drama. The 人物 carry the story by acting and talking to each other.",
-            "    ** The 讲员, if listed, only opens with background, bridges between parts, and gives a brief closing. "
-            "The 讲员 never tells the story for them.",
-            "    ** No 讲员: the story is purely acted, with no narrator.",
-        ]
+    if mode:
+        if host_case is None:
+            host_case = scene_host_case(video_detail)
+        lines.append("    ** NARRATION MODE RULES (the same rules the scene window and the video window use for this mode):")
+        lines.append("    ** " + _narration_modes.speaking_rule(mode, host_case))
+        lines.append("    ** " + _narration_modes.performance_rule(mode, host_case))
     if audio:
         lines.append(
             "    ** This is audio only: make the voices match these people and roles. Speakers name or address "
@@ -689,7 +683,7 @@ def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: 
     )
     if config_channel.is_series_label(label):
         line += (
-            " The program frame (the host's or counselor's opening and closing, the remedy) "
+            " The program frame (the host's opening and closing, the remedy) "
             "is carried inside the scenes of the pages it belongs to. It does not get extra scenes."
         )
     return line

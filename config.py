@@ -2591,8 +2591,7 @@ CHANNEL_CONFIG = {
         "scenes_prompt_choices": [
             (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),  # t205u: 第一个 = 新条目默认
             (config_channel.SERIES_STYLE_LABELS["podcast"], config_channel.COUNSELING_TALK_SCENES),  # t447u: 播客
-            (config_channel.SERIES_STYLE_LABELS["counselor"], config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),  # 主持人节目
-            (config_channel.SERIES_STYLE_LABELS["story_speak"], config_channel.COUNSELING_SERIES_STORY_SPEAK),  # 故事对话
+                (config_channel.SERIES_STYLE_LABELS["story_speak"], config_channel.COUNSELING_SERIES_STORY_SPEAK),  # 故事对话
             (config_channel.SERIES_STYLE_LABELS["story_act"], config_channel.COUNSELING_SERIES_STORY_ACT),  # 故事表演
         ],
 

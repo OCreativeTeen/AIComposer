@@ -1225,6 +1225,8 @@ class MediaGUIManager:
                 region=_pnb.story_setting_region_era(video_detail)[0],
                 era=_pnb.story_setting_region_era(video_detail)[1],
             )
+        # t263: 讲员的真实情况（有没有讲员、有没有肖像）决定说话 / 表演规则；每次现算，不写死在模板里
+        params.setdefault("host_case", _pnb.scene_host_case(video_detail, str(params.get("visual_style") or "") or None))
         template = config_channel.resolve_dynamic_scene_template(lbl, template, params)
         cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
         prompt = _build_notebooklm_prompt_for_row(
@@ -1261,6 +1263,10 @@ class MediaGUIManager:
         has_override = content_override is not None and str(content_override).strip()
         if not has_override and not _pnb.analyzed_content_text(video_detail.get("analyzed_content")):
             return None
+        # t263: 场景生成必须先有人物（所有入口都走这里）：没有人物就不生成，告诉用户先按「人物设置」
+        _cast_ok, _cast_why = _pnb.scene_cast_check(video_detail, prompt_label)
+        if not _cast_ok:
+            raise ValueError(_cast_why)
         _, prompt = self._combined_prompt_text_for_label(
             video_detail,
             prompt_label,

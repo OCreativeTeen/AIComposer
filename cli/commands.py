@@ -950,7 +950,6 @@ def scene_lm_choice_labels_fallback() -> list[str]:
         "Content to Scenes",
         "短故事",
         "播客",
-        "主持人节目",
         "故事对话",
         "故事表演",
         "Conversation",

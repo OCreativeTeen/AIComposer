@@ -37,14 +37,16 @@ class LabelTest(unittest.TestCase):
     def test_new_names(self):
         self.assertEqual(cc.STEP_STORY_LABEL, "短故事")
         self.assertEqual(
-            [cc.SERIES_STYLE_LABELS[k] for k in ("podcast", "counselor", "story_speak", "story_act")],
-            ["播客", "主持人节目", "故事对话", "故事表演"],
+            [cc.SERIES_STYLE_LABELS[k] for k in ("podcast", "story_speak", "story_act")],
+            ["播客", "故事对话", "故事表演"],
         )
+        self.assertNotIn("counselor", cc.SERIES_STYLE_LABELS)  # t262: 主持人节目已并入故事表演
 
     def test_old_labels_migrate(self):
         for old, new in (
             ("Series . Podcast", "播客"), ("Series · Podcast", "播客"),
-            ("Series · Counselor", "主持人节目"), ("Series . Counselor", "主持人节目"),
+            ("Series · Counselor", "故事表演"), ("Series . Counselor", "故事表演"),
+            ("主持人节目", "故事表演"), ("Counselor", "故事表演"),  # t262: 旧的主持人节目读作故事表演
             ("Series · Story Speak", "故事对话"), ("Series · Story Only", "故事对话"),
             ("Series . Story Only", "故事对话"), ("Series · Story Act", "故事表演"),
             ("Step Story", "短故事"), ("3 Step Story", "短故事"), ("Short Story", "短故事"),
@@ -58,7 +60,7 @@ class LabelTest(unittest.TestCase):
         self.assertTrue(cc.is_series_label("Series . Podcast"))
         self.assertFalse(cc.is_series_label("短故事"))
         self.assertFalse(cc.is_series_label("Series something else"))
-        self.assertEqual(cc.series_style_key("主持人节目"), "counselor")
+        self.assertEqual(cc.series_style_key("主持人节目"), "story_act")  # t262
         self.assertEqual(cc.series_style_key("Series · Story Only"), "story_speak")
         self.assertTrue(cc.is_step_story_label("短故事"))
         self.assertTrue(cc.is_step_story_label("Step Story"))
@@ -73,27 +75,32 @@ class LabelTest(unittest.TestCase):
 
 class StoryStyleTest(unittest.TestCase):
     def test_four_chinese_styles(self):
-        self.assertEqual([k for k, _ in cp.STORY_STYLE_CHOICES], ["podcast", "counselor", "story_speak", "story_act"])
-        self.assertEqual(list(cp.STORY_STYLE_LABELS), ["播客", "主持人节目", "故事对话", "故事表演"])
+        # t258: 视频窗口和预览窗口同一张表：短故事 / 播客 / 故事对话 / 故事表演（预览下拉的顺序）；t262: 主持人节目已并入故事表演
+        self.assertEqual([k for k, _ in cp.STORY_STYLE_CHOICES],
+                         ["step_story", "podcast", "story_speak", "story_act"])
+        self.assertEqual(list(cp.STORY_STYLE_LABELS), ["短故事", "播客", "故事对话", "故事表演"])
 
     def test_normalize(self):
-        for v, k in (("播客", "podcast"), ("主持人节目", "counselor"), ("故事对话", "story_speak"),
-                     ("故事表演", "story_act"), ("tech", "counselor"), ("exec", "counselor"),
-                     ("高管简报", "counselor"), ("技术方案汇报", "counselor"), ("短故事", "story_speak"),
+        for v, k in (("播客", "podcast"), ("主持人节目", "story_act"), ("故事对话", "story_speak"),
+                     ("故事表演", "story_act"), ("tech", "story_act"), ("exec", "story_act"),
+                     ("高管简报", "story_act"), ("技术方案汇报", "story_act"), ("短故事", "step_story"),
+                     ("Series · Counselor", "story_act"), ("counselor", "story_act"),
                      ("Series . Podcast", "podcast"), ("Series · Story Only", "story_speak")):
             self.assertEqual(cp.normalize_story_style(v), k, v)
-        self.assertEqual(cp.NARRATIVE_TO_STORY_STYLE["tech"], "counselor")
-        self.assertEqual(cp.story_style_label("tech"), "主持人节目")
+        self.assertEqual(cp.NARRATIVE_TO_STORY_STYLE["tech"], "story_act")
+        self.assertEqual(cp.story_style_label("tech"), "故事表演")
         self.assertEqual(cp.story_style_narrative("故事表演"), "story")
-        self.assertEqual(cp.story_style_narrative("主持人节目"), "narration")
+        self.assertEqual(cp.story_style_narrative("主持人节目"), "story")
 
 
 class TemplateTest(unittest.TestCase):
-    def test_counselor_actors_silent(self):
-        t = cc.COUNSELING_SERIES_COUNSELOR_FRAME
+    def test_counselor_template_removed(self):
+        # t262: 主持人节目整个删掉，故事表演的模板接手（人物只演不说，讲员讲解）
+        self.assertFalse(hasattr(cc, "COUNSELING_SERIES_COUNSELOR_FRAME"))
+        t = cc.COUNSELING_SERIES_STORY_ACT
         self.assertNotIn("They perform the spoken content", t)
         self.assertNotIn("The 人物 can answer the 讲员", t)
-        self.assertIn("They NEVER speak", t)
+        self.assertIn("They never speak on camera: no dialogue, no lines, no lip-sync.", t)
 
     def test_story_modes_do_not_invent(self):
         for t in (cc.COUNSELING_SERIES_STORY_SPEAK, cc.COUNSELING_SERIES_STORY_ACT):
@@ -103,22 +110,31 @@ class TemplateTest(unittest.TestCase):
     def test_story_act_narrator_and_sfx(self):
         t = cc.COUNSELING_SERIES_STORY_ACT
         self.assertNotIn("silent presence", t)
-        self.assertIn("narrator scenes", t)
+        # t263: 没有「叙述场景」：不分 narrator / presenting / story 场景
+        self.assertNotIn("narrator scene", t)
+        self.assertNotIn("presenting scene", t)
         self.assertIn("音效：", t)
         self.assertIn("never music", t)
         self.assertNotIn("There is NO ``speaking`` field and no ``voiceover`` field.", t)
         list(string.Formatter().parse(t))
 
     def test_story_act_branches_on_host(self):
-        t = cc.COUNSELING_SERIES_STORY_ACT
-        self.assertIn("TWO CASES, decided ONLY by whether the CAST lists a 讲员", t)
-        self.assertIn("NO 讲员 in the CAST: a pure performance", t)
-        self.assertIn("ONLY when the CAST lists a 讲员", t)
-        self.assertIn("No 讲员 in the CAST: no scene has ``speaking``", t)
-        self.assertEqual(t.count("Without a 讲员: none of these."), 2)
+        # t263: 每一份模板只写一种讲员情况（人物栏 + 肖像是已知的）：有肖像 / 没有肖像 / 没有讲员
+        a, b, c = (cc.STORY_ACT_TEMPLATES[h] for h in ("portrait", "voiceover", "none"))
+        self.assertEqual(len({a, b, c}), 3)
+        self.assertIn("who has a portrait (肖像)", a)
+        self.assertIn("who has no portrait (肖像)", b)
+        self.assertIn("the CAST has no 讲员. Nobody speaks at all", c)
+        for t in (a, b):
+            self.assertIn("explains EVERY scene", t)
+            self.assertIn("Every scene has ``story_content`` (what the 人物 act) AND ``speaking``", t)
+        self.assertNotIn("explains EVERY scene", c)
+        self.assertIn("No scene has ``speaking``", c)
+        self.assertNotIn("THREE CASES", a + b + c)
         # 人物本身仍然只演不说、只有音效
-        self.assertIn("They never speak: no dialogue, no lines, no lip-sync.", t)
-        self.assertIn("never music", t)
+        for t in (a, b, c):
+            self.assertIn("They never speak on camera: no dialogue, no lines, no lip-sync.", t)
+            self.assertIn("never music", t)
 
     def test_podcast_needs_two(self):
         self.assertFalse(cpr.validate_cast_for_mode("podcast", "讲员：woman/mature/chinese")[0])
@@ -130,7 +146,9 @@ class TemplateTest(unittest.TestCase):
         scene = {"actor": "讲员：woman/mature/chinese", "speaking": "<1> 今天讲一个家。", "visual": "书房"}
         lines, field = cp._video_speech_rules("story_act", "story", [], [scene], "", True)
         self.assertIn(field, ("speaking", "dialogue", "narration"))
-        self.assertNotIn("nobody speaks", " ".join(lines).lower())
+        # t262: 讲员不在出镜名单里 = 背景画外音：不出镜、不对口型；有话要说，不是「没人说话」
+        self.assertIn("off-screen voice-over of the 讲员", " ".join(lines))
+        self.assertNotIn("Speech: nobody speaks", " ".join(lines))
         act = {"actor": "人物1：woman/youth/chinese/小美", "story_content": "她放下碗。音效：碗碰桌面。", "visual": "厨房"}
         lines2, field2 = cp._video_speech_rules("story_act", "story", [], [act], "", True)
         self.assertEqual(field2, "story_content")
@@ -152,10 +170,13 @@ class CastPresetTest(unittest.TestCase):
         self.assertFalse(cpr.validate_cast_for_mode("step_story", "讲员：x | 人物1：woman/kids/chinese/a")[0])
         self.assertTrue(cpr.validate_cast_for_mode("podcast", one)[0])
         self.assertFalse(cpr.validate_cast_for_mode("podcast", "讲员：woman/mature/chinese")[0])
-        self.assertTrue(cpr.validate_cast_for_mode("podcast", "人物1：woman/kids/chinese/a | 人物2：man/kids/chinese/b")[0])
-        self.assertTrue(cpr.validate_cast_for_mode("counselor", "讲员：woman/mature/chinese")[0])
-        self.assertTrue(cpr.validate_cast_for_mode("counselor", "人物1：woman/kids/chinese/a")[0])
-        self.assertFalse(cpr.validate_cast_for_mode("counselor", "")[0])
+        # t263: 播客 = 讲员（主持）+ 嘉宾；只有人物没有讲员不行，并且告诉用户去按「人物设置」
+        ok, why = cpr.validate_cast_for_mode("podcast", "人物1：woman/kids/chinese/a | 人物2：man/kids/chinese/b")
+        self.assertFalse(ok)
+        self.assertIn("人物设置", why)
+        # t262: 主持人节目已并入故事表演：没有单独的 counselor 人数规则
+        self.assertNotIn("counselor", cpr.MODE_RULES)
+        self.assertNotIn("counselor", cpr.MODE_NAMES)
         self.assertFalse(cpr.validate_cast_for_mode("story_speak", "人物1：不出现 | 人物2：woman/kids/chinese/a")[0])
 
     def test_parse_reply(self):
@@ -198,12 +219,11 @@ class CastPresetTest(unittest.TestCase):
     def test_bad_reply_raises(self):
         with self.assertRaises(ValueError):
             cpr.preset_cast("story_speak", "x", generate=lambda s, u: "人物1：woman/kids/chinese/甲")
-        text, people = cpr.preset_cast("counselor", "x", narrator="n", generate=lambda s, u: "没有人物")
-        self.assertEqual((text, people), ("讲员：n", []))
+        with self.assertRaises(ValueError):  # t262: 没有 counselor 这个方式了
+            cpr.preset_cast("counselor", "x", narrator="n", generate=lambda s, u: "没有人物")
 
     def test_counts_presets(self):
         self.assertEqual(cpr.MODE_RULES["podcast"][:3], (True, 1, 1))
-        self.assertEqual(cpr.MODE_RULES["counselor"][:3], (True, 0, 2))
         self.assertEqual(cpr.MODE_RULES["story_speak"][:3], (True, 2, 3))
         self.assertEqual(cpr.MODE_RULES["story_act"][:3], (True, 2, 3))
         self.assertEqual(cpr.MODE_RULES["step_story"][:3], (False, 2, 2))
@@ -212,16 +232,18 @@ class CastPresetTest(unittest.TestCase):
 class ProgramModeTest(unittest.TestCase):
     def test_follow_main_window(self):
         f = cpr.program_mode_narrative
-        self.assertEqual(f("播客"), ("播客", "podcast", "narration"))
-        self.assertEqual(f("主持人节目"), ("主持人节目", "counselor", "narration"))
+        # t262: 节目生成四种方式（短故事是自己的一种）；谁说话由共用规则给，所以叙事形式都是 story；主持人节目读作故事表演
+        self.assertEqual(f("播客"), ("播客", "podcast", "story"))
+        self.assertEqual(f("主持人节目"), ("故事表演", "story_act", "story"))
+        self.assertEqual(f("Series · Counselor"), ("故事表演", "story_act", "story"))
         self.assertEqual(f("故事对话"), ("故事对话", "story_speak", "story"))
         self.assertEqual(f("故事表演"), ("故事表演", "story_act", "story"))
-        self.assertEqual(f("短故事"), ("短故事", "story_speak", "story"))
-        self.assertEqual(f("Series . Podcast"), ("播客", "podcast", "narration"))
-        self.assertEqual(f("Step Story"), ("短故事", "story_speak", "story"))
+        self.assertEqual(f("短故事"), ("短故事", "step_story", "story"))
+        self.assertEqual(f("Series . Podcast"), ("播客", "podcast", "story"))
+        self.assertEqual(f("Step Story"), ("短故事", "step_story", "story"))
         self.assertEqual(f("Mini Story", "story_act"), ("故事表演", "story_act", "story"))
-        self.assertEqual(f("Mini Story", "tech"), ("主持人节目", "counselor", "narration"))
-        self.assertEqual(f("", None), ("播客", "podcast", "narration"))
+        self.assertEqual(f("Mini Story", "tech"), ("故事表演", "story_act", "story"))
+        self.assertEqual(f("", None), ("播客", "podcast", "story"))
 
 
 class _Var:
@@ -252,7 +274,7 @@ class StoryFyiTest(unittest.TestCase):
         self.assertEqual(sf.effective_fyi(vd), "")
 
     def test_no_tech_prefill(self):
-        # t448u: 旧的 tech / exec 只默默归到主持人节目，不往 FYI 里预填
+        # t448u: 旧的 tech / exec 只默默归到故事表演（t262 前是主持人节目），不往 FYI 里预填
         self.assertFalse(hasattr(sf, "tech_prefill"))
         src = (ROOT / "gui" / "dl" / "scene_editor.py").read_text(encoding="utf-8")
         self.assertNotIn("tech_prefill", src)

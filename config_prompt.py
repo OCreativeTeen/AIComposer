@@ -329,6 +329,28 @@ This is a variant of TELLING: only the 讲员 speaks. People rarely appear; if t
 """.strip(),
 }
 
+# t262: 节目生成按「方式」（短故事 / 播客 / 故事对话 / 故事表演）写，不再只按 narrative 分故事 / 讲述：
+# 谁说话、人物怎么演由 utility/narration_modes 的规则原文给（放在提示词最前面的「人物与呈现」段，和场景生成、视频生成同一份），
+# 这里只写这个方式要的画面形式。短故事 / 故事对话沿用故事的形式说明。
+PROGRAM_MODE_NOTES = {
+    "podcast": """
+Narrative style: PODCAST. The speakers talk ABOUT the story as a third party, and the pictures illustrate what is being said.
+Goal: the audience follows the story through that conversation.
+Form: the place, the people of the story acting silently, objects, and composition that illustrate the words. The speakers may appear between illustrations. Nobody performs the story.
+""".strip(),
+    "story_act": """
+Narrative style: STORY PERFORMANCE (故事表演), like a silent film. The slides tell a story through what its people do.
+Goal: the audience follows the story through the people's actions, behavior, and expressions.
+Form: every picture shows the story's people in their place, performing: faces, bodies, gestures, and what passes between them carry the moment. Do not replace the people with symbols or diagrams. The people never speak.
+""".strip(),
+}
+
+
+def program_mode_note(mode: str, narrative: str = "story") -> str:
+    """t262: 节目生成里「叙事风格」那一段：播客 / 故事表演有自己的；其余按 narrative。"""
+    return PROGRAM_MODE_NOTES.get(_narration_modes.normalize(mode)) or SLIDE_FLOW_NARRATIVE_NOTES.get(narrative, "")
+
+
 # 画面里不能出现的元信息。所有风格都带。
 SLIDE_FLOW_META_NOTE = (
     "Everything that is not the story itself is for you only: the field labels, the order of the scenes, "
@@ -397,7 +419,7 @@ def episode_actor_cast(scenes: list) -> list[dict]:
 
 def notebooklm_actor_reference_note(
     name: str, output: str, narrative: str, content_name: str = "content.pdf", silent: bool = False,
-    episodes: list | None = None,
+    episodes: list | None = None, mode: str = "",
 ) -> str:
     """全集生成：actor.pdf 是本集人物（全名 + 形象图）。语音概览只用名字和身份。
 
@@ -435,6 +457,9 @@ def notebooklm_actor_reference_note(
                 "Telling / report with no 讲员: the narration is an off-screen voice and no 讲员, narrator, host, or presenter "
                 "is drawn. The listed people appear only in their scenes and act silently, never speaking."
             )
+        elif mode and narrative == "story":
+            lines.append("Who speaks and how the listed people perform follow the NARRATION MODE rules in PEOPLE AND "
+                         "PRESENTATION; the pages here only say who is who.")
         elif narrative == "story":
             lines.append("Story: the listed characters act and talk to each other; the 讲员, if listed, is outside the story.")
         else:
@@ -490,13 +515,26 @@ def _prompt_has_speaker(narrative: str, use_actor: bool, scenes: list) -> bool:
     return _scenes_have_speaker(scenes)
 
 
-def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords: bool, narrative: str = "story") -> str:
-    """这一次给了哪几项，每一项叫什么。场景主要内容总是来自讲话栏。"""
+def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords: bool, narrative: str = "story",
+                            mode: str = "") -> str:
+    """这一次给了哪几项，每一项叫什么。场景主要内容总是来自讲话栏。
+    t262: 给了方式（mode，节目生成）时，讲话栏的说明不再说「由人物彼此说出」，谁说话看最前面的方式规则。"""
     lines = ["Each scene gives only these fields:"]
     if visual:
         lines.append("- ``Shown``: the scene description: place, action, and camera angle.")
     if speaking:
-        if narrative == "story":
+        if mode and narrative == "story":
+            text = ("- ``Dialogue`` (讲话): the main content of the scene. Who says it, and whether the people in the "
+                    "pictures say anything at all, is decided only by the mode rules in PEOPLE AND PRESENTATION; "
+                    + ("in 故事表演 it holds the 讲员's words and what the 人物 act out, and the 人物 never say it." if
+                       _narration_modes.normalize(mode) == "story_act" else "it is never the field name that decides."))
+            if actor:
+                text += (
+                    " ``<1>``, ``<2>``, ``<3>`` mark who speaks: the number is that person's place in ``Actors``. "
+                    "The same person keeps talking until the next ``<N>``. "
+                    "A number with a decimal point such as ``<0.5>`` is a pause in seconds, nobody speaks."
+                )
+        elif narrative == "story":
             text = "- ``Dialogue`` (讲话): the main content of the scene, said by the characters to each other."
             if actor:
                 text += (
@@ -641,6 +679,36 @@ def _slide_flow_report_rules(visual: bool, speaking: bool, actor: bool) -> str:
             "The 讲员 listed in ``Actors`` appears on camera as the presenter, small beside the slide, pointing at it "
             "while narrating. Nobody else speaks. The slide stays the main thing."
         )
+    return "\n".join(lines)
+
+
+def _slide_flow_mode_rules(mode: str, visual: bool, speaking: bool, actor: bool) -> str:
+    """t262: 节目生成：这个方式（短故事 / 播客 / 故事对话 / 故事表演）要的字段用法。
+    谁说话、人物怎么演不在这里重写：照最前面「人物与呈现」段里 utility/narration_modes 的规则原文
+    （和场景生成、视频生成同一份），这里只说字段怎么对上。"""
+    key = _narration_modes.normalize(mode)
+    keep = "Keep each person's face and clothes the same from scene to scene."
+    lines = [
+        "Who speaks and how the people perform follow the NARRATION MODE rules in PEOPLE AND PRESENTATION above, "
+        "word for word; the field names below do not change them."
+    ]
+    if visual:
+        lines.append("``Shown`` gives the place, the look, and the camera.")
+    if actor:
+        lines.append(
+            "``Actors`` is the cast. Each listed person uses their own character image: look, gender, age band, and "
+            "ethnicity. The portrait id is the text before the parentheses. The parentheses are that person's emotion "
+            "and action in this scene; follow them, and do not treat them as part of the id."
+        )
+        if visual:
+            lines.append("Put the people inside the ``Shown`` scene. Follow its place, action, and camera angle.")
+        if speaking:
+            lines.append("A line marked with a person's number is said by that person only where the mode rules let that "
+                         "person speak.")
+    elif key != "podcast":
+        lines.append("No actor list was given for this scene. Invent only the people the story needs, and nobody speaks "
+                     "unless the mode rules let them.")
+    lines.append(keep)
     return "\n".join(lines)
 
 
@@ -1039,8 +1107,12 @@ def build_slide_flow_prompt(
     actor_source: str = "",
     content_images: bool = False,
     episodes: list | None = None,
+    mode: str = "",
 ) -> str:
     """``actor_source``（如 "actor.pdf"）非空且本次带 Actors 时，加一段 ``Actor_Reference``。
+
+    t262: ``mode`` = 节目生成的方式（短故事 / 播客 / 故事对话 / 故事表演）。给了就按方式写：谁说话、人物怎么演照
+    最前面「人物与呈现」段的共用规则（utility/narration_modes），这里只写字段怎么用；没给（魔法工作流的全集生成）照旧按 narrative。
 
     ``content_source``（如 "content.pdf"）非空时：场景内容不写进提示词，改为说明它在笔记本来源里。
 
@@ -1126,16 +1198,18 @@ def build_slide_flow_prompt(
             ])
 
     lines.append("")
-    lines.append(SLIDE_FLOW_NARRATIVE_NOTES[narrative])
+    lines.append(program_mode_note(mode, narrative) if mode else SLIDE_FLOW_NARRATIVE_NOTES[narrative])
     lines.append("")
-    inputs_note = _slide_flow_inputs_note(use_visual, use_speaking, has_speaker, keywords, narrative)
+    inputs_note = _slide_flow_inputs_note(use_visual, use_speaking, has_speaker, keywords, narrative, mode)
     if silent:
         inputs_note = inputs_note.replace("No other field is given.", SILENT_ACTORS_INPUT_NOTE + "\nNo other field is given.")
     if caption_text:
         inputs_note = inputs_note.replace("No other field is given.", SLIDE_CAPTION_INPUT_NOTE + "\nNo other field is given.")
     lines.append(inputs_note)
     lines.append("")
-    if narrative == "story":
+    if mode and narrative == "story":
+        lines.append(_slide_flow_mode_rules(mode, use_visual, use_speaking, has_speaker))
+    elif narrative == "story":
         lines.append(_slide_flow_story_rules(use_visual, use_speaking, has_speaker))
     elif narrative == "narration":
         lines.append(_slide_flow_narration_rules(use_visual, use_speaking, has_speaker))
@@ -1202,7 +1276,11 @@ def build_slide_flow_prompt(
         rule = notebooklm_speaker_rule(output)
         if output in ("slides", "infographic"):
             rule += "\n" + NOTEBOOKLM_VISUAL_RULE
-        if narrative == "story":
+        if mode and narrative == "story":
+            rule += ("\n- 谁说话、人物怎么演：照最前面「人物与呈现」里这个方式的规则，一字不改。"
+                     "\n- Who speaks and how the people perform: follow the NARRATION MODE rules in PEOPLE AND PRESENTATION "
+                     "exactly.")
+        elif narrative == "story":
             rule += ("\n- 故事：内容由故事人物彼此对话来讲，用他们自己的口吻；讲员（若有）只在开头或结尾用第一人称说几句。"
                      "\n- Story: the characters carry it by talking to each other in their own voices; the 讲员, if any, "
                      "only speaks a few first-person lines at the start or the end.")
@@ -1239,7 +1317,7 @@ def build_slide_flow_prompt(
         if with_actor:
             parts["Actor_Reference"] = notebooklm_actor_reference_note(
                 actor_source, output, narrative, content_name=content_source, silent=silent,
-                episodes=episodes,
+                episodes=episodes, mode=mode,
             )
     else:
         parts["Story_Scene_Content"] = json_content
@@ -3500,77 +3578,61 @@ def _video_prompt_scene_payload(
     return out
 
 
-# 故事风格（STORY 窗口的三种 Series 提示）：决定视频里谁说话、讲员出不出镜、人物怎么演。
-# t447u: 中文名（和场景生成下拉同名）；技术方案汇报 / 高管简报去掉了，旧存值归到主持人节目（技术报告写在 FYI 里）。
-STORY_STYLE_CHOICES = (
-    ("podcast", "播客"),
-    ("counselor", "主持人节目"),
-    ("story_speak", "故事对话"),
-    ("story_act", "故事表演"),
-)
-# 故事风格是唯一的权威：生场视频的「叙事风格」也用这一套。每个故事风格对应提示词里的叙事方式（narrative）。
-STORY_STYLE_NARRATIVE = {
-    "podcast": "narration", "counselor": "narration",
-    "story_speak": "story", "story_act": "story",
-    "tech": "tech", "exec": "exec",
-}
-# 旧的生场视频「叙事风格」存值 → 故事风格（迁移用）
-NARRATIVE_TO_STORY_STYLE = {"narration": "podcast", "story": "story_speak", "tech": "counselor", "exec": "counselor"}
+# 叙事方式（预览窗口「场景生成」和魔法工作流「生场视频」共用）：决定视频里谁说话、讲员出不出镜、人物怎么演。
+# t258: 名字、存值、旧存值怎么认、说话 / 表演规则全部来自 utility/narration_modes.py 这一张表；两个窗口不再各写各的。
+from utility import narration_modes as _narration_modes  # noqa: E402
+
+STORY_STYLE_CHOICES = tuple(_narration_modes.MODES)  # 短故事 / 播客 / 故事对话 / 故事表演（预览下拉的顺序；t262: 主持人节目已并入故事表演）
+# 叙事方式是唯一的权威：生场视频的「叙事风格」也用这一套。每个叙事方式对应提示词里的叙事形式（narrative）。
+STORY_STYLE_NARRATIVE = dict(_narration_modes.NARRATIVE)
+# 旧的生场视频「叙事风格」存值 → 叙事方式（迁移用）
+NARRATIVE_TO_STORY_STYLE = dict(_narration_modes.LEGACY_NARRATIVE_TO_MODE)
 STORY_STYLE_LABELS = tuple(label for _k, label in STORY_STYLE_CHOICES)
+# 项目、窗口都没有记下任何叙事方式时的后备（和以前一致）。
+DEFAULT_STORY_STYLE = _narration_modes.DEFAULT_MODE
 
 
 def normalize_story_style(value) -> str:
-    """存值 / 标签（中文名；旧写法 "Series . Podcast"、旧的 Story Only）→ podcast / counselor / story_speak / story_act；认不出返回空。
+    """存值 / 标签（中文名；旧写法 "Series . Podcast"、旧的 Story Only / Step Story）→ step_story / podcast /
+    story_speak / story_act；认不出返回空。
 
-    t447u: 旧的 tech / exec（技术方案汇报 / 高管简报）→ counselor（主持人节目）；短故事 / Step Story → story_speak。"""
-    text = re.sub(r"\s+", " ", str(value or "")).strip().lower().replace("·", ".")
-    if not text:
-        return ""
-    for key, label in STORY_STYLE_CHOICES:
-        if text in (key, label.lower().replace("·", ".")):
-            return key
-    if text in ("tech", "exec", "技术方案汇报", "高管简报"):
-        return "counselor"
-    if text in ("短故事", "step story", "short story") or re.fullmatch(r"[1-9] ?step story", text):
-        return "story_speak"
-    if "podcast" in text:
-        return "podcast"
-    if "counselor" in text:
-        return "counselor"
-    if "story act" in text or "story_act" in text:
-        return "story_act"
-    if "story only" in text or "story_only" in text or "story speak" in text or "story_speak" in text:
-        return "story_speak"
-    return ""
+    t262: 主持人节目 / Counselor 和旧的 tech / exec（技术方案汇报 / 高管简报）都 → story_act（故事表演）。
+    t258: 短故事 / Step Story 现在是自己的一种（step_story），不再并进故事对话。"""
+    return _narration_modes.normalize(value)
 
 
 def story_style_narrative(value) -> str:
     """故事风格 → 提示词用的叙事方式（narration / story / tech / exec）。"""
-    return STORY_STYLE_NARRATIVE.get(normalize_story_style(value) or STORY_STYLE_CHOICES[0][0], "narration")
+    return STORY_STYLE_NARRATIVE.get(normalize_story_style(value) or DEFAULT_STORY_STYLE, "narration")
 
 
 def story_style_mode_text(value, actor_checked: bool) -> str:
-    """生场视频窗口里「叙事风格」下面的蓝字说明。"""
-    key = normalize_story_style(value) or STORY_STYLE_CHOICES[0][0]
+    """生场视频窗口里「叙事风格」下面的蓝字说明（t258: 名字是中文名，和预览窗口的下拉一致）。"""
+    key = normalize_story_style(value) or DEFAULT_STORY_STYLE
+    label = _narration_modes.LABEL_OF[key]
     if key == "story_act":
-        return ("Story Act：人物在场景中只表演、不在画面上开口说话；story_content 是这场发生的事，"
-                "靠动作、表情、手势演出来。没有对白口型。如有自言自语（<Ns>），"
+        return (label + "：人物在场景中只表演、不在画面上开口说话；story_content 是这场发生的事，"
+                "靠动作、表情、手势演出来。没有对白口型。"
+                "有讲员：每一场都由讲员讲解（讲员有肖像 → 出镜讲解、主人公同时表演；没有肖像 → 只做背景画外音）；"
+                "没有讲员：全程没有人说话，只有表演和音效。"
+                "全程只有音效、没有音乐。如有自言自语（<Ns>），"
                 "只把本场「讲话」原文用该人物自己的声音说出（嘴巴不动），不是旁白员，也不念视觉描述。")
-    if key == "story_speak":
-        return ("Story Speak · " + narrative_mode_text("story", actor_checked)
+    if key in ("story_speak", "step_story"):
+        head = (label + "：两个人物互相对话，没有讲员、旁白或画外音。" if key == "step_story"
+                else label + " · " + narrative_mode_text("story", actor_checked))
+        return (head
                 + " 出场说话永远只来自本场「讲话」。视觉／说明只指导画面，绝不能念出来。"
                   " <N> 与 <Ns> 是同一个人（s 只表示自言自语，不是新角色）。"
                   "若这一场讲话只有一个说话回合且标记带 s（如 <1s>，可以有多句／换行），"
                   "则该人物用自己的声音把那句讲话原文说出来，嘴巴闭合、不对口型；不是旁白员，也不把视觉当旁白。")
-    if key == "podcast":
-        return "Podcast（讲述）：主持人讲述 · " + narrative_mode_text("narration", actor_checked)
-    if key == "counselor":
-        return "Counselor（讲述）：咨询师讲述 · " + narrative_mode_text("narration", actor_checked)
-    return narrative_mode_text(key, actor_checked)
+    return (label + "：讲员（主持人）和嘉宾（人物）围着故事谈，只谈不演，不扮演故事里的人；"
+            "画面配合他们谈的内容，画面里的故事人物无声表演。"
+            "讲员有肖像 → 讲员出镜；没有肖像 → 讲员只是画外音。"
+            " 出场说话永远只来自本场「讲话」。视觉／说明只指导画面，绝不能念出来。")
 
 
 def story_style_label(value) -> str:
-    key = normalize_story_style(value) or STORY_STYLE_CHOICES[0][0]
+    key = normalize_story_style(value) or DEFAULT_STORY_STYLE
     return dict(STORY_STYLE_CHOICES)[key]
 
 
@@ -3602,7 +3664,7 @@ def project_story_style() -> str:
             return last  # 项目里没存过：用上次选的
     except Exception:  # noqa: BLE001
         pass
-    return STORY_STYLE_CHOICES[0][0]
+    return DEFAULT_STORY_STYLE
 
 
 from utility.speaking_marks import (  # noqa: E402
@@ -4126,29 +4188,174 @@ def _speech_scene_flags(scenes, *, allow_story_content: bool = False) -> dict:
     }
 
 
-def _story_act_narrator_scene(scene) -> bool:
-    """t447u: 故事表演的讲员场：actor 只有讲员，有 speaking，没有 story_content。"""
-    if not isinstance(scene, dict):
-        return False
-    actor = str(scene.get("actor") or "")
-    return (
-        "讲员" in actor and "人物" not in actor
-        and bool(str(scene.get("speaking") or "").strip())
-        and not str(scene.get("story_content") or "").strip()
-    )
-
-
-def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
-                        host_narrator: str, use_speaking: bool) -> tuple:
-    """返回 (说明行, 内容字段名)。故事风格决定谁说话；叙事风格只管画面怎么表现（见 _video_form_line）。"""
+def _video_effective_mode(story_style: str, scenes: list) -> str:
+    """t258: 这一批场景实际按哪种叙事方式写提示词。场景本身是故事表演生成的（只有 story_content）就按故事表演；
+    其余按项目选的叙事方式。说话规则和表演规则都用这个，两条始终是同一个方式。"""
     import project_manager
 
     real = [s for s in scenes if isinstance(s, dict)]
+    if real and all(project_manager.scene_is_story_act(s) or str(s.get("story_content") or "").strip() for s in real):
+        return "story_act"  # t263: 故事表演的场景（有讲员时每一场也有 speaking）
+    return normalize_story_style(story_style) or DEFAULT_STORY_STYLE
+
+
+def _story_act_host_speech(scene) -> bool:
+    """t262: 这一场有没有讲员的话：speaking / voiceover 里有不是自言自语（<Ns>）的话。
+    故事表演里人物从不在镜头前说话，所以这样的话一定是讲员的（出镜讲解，或者背景画外音）。"""
+    if not isinstance(scene, dict):
+        return False
+    text = " ".join(p for p in (str(scene.get("speaking") or "").strip(), str(scene.get("voiceover") or "").strip()) if p)
+    return bool(text) and speaking_has_interactive_dialogue(text)
+
+
+def host_portrait_finder(avatar_dir: str = "", style: str | None = None):
+    """返回 find(row) → 这一行（讲员 / 人物）的肖像路径，没有返回 ""。和生成 actor.pdf 找肖像是同一个函数
+    （utility.content_pdf.actor_portrait_path）。讲员的肖像来自讲员库（按讲员的长相和画风），不需要项目的人物目录，
+    所以场景生成时就能查。"""
+    def _find(row: dict) -> str:
+        import project_manager
+        from utility.content_pdf import actor_portrait_path
+
+        body = project_manager.split_actor_motion(row.get("body") or "")[0]
+        return actor_portrait_path(row.get("role") or "person", body, avatar_dir, style) or ""
+    return _find
+
+
+def _host_rows_have_portrait(rows: list, find) -> bool:
+    """这些讲员行是不是都查得到肖像。一行也查不出来（没有行）→ False。查的时候出错：当作没有肖像（背景画外音），
+    并打出提示——这是唯一一条「查不了」的路，不会再写出三种情况。"""
+    states = []
+    for row in rows:
+        try:
+            states.append(bool(find(row)))
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 讲员肖像没查到，按没有肖像（画外音）处理：{exc}")
+            states.append(False)
+    return bool(states) and all(states)
+
+
+def video_host_portrait(scenes: list, get_portraits=None, style: str | None = None) -> bool:
+    """视频窗口：这批场景里的讲员有没有肖像。每个场景 actor 里的讲员都有肖像 → True；有一个没有 → False；
+    没有讲员 → False（用不到）。t263: 没有「不知道」。get_portraits(scene)（工作流的 get_actor_portraits，
+    返回 [(N, 名字, 路径), ...]，N = actor 里的第几个）能用就用它；不能用 / 出错就直接按讲员库查
+    （host_portrait_finder，和生成 actor.pdf 是同一个函数）。"""
+    states = []
+    find = host_portrait_finder("", style)
+    for sc in scenes or []:
+        if not isinstance(sc, dict):
+            continue
+        rows = _scene_speakers(sc)
+        hosts = [(n, row) for n, row in enumerate(rows, 1) if row.get("role") == "host"]
+        if not hosts:
+            continue
+        have = None
+        if callable(get_portraits):
+            try:
+                have = {int(n) for n, _name, _path in (get_portraits(sc) or [])}
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 场景肖像没查到，改按讲员库查：{exc}")
+        if have is not None:
+            states.extend(n in have for n, _row in hosts)
+        else:
+            states.append(_host_rows_have_portrait([row for _n, row in hosts], find))
+    return bool(states) and all(states)
+
+
+def program_host_case(actor_texts, find_portrait=None, style: str | None = None) -> str:
+    """节目生成 / 场景生成：这一批 actor 文字（场景的 actor，或人物栏名单）里讲员的真实情况（narration_modes.HOST_*）。
+    没有讲员 → none；有讲员且查得到肖像 → portrait；查不到 → voiceover。t263: 没有「any」：
+    不给 find_portrait 就用默认的 host_portrait_finder（按讲员库查，不需要项目目录）。"""
+    import project_manager
+
+    hosts = []
+    for text in actor_texts or []:
+        for row in project_manager.active_actor_entries(project_manager.actor_text_for_generation(text or "")):
+            if row.get("role") == "host":
+                hosts.append(row)
+    if not hosts:
+        return _narration_modes.HOST_NONE
+    find = find_portrait if callable(find_portrait) else host_portrait_finder("", style)
+    return _narration_modes.host_case(True, _host_rows_have_portrait(hosts, find))
+
+
+def _video_host_case(mode: str, scenes: list, host_portrait: bool | None = None, style: str | None = None) -> str:
+    """视频窗口里讲员的情况（narration_modes.HOST_*），完全由真实数据决定：场景 actor 里有没有讲员、讲员有没有肖像。
+    host_portrait 没给（None）就现查（video_host_portrait）。短故事没有讲员。
+    只有一种旧数据没有讲员行：旧的故事表演项目里讲员的话写在 speaking 里、actor 里没有讲员 → 背景画外音。"""
+    if mode == "step_story":
+        return _narration_modes.HOST_NONE
+    real = [s for s in scenes if isinstance(s, dict)]
+    if any(r.get("role") == "host" for s in real for r in _scene_speakers(s)):
+        if host_portrait is None:
+            host_portrait = video_host_portrait(real, None, style)
+        return _narration_modes.host_case(True, bool(host_portrait))
+    if mode == "story_act" and any(_story_act_host_speech(s) for s in real):
+        return _narration_modes.HOST_VOICEOVER
+    return _narration_modes.HOST_NONE
+
+
+def _scenes_without_host(scenes: list) -> list:
+    """t262: 讲员只是画外音（没有肖像）时，讲员不出镜：场景副本的 actor 里去掉讲员（只给提示词用，不改原数据）。"""
+    import project_manager
+
+    out = []
+    for sc in scenes:
+        rows = _scene_speakers(sc) if isinstance(sc, dict) else []
+        if any(r.get("role") == "host" for r in rows):
+            sc = dict(sc)
+            sc["actor"] = project_manager.format_actor_entries([r for r in rows if r.get("role") != "host"])
+        out.append(sc)
+    return out
+
+
+def _video_act_plan(story_style: str, cast: list, scenes: list, host_portrait=None, style: str | None = None) -> tuple:
+    """(实际叙事方式, 讲员情况, 出镜名单, 场景数据, 方向句用的场景)。
+    讲员只是画外音（没有肖像）时，讲员不出镜：不在出镜名单里，方向句里也没有他。
+    故事表演里画外音讲员的话在 narration 里，所以场景数据的 actor 里也去掉讲员；播客 / 故事对话里 <N> 是 actor
+    里的第几个人（位置不能动），所以场景数据保持原样，只靠规则说讲员不出镜。"""
+    mode = _video_effective_mode(story_style, scenes)
+    case = _video_host_case(mode, scenes, host_portrait, style)
+    if case == _narration_modes.HOST_VOICEOVER:
+        no_host = _scenes_without_host(scenes)
+        cast2 = [r for r in cast if r.get("role") != "host"]
+        return mode, case, cast2, (no_host if mode == "story_act" else scenes), no_host
+    return mode, case, cast, scenes, scenes
+
+
+def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: list,
+                        host_narrator: str, use_speaking: bool, host_case=None) -> tuple:
+    """返回 (说明行, 内容字段名)。叙事方式决定谁说话（规则原文来自共用表 narration_modes，和预览窗口、节目生成同一份）；
+    画面怎么表现见 _video_form_line。host_case = 故事表演里讲员的情况（_video_host_case）。"""
+    lines, key = _video_speech_rules_core(story_style, narrative, cast, scenes, host_narrator, use_speaking, host_case)
+    rule = _narration_modes.speaking_rule(_video_effective_mode(story_style, scenes), host_case)
+    if key and rule:
+        lines = [rule] + list(lines)
+    return lines, key
+
+
+def _video_speech_rules_core(story_style: str, narrative: str, cast: list, scenes: list,
+                             host_narrator: str, use_speaking: bool, host_case=None) -> tuple:
+    """t258: 原来的 _video_speech_rules 去掉每个方式自己写的那一段说明（现在由共用表给）；
+    这里只管具体句子怎么念：口型、自言自语、谁的声音。"""
+    import project_manager
+
+    if story_style == "step_story":
+        story_style = "story_speak"  # 短故事 = 没有讲员的故事对话：下面的逻辑一样，只是没有讲员
+    real = [s for s in scenes if isinstance(s, dict)]
     if real and all(project_manager.scene_is_story_act(s) for s in real):
         story_style = "story_act"  # 场景本身是 Story Act 生成的（只有 story_content）
-    elif story_style == "story_act" and real and all(_story_act_narrator_scene(s) for s in real):
-        # t447u: 故事表演里的讲员场（开场 / 背景 / 衔接 / 结尾）：只有讲员、有 speaking，讲员照常说话
-        story_style = "counselor"
+    elif _video_effective_mode(story_style, scenes) == "story_act" and use_speaking \
+            and any(_story_act_host_speech(s) for s in real):
+        # t263: 故事表演里有讲员：每一场的讲员的话（讲解）照常说，人物不说话。没有「叙述场景」。
+        if host_case != _narration_modes.HOST_PORTRAIT:
+            # 没有肖像：只是背景画外音，不出镜、不对口型，人物无声表演
+            voice = narrator_voice_phrase(host_narrator) or "one narrator voice"
+            return [
+                f"Speech: ``narration`` is one off-screen voice-over of the 讲员 ({voice}). Do not show a narrator or "
+                "host. Nobody in the picture speaks or moves their lips; the 人物 act silently. ``story_content`` and "
+                "``visual`` are never said aloud."
+            ], "narration"
+        story_style = "story_act_host"  # 有肖像：讲员出镜、只对自己的话口型，走下面的逐句台词（人物没有话）
     if story_style == "story_act":
         has_content = any(
             str(s.get("story_content") or s.get("speaking") or s.get("voiceover") or "").strip() for s in real
@@ -4156,12 +4363,7 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
         if not use_speaking or not has_content:
             return ["Speech: nobody speaks in this clip. No narration, no dialogue, no lip-sync."], ""
         flags = _speech_scene_flags(real, allow_story_content=True)
-        lines = [
-            "Story style STORY ACT: ``story_content`` is what happens in this scene. The people act it out "
-            "through action, behavior, facial expression, and gesture, so the picture itself tells it. "
-            "They do not speak on camera: no mouth speaking motion and no lip-sync.",
-            SPOKEN_SOURCE_RULE,
-        ]
+        lines = [SPOKEN_SOURCE_RULE]
         if flags["any_mono"]:
             lines.append(SPEAKER_MARK_IDENTITY_RULE)
             if flags["single"]:
@@ -4275,58 +4477,7 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
         )
         if flags["any_mono"]:
             lines.append(H3_MONOLOGUE_NO_LIPSYNC_RULE)
-    if story_style == "podcast":
-        lines.append(
-            "Story style PODCAST: the people in ``actor`` are the podcast speakers"
-            + (" (the 讲员 is the host" + (", the 人物 are guests)" if people else ")") if hosts
-               else " (the first 人物 is the host, the others are guests)")
-            + ". They talk ABOUT the story; they never act it out. A speaker visible in the picture talks on camera; "
-            "a speaker not in the picture is heard as voice-over. People of the story shown in the picture act silently: "
-            "no lines, no lip-sync."
-        )
-    elif story_style == "counselor":
-        if hosts:
-            lines.append(
-                "Story style COUNSELOR: the 讲员 is the counselor, on camera, speaking as a third person "
-                "(background, what is going on, the remedy). The 人物 are actors living the story, not guests: "
-                "they speak their own lines to each other, act, and show emotion. The 讲员 may speak to them and they may "
-                "answer, but they stay inside the life, never a studio discussion."
-            )
-        else:
-            lines.append(
-                "Story style COUNSELOR without an on-screen counselor: the 人物 are actors living the story; "
-                "they speak their own lines to each other, act, and show emotion."
-            )
-    else:  # story_speak
-        if hosts and not people:
-            lines.append(
-                "Story style STORY SPEAK, narrator beat: the 讲员 is the narrator, on camera, giving a brief introduction, "
-                "transition, or closing. Do not act the story out here."
-            )
-        else:
-            if flags["single"]:
-                extra = (" The 讲员 stays apart and never takes over the scene." if hosts else
-                         " No separate narrator; the heard voice is this same actor delivering the exact speaking line.")
-                lines.append(
-                    "Story style STORY SPEAK: a dramatized moment like a film or TV drama. The single self-talk turn "
-                    "is the 人物 delivering the exact speaking text with the mouth closed and no lip-sync "
-                    "(off-mouth delivery, not narration of actions or setting)."
-                    + extra
-                )
-            else:
-                extra = (" The 讲员 stays apart, speaks only the lines marked for them, and never takes over the scene."
-                         if hosts else
-                         (" No separate narrator; self-talk is that same actor delivering those exact speaking words "
-                          "off-mouth, not picture narration."
-                          if flags["any_mono"] else " No narrator, no voice-over."))
-                lines.append(
-                    "Story style STORY SPEAK: a dramatized moment like a film or TV drama. ``speaking`` is the 人物's dialogue: "
-                    "they say these lines aloud to each other, in the scene, as the people of the story. Their actions, faces, "
-                    "and the picture help express what is being said."
-                    + extra
-                )
-    if narrative in TELLING_NARRATIVES and story_style != "podcast" and people:
-        lines.append("Even in this telling style, the 人物's lines are their own spoken lines, not narration.")
+    # t258: 每个叙事方式的说话规则不在这里写，由 _video_speech_rules 从共用表放在最前面。
     # 声音：只写用到的位置
     if dialogue:
         lines = [ln.replace("``speaking``", "``dialogue``") for ln in lines]
@@ -4353,8 +4504,13 @@ def _video_speech_rules(story_style: str, narrative: str, cast: list, scenes: li
     return lines, "speaking"
 
 
-def _video_form_line(narrative: str) -> str:
-    """叙事风格：只说画面怎么表现，不涉及谁说话（谁说话由故事风格决定）。"""
+def _video_form_line(narrative: str, mode: str = "", host_case=None) -> str:
+    """叙事方式的「表演」规则：人物怎么演、画面怎么表现（不涉及谁说话）。
+    t258: 给了叙事方式（mode）就用共用表里的表演规则原文，和预览窗口、节目生成同一份；没给才按叙事形式写。
+    t262: host_case = 故事表演里讲员的情况。"""
+    rule = _narration_modes.performance_rule(mode, host_case) if narrative in ("story", "narration") else ""
+    if rule:
+        return rule
     return {
         "story": "Form: the people act the moment out; faces, gestures, and what passes between them carry it.",
         "narration": "Form: telling. The place, objects, symbols, and composition carry the content; people, if any, support it.",
@@ -6249,7 +6405,7 @@ def _video_prompt_assemble(*, head_label: str, style: str, choices: str, instruc
 
 
 def _video_payload(scenes: list, *, variant: str, host_narrator: str, use_visual: bool,
-                   use_speaking: bool, cast: list, content_key: str) -> list:
+                   use_speaking: bool, cast: list, content_key: str, with_act: bool = False) -> list:
     raw = scene_payload_for_notebooklm_export(scenes, "video", variant, narrator=host_narrator, use_visual=use_visual)
     src = [s for s in (scenes or []) if isinstance(s, dict)]
     out: list = []
@@ -6283,11 +6439,18 @@ def _video_payload(scenes: list, *, variant: str, host_narrator: str, use_visual
                 combined = _strip_speech_marks(" ".join(p for p in (speaking, voiceover) if p))
                 if combined:
                     slim["narration"] = combined
+                act = str(orig.get("story_content") or "").strip()  # t262: 故事表演：画外音的同时人物演的事
+                if act and with_act:
+                    slim["story_content"] = act
             else:
                 if voiceover and "<2>" not in speaking:
                     speaking = (speaking + " <2> " + voiceover).strip()
                 if speaking:
                     slim["speaking"] = speaking
+            if with_act and content_key in ("dialogue", "speaking") and "story_content" not in slim:
+                act = str(orig.get("story_content") or "").strip()  # t263: 故事表演：讲员讲解的同时人物演的事
+                if act:
+                    slim["story_content"] = act
         out.append(slim)
     return out
 
@@ -6363,10 +6526,13 @@ def build_video_flow_prompt(
     actor_override: str = "",
     story_style: str | None = None,
     speaking_as_story: bool = False,
+    host_portrait: bool | None = None,
 ) -> str:
     """生场视频提示词。每一点只写一次：画面 / 风格、表现形式（叙事风格）、谁说话（故事风格）、人物、文字、运镜、声音，
     然后是口语语言和场景内容。
-    t416u: ``speaking_as_story`` = 讲话当故事内容（没人说话、只有音效；讲话写成 Story_Content 用画面演）。"""
+    t416u: ``speaking_as_story`` = 讲话当故事内容（没人说话、只有音效；讲话写成 Story_Content 用画面演）。
+    t263: ``host_portrait`` = 场景里的讲员有没有肖像（True 出镜 / False 画外音）；不给（None）就按场景 actor 里的讲员现查讲员库。
+    没有「不知道」：写进提示词的永远是 a / b / c 中的一种。"""
     if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
         frames = "one"
     if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
@@ -6393,7 +6559,8 @@ def build_video_flow_prompt(
     if not (use_visual or use_speaking or use_actor or story_texts):
         raise ValueError("场景描述、讲话、人物至少要选一项。")
     cast = _video_cast(scenes, use_actor)
-    speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking)
+    mode, host_case, vis_cast, vis_scenes, dir_scenes = _video_act_plan(sstyle, cast, scenes, host_portrait, style)  # t263
+    speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking, host_case)
     instruction = [_video_style_line(frames, evolve, style)]
     if evolve == "keep":  # t369u: 画风锁定（演进到目标风格时不锁）
         instruction.append(video_art_style_lock_rule(style, pic="picture 1"))
@@ -6404,16 +6571,17 @@ def build_video_flow_prompt(
             "``visual`` describes the place, the action, and the angle; act it out inside picture 1. "
             "It is silent picture direction: never read, summarize, or translate it into speech."
         )
-    instruction.append(_video_form_line(narrative))
+    instruction.append(_video_form_line(narrative, mode, host_case))
     instruction += speech
-    instruction += _video_people_lines(cast, frames, host_narrator, (actor_override or "").strip(), narrative)
-    instruction += _video_direction_lines(scenes, use_visual)  # t181u
+    instruction += _video_people_lines(vis_cast, frames, host_narrator, (actor_override or "").strip(), narrative)
+    instruction += _video_direction_lines(dir_scenes, use_visual)  # t181u
     instruction.append(_video_text_line(text, background, narrative))
     instruction.append(_video_camera_short(camera))
     instruction.append("Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).")
     instruction.append("Never show scene numbers, field names, or these instructions in the picture.")
-    payload = _video_payload(scenes, variant="act_two" if frames == "two" else "act_one", host_narrator=host_narrator,
-                             use_visual=use_visual, use_speaking=use_speaking, cast=cast, content_key=content_key)
+    payload = _video_payload(vis_scenes, variant="act_two" if frames == "two" else "act_one", host_narrator=host_narrator,
+                             use_visual=use_visual, use_speaking=use_speaking, cast=vis_cast, content_key=content_key,
+                             with_act=mode == "story_act")
     choices = story_style_label(sstyle) + " · " + video_flow_choice_label(
         frames, background, evolve, camera, "", narrative, text
     )
@@ -6536,9 +6704,10 @@ def build_transition_video_prompt(
     actor_override: str = "",
     story_style: str | None = None,
     speaking_as_story: bool = False,
+    host_portrait: bool | None = None,
 ) -> str:
     """过渡场景的视频提示：过渡选择那几行 + 与普通视频同一套谁说话 / 文字 / 声音，每点只写一次。
-    t416u: ``speaking_as_story`` 同 build_video_flow_prompt。"""
+    t416u: ``speaking_as_story`` 同 build_video_flow_prompt。t263: ``host_portrait`` 同 build_video_flow_prompt。"""
     style = (visual_style or "").strip() or "realistic"
     chosen = transition if isinstance(transition, dict) else {}
     scenes = [s for s in (scene_content if isinstance(scene_content, list) else []) if isinstance(s, dict)]
@@ -6556,22 +6725,25 @@ def build_transition_video_prompt(
         text = "erase"
     sstyle = normalize_story_style(story_style) or project_story_style()
     cast = _video_cast(scenes, use_actor)
+    mode, host_case, vis_cast, vis_scenes, dir_scenes = _video_act_plan(sstyle, cast, scenes, host_portrait, style)  # t263
     silent = str(chosen.get("对白") or "").strip() in ("不说话", "小动作", "场景烘托")
-    speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking and not silent)
+    speech, content_key = _video_speech_rules(sstyle, narrative, cast, scenes, host_narrator, use_speaking and not silent,
+                                              host_case)
     trans = [ln.lstrip("* ").strip() for ln in _transition_video_instruction(chosen, style).splitlines()]
     trans = [ln for ln in trans if ln and "No music in this clip" not in ln and "Music for the finished film" not in ln]
     instruction = trans + [video_art_style_lock_rule(style, pic="picture 1 and picture 2"),  # t369u
-                           _video_form_line(narrative)]
+                           _video_form_line(narrative, mode, host_case)]
     if not silent:
         instruction += speech
-    instruction += _video_people_lines(cast, "two", host_narrator, (actor_override or "").strip(), narrative)
-    instruction += _video_direction_lines(scenes, use_visual)  # t181u
+    instruction += _video_people_lines(vis_cast, "two", host_narrator, (actor_override or "").strip(), narrative)
+    instruction += _video_direction_lines(dir_scenes, use_visual)  # t181u
     instruction.append(_video_text_line(text, "none", narrative))
     if str(chosen.get("对白") or "").strip() != "不说话":
         instruction.append("Sound: natural sound of the place only. No music of any kind (music is added to the whole film later).")
     instruction.append("Never show scene numbers, field names, or these instructions in the picture.")
-    payload = _video_payload(scenes, variant="act_two", host_narrator=host_narrator, use_visual=use_visual,
-                             use_speaking=use_speaking and not silent, cast=cast, content_key=content_key)
+    payload = _video_payload(vis_scenes, variant="act_two", host_narrator=host_narrator, use_visual=use_visual,
+                             use_speaking=use_speaking and not silent, cast=vis_cast, content_key=content_key,
+                             with_act=mode == "story_act")
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     caption_label = dict(FLOW_CAPTION_CHOICES).get(text, text)
     choices = f"{story_style_label(sstyle)} · {narrative_label} · {caption_label} · 过渡 · 起始画面到终止画面"

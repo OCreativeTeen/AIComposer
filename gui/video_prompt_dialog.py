@@ -144,7 +144,7 @@ def ask_video_submit_confirm(
     story_pairs = list(config_prompt.STORY_STYLE_CHOICES or [])
     story_lab_to_key = {lab: key for key, lab in story_pairs}
     story_key_to_lab = {key: lab for key, lab in story_pairs}
-    st0 = config_prompt.normalize_story_style(init.get("story_style")) or (story_pairs[0][0] if story_pairs else "")
+    st0 = config_prompt.normalize_story_style(init.get("story_style")) or config_prompt.DEFAULT_STORY_STYLE
     story_label_var = tk.StringVar(master=box, value=story_key_to_lab.get(st0, st0))
     _row(
         2,
@@ -412,7 +412,7 @@ def open_video_prompt_dialog(
     style_note = ttk.Label(narrative_row, foreground="#1f5fbf", wraplength=300, justify=tk.LEFT)
 
     def _on_style(*_a) -> None:
-        key = config_prompt.normalize_story_style(style_var.get()) or config_prompt.STORY_STYLE_CHOICES[0][0]
+        key = config_prompt.normalize_story_style(style_var.get()) or config_prompt.DEFAULT_STORY_STYLE
         narrative_var.set(config_prompt.story_style_narrative(key))
         style_note.config(text=config_prompt.story_style_mode_text(key, bool(actor_var.get())))
         if on_story_style is not None:
@@ -655,6 +655,9 @@ def open_video_prompt_dialog(
             actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(
                 override_var.get(), ""
             ),
+            # t263: 场景里的讲员有没有肖像（有 → 出镜；没有 → 画外音）。按场景 actor 里的真实讲员查，
+            # 不看有没有勾「人物」，也没有「不知道」：规则里永远是 a / b / c 中的一种。
+            host_portrait=config_prompt.video_host_portrait(scenes, get_actor_portraits, style),
         )
         try:
             if fyi_only:

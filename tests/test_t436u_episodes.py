@@ -52,12 +52,12 @@ class BlockTest(unittest.TestCase):
 
 class ResolveTest(unittest.TestCase):
     def _series_label(self):
-        return "Series · Counselor"
+        return "故事表演"  # t262: 主持人节目已并入故事表演（旧的 Series · Counselor 也读作它）
 
     def test_series_label(self):
         lbl = self._series_label()
         self.assertTrue(cc.is_series_label(lbl))
-        t = cc.COUNSELING_SERIES_COUNSELOR_FRAME
+        t = cc.COUNSELING_SERIES_STORY_ACT
         one = cc.resolve_dynamic_scene_template(lbl, t, {"episodes": 1, "episode": 1})
         self.assertIn("ONE EPISODE", one)
         three = cc.resolve_dynamic_scene_template(lbl, t, {"episodes": 3, "episode": 2})

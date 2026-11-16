@@ -227,6 +227,7 @@ def open_slide_prompt_dialog(
     program_mode=None,
     story_style=None,
     get_fyi=None,
+    get_host_case=None,
 ) -> None:
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
@@ -245,8 +246,10 @@ def open_slide_prompt_dialog(
     「注意 / FYI」（节目生成窗里标题是「内容主题」）：用户临时补充的短说明，勾上才放在提示词最前面；
     历史存在 ``saved_choice['fyi_history']``。内容主题会另外写进 NotebookLM 自定义框，不勾也送。
 
-    t448u（节目生成）：给了 ``program_mode``（主窗口场景生成方式：短故事 / 播客 / 主持人节目 / 故事对话 / 故事表演）
-    就不显示任何风格单选，只读显示这个方式，叙事方式由它决定（``story_style`` 是主窗口不是这五种时的后备）。
+    t448u（节目生成）：给了 ``program_mode``（主窗口场景生成方式：短故事 / 播客 / 故事对话 / 故事表演）
+    就不显示任何风格单选，只读显示这个方式，叙事方式由它决定（``story_style`` 是主窗口不是这四种时的后备）。
+    t262: 谁说话、人物怎么演的规则是 utility/narration_modes 的原文（和场景生成、视频生成同一份）；故事表演里讲员的情况
+    （有肖像出镜 / 没肖像画外音 / 没有讲员）由 ``get_host_case(source, scenes)`` 按真实 actor 和肖像查出来。
     给了 ``get_fyi() -> (文字, 勾不勾)`` 就用 STORY 窗的内容主题 / FYI，这里不再单独放一栏。
     """
     story_mode = get_analysis is not None
@@ -305,6 +308,17 @@ def open_slide_prompt_dialog(
         narrative_var.set(_mode_narr)
     else:
         _narr_box, narr_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
+    program_key = _mode_key if program_mode is not None else ""  # t262: 节目生成的方式（短故事 / 播客 / 故事对话 / 故事表演）
+
+    def _program_host_case(source: str = "panel", scenes=None):
+        if program_mode is None or not callable(get_host_case):
+            return None
+        try:
+            return get_host_case(source, scenes or [])
+        except Exception as exc:  # noqa: BLE001
+            print(f"节目生成：讲员情况没查到：{exc}")
+            return None
+
     narr_note = ttk.Label(_narr_box, text="", foreground="#1f5fbf", wraplength=340, justify=tk.LEFT)
     narr_note.pack(anchor=tk.W, pady=(4, 0))
 
@@ -688,7 +702,7 @@ def open_slide_prompt_dialog(
             material_pdf=material_pdf,
             fyi_text=get_fyi_text(),
             fyi_include=bool(fyi_include_var.get()),
-            cast_block=_safe_cast_block(get_cast_block, output_var.get()),
+            cast_block=_safe_cast_block(get_cast_block, output_var.get(), "panel", _program_host_case("panel")),
         )
         prompt = _with_text_lock(prompt, output_var.get(), style, text_var.get(), region, era,
                                  bool(bg_include_var.get()))  # t428u
@@ -732,7 +746,7 @@ def open_slide_prompt_dialog(
             output=output_var.get(), text=text_var.get(), style=style, region=region, era=era,
             host_narrator=host_narrator or "", background=bool(bg_include_var.get()), material_pdf="",
             fyi_text=get_fyi_text(), fyi_include=bool(fyi_include_var.get()),
-            cast_block=_safe_cast_block(get_cast_block, output_var.get(), "panel"),
+            cast_block=_safe_cast_block(get_cast_block, output_var.get(), "panel", _program_host_case("panel")),
             source_kind="material",
         )
         if output_var.get() == "infographic":
@@ -827,13 +841,14 @@ def open_slide_prompt_dialog(
                 actor_source=ACTOR_PDF_NAME,
                 content_images=bool(image_var.get()) and scenes_have_images(scenes),
                 episodes=scene_groups,
+                mode=program_key,  # t262: 节目生成按方式写
             )
         except ValueError as exc:
             messagebox.showerror("全集生成", str(exc), parent=dlg)
             return
         # 人物：勾了人物且场景里有 actor → 以场景为准；否则以预览窗人物面板为准。都带场景生成方案的出镜规则。
         cast_src = "scenes" if (actor_var.get() and config_prompt.episode_actor_cast(scenes)) else "panel"
-        cast_block = _safe_cast_block(get_cast_block, output_var.get(), cast_src)
+        cast_block = _safe_cast_block(get_cast_block, output_var.get(), cast_src, _program_host_case(cast_src, scenes))
         if cast_block.strip():
             prompt = cast_block.strip() + "\n\n---\n\n" + (prompt or "").strip()
         prompt = config_prompt.prepend_background_condition(
@@ -1088,14 +1103,17 @@ def _with_text_lock(prompt: str, output: str, style: str, text: str, region: str
         0, style, region=region if bg_on else "", era=era if bg_on else "", text=text))
 
 
-def _safe_cast_block(get_cast_block, output: str, source: str = "panel") -> str:
+def _safe_cast_block(get_cast_block, output: str, source: str = "panel", host_case=None) -> str:
     if not callable(get_cast_block):
         return ""
     try:
         try:
-            return get_cast_block(output, source) or ""
+            return get_cast_block(output, source, host_case) or ""
         except TypeError:
-            return get_cast_block(output) or ""
+            try:
+                return get_cast_block(output, source) or ""
+            except TypeError:
+                return get_cast_block(output) or ""
     except Exception as exc:  # noqa: BLE001
         print(f"生成节目:人物段失败:{exc}")
         return ""

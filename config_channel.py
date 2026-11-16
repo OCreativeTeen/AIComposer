@@ -1009,14 +1009,13 @@ Output format:
 # 动态场景模板：Step Story（步数可选）与「直接生成系列节目」（第 k 集 / 共 N 集）
 # 下拉里只放一个 label；真正的模板在生成提示词时按参数现拼。
 # ---------------------------------------------------------------------------
-STEP_STORY_LABEL = "短故事"  # t447u: 旧名 Step Story
-# t447u: 场景生成的四种节目方式（中文名；内部存值 podcast / counselor / story_speak / story_act 不变）
-SERIES_STYLE_LABELS = {
-    "podcast": "播客",
-    "counselor": "主持人节目",
-    "story_speak": "故事对话",
-    "story_act": "故事表演",
-}
+# t258: 叙事方式（短故事 / 播客 / 故事对话 / 故事表演）的名字和规则文字来自共用表 utility/narration_modes.py，
+# 预览窗口（这里的场景生成提示词）和魔法工作流「生场视频」窗口用同一份。
+from utility import narration_modes as _narration_modes  # noqa: E402
+
+STEP_STORY_LABEL = _narration_modes.LABEL_OF["step_story"]  # t447u: 旧名 Step Story；t258: 名字来自共用表
+# t447u: 场景生成的三种节目方式（中文名；内部存值 podcast / story_speak / story_act 不变；t262: 主持人节目已并入故事表演）
+SERIES_STYLE_LABELS = {k: lbl for k, lbl in _narration_modes.MODES if k != "step_story"}
 STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 4  # t205u: 默认 4 步
 STEP_IMAGE_LABEL = "图片分解 (Step Image)"
 SCENE_SUMMARY_IMAGE_LABEL = "场景总图 (Scene Summary Image)"
@@ -1219,7 +1218,7 @@ def canonical_prompt_label(label: str) -> str:
     """t447u: 存过的 / CLI 传来的旧 label → 现在的中文 label（其它原样）。
 
     "Step Story"、"Short Story"、"N Step Story" → 短故事；"Series · Podcast" / "Series . Podcast"（两种点号）→ 播客；
-    Counselor → 主持人节目；Story Speak / Story Only → 故事对话；Story Act → 故事表演。"""
+    Story Speak / Story Only → 故事对话；Story Act / Counselor / 主持人节目 → 故事表演（t262: 主持人节目已并入故事表演）。"""
     raw = (label or "").strip()
     if not raw:
         return ""
@@ -1230,15 +1229,15 @@ def canonical_prompt_label(label: str) -> str:
         return STEP_STORY_LABEL
     if low.startswith("series") and not is_series_direct_label(raw):
         rest = low[len("series"):].lstrip(" .")
-        for key, words in (("podcast", ("podcast",)), ("counselor", ("counselor",)),
-                           ("story_act", ("story act",)), ("story_speak", ("story speak", "story only"))):
+        for key, words in (("podcast", ("podcast",)),
+                           ("story_act", ("story act", "counselor")), ("story_speak", ("story speak", "story only"))):
             if rest in words:
                 return SERIES_STYLE_LABELS[key]
     return raw
 
 
 def series_style_key(label: str) -> str:
-    """label（新旧都认）→ podcast / counselor / story_speak / story_act；不是这四种返回 ""。"""
+    """label（新旧都认）→ podcast / story_speak / story_act；不是这三种返回 ""。旧的主持人节目 / Counselor 读作 story_act。"""
     want = canonical_prompt_label(label)
     for key, lbl in SERIES_STYLE_LABELS.items():
         if want == lbl:
@@ -1254,9 +1253,31 @@ def is_series_direct_label(label: str) -> bool:
     return (label or "").strip() == SERIES_DIRECT_LABEL
 
 
+def scene_template_host_case(params: dict | None = None) -> str:
+    """场景生成里讲员的情况（portrait / voiceover / none）。取自 params["host_case"]，
+    由人物栏里真实的讲员 + 他的肖像算出（prompts_notebooklm.scene_host_case）；没有就当没有讲员。"""
+    case = (params or {}).get("host_case")
+    return case if case in _narration_modes.HOST_CASES else _narration_modes.HOST_NONE
+
+
 def resolve_dynamic_scene_template(label: str, template: str, params: dict | None = None) -> str:
-    """按下拉 label + 参数（steps / episode / episodes）现拼模板；其它 label 原样返回。"""
+    """按下拉 label + 参数（steps / episode / episodes / host_case）现拼模板；其它 label 原样返回。
+    t263: 播客 / 故事对话 / 故事表演 / 短故事的说话和表演规则在这里按讲员的真实情况（host_case）拼进去。"""
     params = params or {}
+    out = _resolve_dynamic_scene_template(label, template, params)
+    host = scene_template_host_case(params)
+    key = series_style_key(label)
+    if key == "story_act" and template in STORY_ACT_TEMPLATES.values():
+        # 故事表演：三种讲员情况各有一份模板（没有「叙述场景」：有讲员就每一场都讲解）
+        out = _resolve_dynamic_scene_template(label, STORY_ACT_TEMPLATES[host], params)
+    if key:
+        return _narration_modes.with_rules_block(out, key, host)
+    if is_step_story_label(label) and _STEP_STORY_CORES.get(template) is COUNSELING_STORY_CORE:
+        return _narration_modes.with_rules_block(out, "step_story", host)
+    return out
+
+
+def _resolve_dynamic_scene_template(label: str, template: str, params: dict) -> str:
     if is_step_story_label(label):
         core = _STEP_STORY_CORES.get(template)
         if core:
@@ -1277,7 +1298,7 @@ def resolve_dynamic_scene_template(label: str, template: str, params: dict | Non
 
 
 def is_series_label(label: str) -> bool:
-    """四种节目方式（播客 / 主持人节目 / 故事对话 / 故事表演；旧的 Series · … 写法也算）。t447u: 按存值判断，不看前缀。"""
+    """三种节目方式（播客 / 故事对话 / 故事表演；旧的 Series · … 写法和主持人节目也算）。t447u: 按存值判断，不看前缀。"""
     return bool(series_style_key(label))
 
 
@@ -1528,6 +1549,8 @@ INPUT
     {content}
 """
 
+# t263: 短故事的说话 / 表演规则 = 共用表里的原文，在 resolve_dynamic_scene_template 里按人物栏现拼进去（不再写死在模板里）。
+
 COUNSELING_STORY_2STEP = build_step_story(COUNSELING_STORY_CORE, 2)
 COUNSELING_STORY_3STEP = build_step_story(COUNSELING_STORY_CORE, 3)
 COUNSELING_STORY_4STEP = build_step_story(COUNSELING_STORY_CORE, 4)
@@ -1538,99 +1561,7 @@ COUNSELING_STORY_SHORT = build_step_story(COUNSELING_STORY_CORE, 1)
 
 
 
-COUNSELING_SERIES_COUNSELOR_FRAME = """
-*** ROLE: Senior Psychological Counselor, one finished program about ONE psychological problem
-    ** Read the analysis first and choose ONE path. Do not mix the paths.
-    ** PATH A — the analysis is one life, one relationship, one timeline.
-    ** PATH B — the analysis holds two or more distinct situations (different people, or clearly separate cases). Do not collapse those into one couple.
-    ** In both paths the audience must see the life in full before any remedy. The remedy is the most important part of the program and must be detailed. It is never one slogan scene.
-
-*** CAST CHOSEN BY THE USER (this decides who appears and who speaks; it overrides any other wording about the 讲员 or guests below)
-    {cast}
-    ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
-    ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
-    ** PER-SCENE BEHAVIOR. In ``actor``, after every person's id, add one pair of parentheses saying what THIS person does in THIS scene: emotion, action, how they speak, enter, or leave. Example: ``讲员:<look>(平静,面向镜头)`` or ``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. The parentheses are not part of the id; the picture is chosen from the id before them. Every visible person has them, and they must match ``visual``.
-    ** If the CAST says "No cast was chosen", follow the older host wording below as before.
-    ** WHO IS WHO, decided only by the CAST:
-        * CAST is EMPTY: nobody is on screen as a speaker. Every counselor beat is a default narrator voice-over (``<1>``, ``actor`` ""), exactly like a podcast voice-over. Story scenes still show the life, the people acting silently in the visual.
-        * The 讲员 is the counselor and the protagonist of the program. Every counselor beat (naming the problem, background, transitions, unpacking, remedy) is the 讲员. Only one 讲员. Do not invent another age, gender, or face.
-        * The 人物 are ACTORS in the story, not guests. They act the life silently, inside the place where it happens: actions, behavior, facial expression, gesture, visible emotion. They NEVER speak: no lines, no dialogue, no exclamations, no lip-sync. Only the 讲员 speaks in this program.
-        * No 讲员 but 人物 listed: there is no on-screen counselor. Counselor beats become voice-over scenes: ``actor`` is "", the counselor narration is ``<1>``, and the visual shows the life silently. The 人物 still act the story in the story scenes.
-
-*** SHARED RULES
-    ** visual is a film-still with no words on the image. Also the place, how the people act on each other, and a cut or another angle when the picture should move.
-    ** THIS IS A SWITCH, NOT A PODCAST. A podcast stays in one conversation about someone else's life and nobody performs it. Here the picture changes job.
-    ** Counselor beat: the 讲员 speaks as a third person, giving the background of this story, this scene, or what the audience is about to see. On a beat that is only the 讲员, ``actor`` is exactly ``讲员：<look>``. No 人物.
-    ** Then switch into the life. The 人物 are in that place, performing it silently: what they do, how they move toward or away from each other, their faces and hands. They are acting this life, not discussing it from outside. The 讲员's speaking tells what we are watching.
-    ** The 讲员 may stand in that same scene and speak to the audience about them. The 人物 never answer and never speak; they keep performing the life, not sitting as guests.
-    ** Then it may switch back. The 讲员 narrates again. A performance scene is still the life being acted, even when the 讲员 is in it. Do not turn that scene into a studio discussion about those people.
-    ** List everyone visible, at most four people in all, the 讲员 included, using the CAST looks. There is no voiceover field. ``speaking`` holds every line, marked with ``<N>`` for that person's place in actor. Only the first three people listed may speak. If the 讲员 is presenting, 讲员 is position 1.
-    ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
-    ** No DSM labels. No "the lesson is". Do not say 根, 根儿, or 病根 in caption or speaking. Name the problem in ordinary professional language.
-    ** Do not solve a life inside the story scenes. Do not skip from the first quarrel to the ending in one scene.
-    ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it.
-    ** When the remedy returns to those people, echo that opening moment: a similar situation, a different response, so the change is visible. One small step, not a cured life.
-
-*** PATH A — one complete story
-    ** 1. Counselor, 1 scene, to camera. Name the problem: what it is, where it shows up, why it matters. Do not open in someone's kitchen. Do not preview the ending.
-    ** 2. Story, 5 to 8 consecutive scenes. SAME people, ONE timeline.
-        * How this life was, then how the problem is lived in detail (what is said, avoided, repeated, what it costs), until they are stuck.
-        * If two people share this life, most of these scenes show the two of them. They do not speak. The 讲员's speaking tells what they are doing. Their actions are in visual and in the parentheses.
-    ** 3. Remedy, after the story is finished. Several scenes, not one.
-        * First 2 to 3 counselor scenes: take the problem apart in order (how it starts, what keeps it going, what it costs), then the response, step by step.
-        * Then 2 to 3 scenes with the SAME people, later: one concrete step per scene, shown in the room, not announced as a list.
-    ** No episode titles. No second case.
-
-*** PATH B — several cases of the same problem
-    ** Each case is one episode that can be played alone: it has a counselor opening and a counselor closing. The remedy is NOT inside the episode. It comes only after every case.
-    ** Between two episodes the counselor speaks TWO scenes in a row. Together they are one continuous turn of speech, so a viewer who watches straight through hears one passage. A cut between those two scenes is allowed: the first scene is a possible end of the episode, the second is a possible start of the next. Do not put a title card, a "previously", or a hard stop in the words. The second scene should sound like the next sentence, not a new program.
-    ** For EACH situation, in the analysis's order. Different people. Do not reuse the same spouse, home, and argument.
-        * Open — 1 counselor scene. Caption "第N集 · ".
-            * Episode 1: name the shared problem, then the first way it usually shows up, and enter this life. No remedy.
-            * Later episodes: pick up the question left by the previous closing scene. Say that the same problem often shows up in another way (a second face, a third face), and enter THIS life. No remedy. No recap of the previous plot.
-        * Story — 4 to 7 consecutive scenes. This case only, from how the life was, through the problem in detail, to where they are stuck. If it is a couple, most of these scenes show the two of them performing. They do not speak. The 讲员 tells it.
-        * Close — 1 counselor scene. Still this episode. Caption "第N集 · 承接".
-            * Not a summary of the plot and not an answer. Hold what the audience just saw, turn it into a question, and point toward the problem underneath. Leave them thinking. Do not name a method. Do not say "next episode".
-            * If another case follows, the last sentence should be able to lead into that case's opening scene without a break in thought.
-            * If this is the last case, the question stays open for the remedy block. Do not start the remedy here.
-    ** Only after EVERY case has been told: the remedy block. Caption these "方案 · ", not "第N集". Multiple scenes. This is the detailed answer.
-        * First 2 to 3 counselor scenes: take the shared problem apart (how it starts, what keeps it going, what it costs) across the cases just watched.
-        * Then each response in its own short run. Say which cases it fits. One response may fit only the second and third. Another may fit the first as well, or all of them. Do not cover every life with one sentence.
-        * When a response is shown inside a life, use 2 to 3 scenes with THOSE people, one step per scene.
-        * End with 1 counselor scene: the conclusion. Do not retell the plots. Do not open a new case.
-
-*** OUTPUT
-    * One JSON array in watch order. All text in {language}.
-    * Every scene object MUST include "episode" (a string "1", "2", "3", … with no other text). It follows the EPISODES block.
-    * PATH A: scene 1 caption is the program title. No "第N集". The episode numbers come from the EPISODES block.
-    * PATH B: episode open is "第N集 · ". Episode close is "第N集 · 承接". The EPISODES block decides the episode numbers; a caption that says 第N集 uses the same N as that scene's "episode".
-    * PATH B remedy scenes are captioned "方案 · ". The EPISODES block decides their episode number.
-
-[
-    {{
-        "episode": "1",
-        "caption": "Title. In {language}.",
-        "visual": "This scene's story: the place, and what each person is doing. No on-image text. In {language}.",
-        "speaking": "Only the 讲员. If the 讲员 is in actor, mark the lines with that 讲员's <N>. If the 讲员 is not in actor, the lines are the 讲员 from behind the picture, and they are not a 人物's lines. 人物 have no lines. In {language}.",
-        "actor": "On-camera people, at most four, joined with |. Portrait id, then this scene's behavior: 人物1：woman/mature/chinese/封氏（低头，双手交握） | 人物2：man/youth/chinese/贾雨村（站起来，看向窗外）. 人物 do not speak. Add 讲员：{narrator}（面对镜头，语气放轻） only when the 讲员 is on camera, as position 1. Leave the 讲员 out when the 讲员 speaks from behind the picture."
-    }}
-]
-
---------------------------------------------------
-INPUT
---------------------------------------------------
-** Topic:
-    {topic}
-
-** Instruction:
-    {instruction}
-
-** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
-** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
-** Reference Content (analyzed_content):
-    {content}
-
-"""
+# t262: 主持人节目（COUNSELING_SERIES_COUNSELOR_FRAME）已删除：讲员讲解、人物只演的做法现在是故事表演（见 COUNSELING_SERIES_STORY_ACT）。
 
 
 COUNSELING_SERIES_STORY_ONLY = """
@@ -1645,7 +1576,6 @@ COUNSELING_SERIES_STORY_ONLY = """
     ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
     ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
     ** PER-SCENE BEHAVIOR. In ``actor``, after every person's id, add one pair of parentheses saying what THIS person does in THIS scene: emotion, action, how they speak, enter, or leave. Example: ``讲员:<look>(平静,面向镜头)`` or ``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. The parentheses are not part of the id; the picture is chosen from the id before them. Every visible person has them, and they must match ``visual``.
-    ** If the CAST says "No cast was chosen", follow the older host wording below as before.
     ** WHO DOES WHAT, decided only by the CAST:
         * The 人物 carry the story. Each story scene is a dramatized moment: they speak the scene's content to each other as dialogue, said aloud, not a summary, while they act, move, and react in the place where it happens, like a scene in a film or TV drama. What they do and how they look must fit and strengthen what they are saying.
         * The 讲员, when listed, is the narrator only: a short introduction and background at the start, brief transitions between parts or episodes, and a brief closing. 2 to 4 sentences each. The 讲员 never takes over a story scene and never explains what the audience can already see. A narrator-only scene has ``actor`` exactly ``讲员：<look>`` and the lines marked ``<1>``.
@@ -1714,94 +1644,186 @@ INPUT
 """
 
 
-# Series · Story Act：人物只演不说。内容放在 ``story_content``（要演出来的事），没有 speaking，不做 TTS。
-def _story_act_from_speak(speak: str) -> str:
+# Series · Story Act：人物只演不说。t263: 没有「叙述场景」：有讲员 → 每一场都由讲员讲解（有肖像出镜，没有肖像是画外音）；
+# 没有讲员 → 整个节目没人说话。哪一种由人物栏里的讲员和他的肖像决定（resolve_dynamic_scene_template 的 host_case）。
+_ACT_CAST_CASE = {
+    "portrait": (
+        "    ** CAST CASE (decided by the CAST and its portraits, already known): the CAST lists a 讲员 who has a "
+        "portrait (肖像). The 讲员 explains EVERY scene and is shown on screen in every scene, while the 人物 perform "
+        "without speaking."
+    ),
+    "voiceover": (
+        "    ** CAST CASE (decided by the CAST and its portraits, already known): the CAST lists a 讲员 who has no "
+        "portrait (肖像). The 讲员 explains EVERY scene as a background voice-over: never shown on screen, no lip-sync, "
+        "while the 人物 perform silently on camera."
+    ),
+    "none": (
+        "    ** CAST CASE: the CAST has no 讲员. Nobody speaks at all, in any scene: no narrator, no host, no "
+        "voice-over, no ``speaking`` anywhere. The 人物 perform and the sound effects carry the story."
+    ),
+}
+_ACT_WHO = {
+    "portrait": (
+        "        * The 讲员 is the only voice of the program and explains EVERY scene: 2 to 3 short sentences per scene "
+        "about what this scene shows and what it means in the story (the background the audience needs, the link to "
+        "the scene before or after; the first scene also introduces the story, the last one closes it). The 讲员 never "
+        "retells what the audience can already see, never acts the story out, and never joins the story.\n"
+        "        * In every scene ``speaking`` holds only the 讲员's lines marked ``<1>``, and ``actor`` lists the 讲员 "
+        "first (position 1), then the 人物 who perform in this scene, each with performance parentheses. Every scene "
+        "also has ``story_content``: what the 人物 act.\n"
+        "        * ``visual`` shows the 讲员 on screen in the scene, apart from the 人物 (at the edge of the frame, in "
+        "the foreground, or as a small inset) while the 人物 perform.\n"
+    ),
+    "voiceover": (
+        "        * The 讲员 is the only voice of the program and explains EVERY scene: 2 to 3 short sentences per scene "
+        "about what this scene shows and what it means in the story (the background the audience needs, the link to "
+        "the scene before or after; the first scene also introduces the story, the last one closes it). The 讲员 never "
+        "retells what the audience can already see, never acts the story out, and never joins the story.\n"
+        "        * In every scene ``speaking`` holds only the 讲员's lines marked ``<1>``, and ``actor`` lists the 讲员 "
+        "first (position 1), then the 人物 who perform in this scene, each with performance parentheses. Every scene "
+        "also has ``story_content``: what the 人物 act.\n"
+        "        * The 讲员 has no portrait, so ``visual`` shows only the 人物 performing: never write the 讲员 into the "
+        "picture. The 讲员 is listed first in ``actor`` only so that ``<1>`` has its speaker; the video step plays the "
+        "lines as a voice-over. In the 讲员's parentheses write only the tone of the voice (语气), not an action.\n"
+    ),
+    "none": (
+        "        * There is no 讲员 in the CAST: no scene has ``speaking``, and ``actor`` lists only 人物. Openings and "
+        "transitions are carried by what the 人物 do, and by the caption.\n"
+    ),
+}
+_ACT_PATH_HOST = (
+    "    ** The 讲员 explains in every one of these scenes; the scene count and the arc stay as written here, and the "
+    "讲员 gets no extra scenes.\n"
+)
+
+
+def _story_act_template(speak: str, host: str = "none") -> str:
     cast_start = speak.index("*** CAST CHOSEN BY THE USER")
     cast_end = speak.index("    ** WHO DOES WHAT")
     tail = speak[speak.index("--------------------------------------------------\nINPUT"):]
+    has_host = host in ("portrait", "voiceover")
+    path_host = _ACT_PATH_HOST if has_host else ""
+    out_rule = (
+        "    * Every scene has ``story_content`` (what the 人物 act) AND ``speaking`` (the 讲员's explanation of THIS "
+        "scene, marked ``<1>``). There is no ``voiceover`` field.\n"
+        if has_host else
+        "    * No scene has ``speaking``: nobody speaks. There is no ``voiceover`` field.\n"
+    )
+    speaking_json = (
+        '        "speaking": "The 讲员\'s explanation of THIS scene, marked <1>: 2 to 3 short sentences. In {language}.",\n'
+        if has_host else ""
+    )
+    if host == "portrait":
+        actor_doc = ("The 讲员 first (position 1), then the 人物 who perform in this scene, at most four people in all. "
+                     "Join with | only. The portrait id is woman or man / kids, youth, teenager, mature, or senior / "
+                     "chinese or english / name. After every id, parentheses with this person's performance in this "
+                     "scene: 讲员：{narrator}（站在画面边上，面向镜头，语气放轻） | 人物1：woman/mature/chinese/封氏（低头，慢慢放下碗） | "
+                     "人物2：man/youth/chinese/阿明（转身走向门口）.")
+    elif host == "voiceover":
+        actor_doc = ("The 讲员 first (position 1, the voice only), then the 人物 who perform in this scene, at most four "
+                     "people in all. Join with | only. The portrait id is woman or man / kids, youth, teenager, mature, "
+                     "or senior / chinese or english / name. After every id, parentheses: for the 讲员 only the tone of "
+                     "the voice, for each 人物 this person's performance in this scene: 讲员：{narrator}（语气放轻） | "
+                     "人物1：woman/mature/chinese/封氏（低头，慢慢放下碗） | 人物2：man/youth/chinese/阿明（转身走向门口）.")
+    else:
+        actor_doc = ("People in this picture, at most four. Join with | only. The portrait id is woman or man / kids, "
+                     "youth, teenager, mature, or senior / chinese or english / name. After every id, parentheses with "
+                     "this person's performance in this scene: 人物1：woman/mature/chinese/封氏（低头，慢慢放下碗） | "
+                     "人物2：man/youth/chinese/阿明（转身走向门口）.")
     return (
-        """
-*** ROLE: Acted story program (Series · Story Act), told like a silent film. The characters ACT the story out and never speak. The story scenes carry only sound effects, never music.
-    ** TWO CASES, decided ONLY by whether the CAST lists a 讲员:
-        * NO 讲员 in the CAST: a pure performance. Every scene is an acted story scene. Nobody opens, introduces, gives background, links, or closes: no narrator scene, no voice-over, no ``speaking`` anywhere.
-        * A 讲员 in the CAST: the same acted story scenes, plus the 讲员's narrator scenes: the opening with background, short links between parts or episodes, and the closing. The 讲员 is the only voice.
-    ** Read the analysis and choose ONE path.
-    ** PATH A — one life, one relationship, one timeline. One episode.
-    ** PATH B — two or more distinct situations. Each situation is one episode that can be played alone. Do not merge them into one couple.
-    ** The story is shown in full before any remedy. The remedy comes after the story (PATH A) or after every episode (PATH B), and it is SHOWN by the characters, step by step.
-
-"""
+        "\n*** ROLE: Acted story program (Series · Story Act), told like a silent film. The story's main characters "
+        "(人物, one or several) ACT the story out and never speak on camera. The scenes carry sound effects only, "
+        "never music.\n"
+        + _ACT_CAST_CASE[host] + "\n"
+        "    ** Read the analysis and choose ONE path.\n"
+        "    ** PATH A — one life, one relationship, one timeline. One episode.\n"
+        "    ** PATH B — two or more distinct situations. Each situation is one episode that can be played alone. Do not "
+        "merge them into one couple.\n"
+        "    ** The story is shown in full before any remedy. The remedy comes after the story (PATH A) or after every "
+        "episode (PATH B), and it is SHOWN by the characters, step by step.\n\n"
         + speak[cast_start:cast_end]
-        + """    ** WHO DOES WHAT, decided only by the CAST:
-        * The 人物 carry the story by acting only: action, behavior, facial expression, gesture, how they move toward or away from each other, what they do with the things around them. They never speak: no dialogue, no lines, no lip-sync.
-        * ONLY when the CAST lists a 讲员: the 讲员 is the narrator and the only voice of the program. The 讲员 speaks only in narrator scenes: an opening (introduction and background), a short link between parts or episodes, background where the audience needs it, and a closing. 2 to 4 sentences each. A narrator scene has ``actor`` exactly ``讲员：<look>``, a ``speaking`` field with the lines marked ``<1>``, and no ``story_content``. The 讲员 never appears in a story scene and never tells what the audience can already see.
-        * Story scenes have no ``speaking``: nobody talks, no voice-over. The turn and the remedy are carried by what the 人物 do, and by the caption.
-        * No 讲员 in the CAST: a pure performance by the 人物. There are no narrator scenes at all and no ``speaking`` field in any scene: no opening, background, link, or closing by anyone. Openings and transitions are carried by what the 人物 do, and by the caption.
-        * The CAST always lists the story people (set with 人物设置). Use only them. Do not invent other story people, and do not change their looks.
-    ** List everyone visible, at most four people in all, using the CAST looks.
-    ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.
-
-*** PATH A — one story. Its episode numbers follow the EPISODES block.
-    ** Start — 1 scene. Caption is the program title. An establishing moment: the place and the people in their ordinary life, with one hint of the problem.
-    ** Story — 5 to 8 consecutive scenes. Same people. From how the life was, through the problem in detail, to where they are stuck.
-    ** Turn — 1 scene. One moment where their way of coping visibly fails.
-    ** Remedy — 3 to 5 scenes with the same people: one concrete step per scene, acted, ending on an echo of the opening moment with a different response.
-    ** Only with a 讲员 in the CAST: one narrator scene before Start (opening and background), one short narrator link before Remedy, and one narrator scene at the very end (closing). Without a 讲员: none of these.
-
-*** PATH B — one episode per situation. Different people. Do not reuse the same spouse, home, and argument.
-    ** Each episode: start (caption "第N集 · "), 4 to 7 story scenes until they are stuck, an end scene (caption "第N集 · 承接") that holds the stuck moment. "episode": "N".
-    ** Only after every case: remedy. Caption "方案 · ". "episode" is the next number after the last case. Each response is a short run of 2 to 3 acted scenes with those people, one step per scene.
-    ** Only with a 讲员 in the CAST: one narrator scene opening each episode (background for this case), a short narrator link before the remedy, and one closing narrator scene at the very end. Without a 讲员: none of these.
-
-*** RULES
-    ** ``visual`` is the picture: the place, the framing, where each person is, the light. No on-image words.
-    ** ``story_content`` is what HAPPENS in this scene, to be acted: who does what, in what order, with what emotion, and how it changes by the end. 2 to 5 short sentences in the present tense. No quoted speech, no "he says", no narration to the audience. Thoughts and feelings are shown through behavior (a hand that stops, a look away, a door left open).
-    ** The actor parentheses say each person's performance in this scene, and must match ``story_content``.
-    ** SOUND. Story scenes have sound effects only, never music: footsteps, a door, rain, dishes, breathing, street noise. End ``story_content`` with one short sentence that starts with 音效： and names this scene's sound effects. No music, no song, no score.
-    ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it. Do not fix it there.
-    ** No DSM labels. Do not write 根, 根儿, or 病根.
-
-*** OUTPUT
-    * One JSON array in watch order. All text in {language}.
-    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field. It follows the EPISODES block.
-    * Story scenes have NO ``speaking`` field. Only narrator scenes (the 讲员, and only when the CAST lists one) have ``speaking``, and they have no ``story_content``. No 讲员 in the CAST: no scene has ``speaking``. There is no ``voiceover`` field.
-
-[
-    {{
-        "episode": "1",
-        "caption": "第1集 · title, or the program title on PATH A. In {language}.",
-        "visual": "The picture: place, framing, where each person is, light. No on-image text. In {language}.",
-        "story_content": "Story scenes only. What happens in this scene, acted without words: who does what, in order, with what emotion. 2 to 5 short sentences, present tense, no dialogue. Last sentence: 音效：the sound effects (no music). In {language}.",
-        "speaking": "Narrator scenes only (actor is 讲员：<look>): the 讲员's opening, background, link, or closing, marked <1>. Leave this field out of story scenes, and out of every scene when the CAST has no 讲员. In {language}.",
-        "actor": "People in this picture, at most four. Join with | only. The portrait id is woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. After every id, parentheses with this person's performance in this scene: 人物1：woman/mature/chinese/封氏（低头，慢慢放下碗） | 人物2：man/youth/chinese/阿明（转身走向门口）"
-    }}
-]
-
-"""
+        + "    ** WHO DOES WHAT, decided only by the CAST:\n"
+        "        * The 人物 carry the story by acting only: action, behavior, facial expression, gesture, how they move "
+        "toward or away from each other, what they do with the things around them. They never speak on camera: no "
+        "dialogue, no lines, no lip-sync.\n"
+        + _ACT_WHO[host]
+        + "        * The CAST always lists the story people (set with 人物设置). Use only them. Do not invent other story "
+        "people, and do not change their looks.\n"
+        "    ** List everyone listed in ``actor`` using the CAST looks, at most four people in all"
+        + (", the 讲员 included" if has_host else "") + ".\n"
+        "    ** When a picture or a PDF page shows a person not in the CAST, the age band comes from the face and body: "
+        "kids, youth, teenager, mature, or senior. Do not write a number. The same person keeps one age band.\n\n"
+        "*** PATH A — one story. Its episode numbers follow the EPISODES block.\n"
+        "    ** Start — 1 scene. Caption is the program title. An establishing moment: the place and the people in their "
+        "ordinary life, with one hint of the problem.\n"
+        "    ** Story — 5 to 8 consecutive scenes. Same people. From how the life was, through the problem in detail, to "
+        "where they are stuck.\n"
+        "    ** Turn — 1 scene. One moment where their way of coping visibly fails.\n"
+        "    ** Remedy — 3 to 5 scenes with the same people: one concrete step per scene, acted, ending on an echo of the "
+        "opening moment with a different response.\n"
+        + path_host + "\n"
+        "*** PATH B — one episode per situation. Different people. Do not reuse the same spouse, home, and argument.\n"
+        "    ** Each episode: start (caption \"第N集 · \"), 4 to 7 story scenes until they are stuck, an end scene "
+        "(caption \"第N集 · 承接\") that holds the stuck moment. \"episode\": \"N\".\n"
+        "    ** Only after every case: remedy. Caption \"方案 · \". \"episode\" is the next number after the last case. "
+        "Each response is a short run of 2 to 3 acted scenes with those people, one step per scene.\n"
+        + path_host + "\n"
+        "*** RULES\n"
+        "    ** ``visual`` is the picture: the place, the framing, where each person is, the light. No on-image words.\n"
+        "    ** ``story_content`` is what HAPPENS in this scene, to be acted: who does what, in what order, with what "
+        "emotion, and how it changes by the end. 2 to 5 short sentences in the present tense. No quoted speech, no "
+        "\"he says\", no narration to the audience. Thoughts and feelings are shown through behavior (a hand that stops, "
+        "a look away, a door left open).\n"
+        "    ** The actor parentheses say each person's performance in this scene, and must match ``story_content``.\n"
+        "    ** SOUND. Every scene has sound effects only, never music: footsteps, a door, rain, dishes, breathing, street "
+        "noise. End ``story_content`` with one short sentence that starts with 音效： and names this scene's sound "
+        "effects. No music, no song, no score.\n"
+        "    ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is "
+        "visible and the cause is not named; the same move repeating, and the price; one moment where that way of "
+        "coping fails; then it becomes plain why they keep doing it. Do not fix it there.\n"
+        "    ** No DSM labels. Do not write 根, 根儿, or 病根.\n\n"
+        "*** OUTPUT\n"
+        "    * One JSON array in watch order. All text in {language}.\n"
+        "    * Every scene includes \"episode\": \"1\", \"2\", \"3\", … and nothing else in that field. It follows the "
+        "EPISODES block.\n"
+        + out_rule + "\n"
+        "[\n"
+        "    {{\n"
+        "        \"episode\": \"1\",\n"
+        "        \"caption\": \"第1集 · title, or the program title on PATH A. In {language}.\",\n"
+        "        \"visual\": \"The picture: place, framing, where each person is, light. No on-image text. In {language}.\",\n"
+        "        \"story_content\": \"What happens in this scene, acted without words: who does what, in order, with what "
+        "emotion. 2 to 5 short sentences, present tense, no dialogue. Last sentence: 音效：the sound effects (no music). "
+        "In {language}.\",\n"
+        + speaking_json +
+        "        \"actor\": \"" + actor_doc + "\"\n"
+        "    }}\n"
+        "]\n\n"
         + tail
     )
+
+
+def _story_act_from_speak(speak: str) -> str:
+    """默认（没有讲员）的故事表演模板；按讲员情况换模板见 story_act_template_for。"""
+    return _story_act_template(speak, "none")
 
 
 COUNSELING_SERIES_STORY_ACT = _story_act_from_speak(COUNSELING_SERIES_STORY_ONLY)
 
 
 COUNSELING_TALK_SCENES = """
-*** ROLE: A podcast. The speakers talk about the story. The pictures illustrate what is being said.
+*** ROLE: A podcast. A host (the 讲员) and a guest (a 人物, the 嘉宾) talk about the story. The pictures illustrate what is being said.
 *** CAST CHOSEN BY THE USER (this decides who appears and who speaks; it overrides any other wording about the 讲员 or guests below)
     {cast}
     ** When the CAST above lists people, use exactly those people, with exactly those looks, in ``actor``. Write each one as listed: ``讲员：<look>`` or ``人物N：gender/age band/ethnicity/name``. Keep the order the user gave unless a rule below puts the 讲员 first.
     ** RELATIONSHIPS. Read gender, age band, ethnicity, and name of every listed person and decide who they are to each other before writing any scene. A girl or a teenage girl together with an adult man → daughter and father. A boy with an adult woman → son and mother. A boy and a girl of similar age → siblings or classmates. Two adults of opposite gender and similar age → usually a couple. A senior with a youth or a child → grandparent and grandchild. The same family name, or names that fit one family, strengthens a family tie. Fit the relationship to the story material when the material says more. Then build every scene, every line, and every action on that relationship: how they address each other, who protects whom, who argues with whom. Keep the same relationship in every scene.
     ** PER-SCENE BEHAVIOR. In ``actor``, after every person's id, add one pair of parentheses saying what THIS person does in THIS scene: emotion, action, how they speak, enter, or leave. Example: ``讲员:<look>(平静,面向镜头)`` or ``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. The parentheses are not part of the id; the picture is chosen from the id before them. Every visible person has them, and they must match ``visual``.
-    ** If the CAST says "No cast was chosen", follow the older host wording below as before.
     ** WHO SPEAKS, decided only by the CAST:
-        * CAST is EMPTY (no 讲员, no 人物): nobody is on screen as a speaker. The whole episode is one default narrator voice-over. ``actor`` is empty (""). ``speaking`` is the narration, marked ``<1>``.
-        * Only the 讲员: the 讲员 alone speaks, telling and explaining the story. ``actor`` is ``讲员：<look>``. Every line is ``<1>``.
-        * 讲员 + exactly one 人物: a two-person podcast. The 讲员 is the host, the 人物 is the guest. They talk back and forth: question, reply, example, follow-up. ``actor`` is ``讲员：<look> | 人物1：<look>``, host first.
+        * 讲员 + exactly one 人物: a two-person podcast. The 讲员 is the host, the 人物 is the guest (嘉宾). They talk back and forth: question, reply, example, follow-up. ``actor`` is ``讲员：<look> | 人物1：<look>``, host first.
         * 讲员 + two or more 人物: the 讲员 hosts and the 人物 are several guests. Each guest gets turns. At most three people speak in one scene, host included; pick which guests join each scene. A fourth listed person may sit in the picture without a line. Never write <4>.
-        * No 讲员 but one or more 人物: the FIRST listed 人物 is the host. The other 人物 are guests, following the same rules as above. Do not invent a 讲员.
     ** The speakers are a third party. They talk ABOUT the people in the story. They never act out the story themselves, and the story's people never speak.
     ** VISUALS SUPPORT THE WORDS. ``visual`` is always supporting information: it illustrates the story content being spoken in this scene (the place, the moment, the people of the story, what they do). Any people shown in the visual act silently: no lines, no lip-sync, only gesture, expression, and movement. The speakers may appear in the studio between illustrations, but the visual never carries the dialogue.
-    ** This is not Series · Counselor, Story Speak, or Story Act: nobody performs the story.
+    ** This is not 故事对话 or 故事表演: the host and the guest only discuss the story. They never play the story's people and never act it out.
 
 *** HOW THE SERIES MOVES
     ** It is one podcast series about one subject. If the material has several parts, each part is one episode. If it is one subject, it is still episode 1 of a series, and the ending may leave a next question. The EPISODES block decides how the scenes group into episodes.
@@ -1813,16 +1835,16 @@ COUNSELING_TALK_SCENES = """
 
 *** SCENES (one beat each)
     ** This describes the shape of ONE episode. It is not the scene count of the whole program. When the source is an audio file or a video, the SCENES FOLLOW THE SOURCE rules below decide the scene count and where each scene cuts (one complete story fragment each), so a long recording has many scenes and several episodes. Each episode then follows this shape in its own way.
-    ** 1. The program opens. The host (or the voice-over) names this episode's question and steps into the story.
+    ** 1. The program opens. The 讲员 (the host) names this episode's question and steps into the story.
     ** Next several. A real moment from that life is told: how it repeats, what it costs. With guests, each scene is one exchange between host and guest(s). The visual shows that moment silently.
-    ** Then the turn. A question (or, with only one voice, a turn in the telling) names what is underneath.
+    ** Then the turn. A question from the host to the guest names what is underneath.
     ** Last 2–3. Land the episode. Come back to the opening moment and say what would be different. If another part remains in the material, the last line can point at it without telling that episode.
     ** Several episodes: episode 1 opens the series by saying in a few natural sentences what these episodes will walk through and why it matters. A later episode opens by picking up where the previous one stopped, with no full recap. The last episode closes the whole series: gather in a few sentences what the episodes walked through and leave one warm, concrete takeaway, with no teaser.
 
 *** OUTPUT
     * JSON array in watch order. All text in {language}.
-    * ``actor`` lists only the speakers chosen by the CAST rules above (host first, then the guests who speak in this scene), at most four. Use the CAST looks exactly. Empty CAST → ``actor`` is "".
-    * ``speaking`` holds every line, marked with <N> for that speaker's place in actor. Only the first three people listed may speak. Empty CAST → one voice-over, ``<1>``.
+    * ``actor`` lists only the speakers chosen by the CAST rules above (host first, then the guests who speak in this scene), at most four. Use the CAST looks exactly.
+    * ``speaking`` holds every line, marked with <N> for that speaker's place in actor. Only the first three people listed may speak.
     * ``visual`` illustrates the content being spoken: the story's place, moment, and people, acting silently. No words on the image. It may cut back to the speakers in the studio when nothing in the story is being described.
     * When a picture or a PDF page shows a person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. Do not write a number.
     * caption: scene 1 is the program title; later scenes are short beat titles.
@@ -1834,7 +1856,7 @@ COUNSELING_TALK_SCENES = """
         "caption": "Program title on scene 1. In {language}.",
         "visual": "The story moment being talked about, its place and people acting silently; or the speakers in the studio. Any cut. No on-image text. In {language}.",
         "speaking": "Every line in this scene, marked with <N> for the speaker's place in actor, from 1. At most three speakers. Never write <4>. Example: <1> xxx。<2> xxx, xxx。<1> xxx。 In {language}.",
-        "actor": "The speakers from the CAST, host first. Example: 讲员：woman/mature/chinese/秦 | 人物1：man/mature/chinese/嘉宾. Empty when the CAST is empty."
+        "actor": "The speakers from the CAST, host first. Example: 讲员：woman/mature/chinese/秦 | 人物1：man/mature/chinese/嘉宾."
     }}
 ]
 
@@ -2270,16 +2292,24 @@ def _with_source_scene_rules(prompt: str) -> str:
     return prompt.replace(marker, "\n" + SOURCE_SCENE_RULES.strip("\n") + "\n" + marker, 1)
 
 
+# t263: 每种方式的说话 / 表演规则 = 共用表里的原文（视频窗口、节目生成用同一份）；不写死在模板里，
+# 而是在 resolve_dynamic_scene_template 里按人物栏里讲员的真实情况（params["host_case"]）现拼进去。
 COUNSELING_TALK_SCENES = _with_source_scene_rules(COUNSELING_TALK_SCENES)
-COUNSELING_SERIES_COUNSELOR_FRAME = _with_source_scene_rules(COUNSELING_SERIES_COUNSELOR_FRAME)
 COUNSELING_SERIES_STORY_ONLY = _with_source_scene_rules(COUNSELING_SERIES_STORY_ONLY)
 COUNSELING_SERIES_STORY_SPEAK = COUNSELING_SERIES_STORY_ONLY
-COUNSELING_SERIES_STORY_ACT = _with_source_scene_rules(COUNSELING_SERIES_STORY_ACT)
+# 故事表演：讲员的三种情况各有一份模板（有肖像 / 没有肖像 / 没有讲员），默认那份 = 没有讲员
+STORY_ACT_TEMPLATES = {
+    case: _with_source_scene_rules(_story_act_template(COUNSELING_SERIES_STORY_ONLY, case))
+    for case in _narration_modes.HOST_CASES
+}
+COUNSELING_SERIES_STORY_ACT = STORY_ACT_TEMPLATES[_narration_modes.HOST_NONE]
 # 旧标签 → 新标签（存过的 scene_prompt_label）
 STORY_PROMPT_LABEL_RENAMES = {
     "Step Story": STEP_STORY_LABEL,
     "Series · Podcast": SERIES_STYLE_LABELS["podcast"], "Series . Podcast": SERIES_STYLE_LABELS["podcast"],
-    "Series · Counselor": SERIES_STYLE_LABELS["counselor"], "Series . Counselor": SERIES_STYLE_LABELS["counselor"],
+    # t262: 主持人节目已并入故事表演：旧的名字 / 存过的 label 都读作故事表演
+    "Series · Counselor": SERIES_STYLE_LABELS["story_act"], "Series . Counselor": SERIES_STYLE_LABELS["story_act"],
+    "Counselor": SERIES_STYLE_LABELS["story_act"], "主持人节目": SERIES_STYLE_LABELS["story_act"],
     "Series · Story Speak": SERIES_STYLE_LABELS["story_speak"], "Series . Story Speak": SERIES_STYLE_LABELS["story_speak"],
     "Series · Story Only": SERIES_STYLE_LABELS["story_speak"], "Series . Story Only": SERIES_STYLE_LABELS["story_speak"],
     "Series · Story Act": SERIES_STYLE_LABELS["story_act"], "Series . Story Act": SERIES_STYLE_LABELS["story_act"],

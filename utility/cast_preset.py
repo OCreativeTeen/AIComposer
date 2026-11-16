@@ -1,9 +1,8 @@
 """t447u: 「人物设置」——按场景生成方式 + 分析报告，让 Strata 预设人物名单；再按一次换一组关系。
 
 名单格式和人物栏一样：``讲员：<讲员形象> | 人物1：woman/mature/chinese/林芳（妻子） | 人物2：…``。
-  * 播客：讲员 + 1 位嘉宾。
-  * 主持人节目：讲员 + 0 到 2 个人物（人物只演，不说话）。
-  * 故事对话 / 故事表演：讲员 + 2 到 3 个人物。
+  * 播客：讲员（主持）+ 1 位嘉宾（人物），两人围着故事谈、不演故事。
+  * 故事对话 / 故事表演：讲员 + 2 到 3 个人物。（t262: 主持人节目已并入故事表演，旧存值读作故事表演。）
   * 短故事：2 个人物，没有讲员。
 用过的名单记在这一条的 ``cast_history``（新的在前），再按一次时告诉 Strata 换一组不同的关系。
 场景生成前用 ``validate_cast_for_mode`` 检查人数。
@@ -18,10 +17,9 @@ CAST_HISTORY_MAX = 8
 
 # mode → (要不要讲员, 人物最少, 人物最多, 给 Strata 的说明)
 MODE_RULES = {
-    "podcast": (True, 1, 1, "Podcast (播客). The 讲员 is the host. Choose exactly ONE guest (人物1) who talks with the host "
-                            "about this material: someone who lived it, a person close to it, or a fitting expert."),
-    "counselor": (True, 0, 2, "Host program (主持人节目). The 讲员 alone speaks. Choose 0 to 2 story people (人物) who act "
-                              "the life in the material silently. Choose 0 only if the material has no concrete people."),
+    "podcast": (True, 1, 1, "Podcast (播客). The 讲员 is the host. Choose exactly ONE guest (嘉宾, written as 人物1) who "
+                            "DISCUSSES this material with the host: someone who lived it, a person close to it, or a fitting "
+                            "expert. The host and the guest only talk about the story; they do not play its people."),
     "story_speak": (True, 2, 3, "Story dialogue (故事对话). The story people (人物) carry the story by talking to each other. "
                                 "Choose 2 or 3 story people."),
     "story_act": (True, 2, 3, "Story performance (故事表演). The story people (人物) act the story without words. "
@@ -29,9 +27,9 @@ MODE_RULES = {
     "step_story": (False, 2, 2, "Short story (短故事). Exactly 2 story people (人物) who talk to each other. No narrator."),
 }
 
-MODE_NAMES = {
-    "podcast": "播客", "counselor": "主持人节目", "story_speak": "故事对话", "story_act": "故事表演", "step_story": "短故事",
-}
+from utility import narration_modes as _narration_modes  # noqa: E402  # t258: 名字来自共用表
+
+MODE_NAMES = dict(_narration_modes.MODES)
 
 _GENDERS = ("woman", "man")
 _AGES = ("kids", "youth", "teenager", "mature", "senior")
@@ -43,7 +41,7 @@ _LABEL_RE = re.compile(r"^\s*(?:[-*•]\s*)?(?:\d+[.、)]\s*)?(讲员|講員|人
 
 
 def mode_for_label(label: str) -> str:
-    """场景生成下拉的 label（新旧名都认）→ podcast / counselor / story_speak / story_act / step_story；别的返回 ""。"""
+    """场景生成下拉的 label（新旧名都认）→ podcast / story_speak / story_act / step_story；别的返回 ""。旧的主持人节目读作 story_act。"""
     import config_channel
 
     key = config_channel.series_style_key(label)
@@ -76,19 +74,29 @@ def cast_counts(cast_text: str) -> tuple:
     return host, people
 
 
-def validate_cast_for_mode(mode: str, cast_text: str) -> tuple:
-    """场景生成前检查人数。返回 (ok, 说明)。"""
-    host, people = cast_counts(cast_text)
+CAST_BUTTON = "「人物设置」"
+
+
+def validate_cast_for_mode(mode: str, cast_text) -> tuple:
+    """场景生成前检查人物栏。返回 (ok, 说明)。t263: 场景生成必须先有人物（没有人物不生成）：
+    人物栏是空的 → 请先按「人物设置」生成讲员和人物；播客要有讲员（主持）加至少 1 位嘉宾（人物）；
+    故事对话 / 故事表演 / 短故事至少 2 个人物（讲员可有可无，短故事没有讲员）。"""
+    host, people = cast_counts(cast_text or "")
     name = MODE_NAMES.get(mode, mode)
-    if mode in ("story_speak", "story_act", "step_story"):
-        if people < 2:
-            return False, f"{name}至少要 2 个人物（讲员不算），现在有 {people} 个。请先按「人物设置」或在人物栏里添加。"
-    elif mode == "podcast":
-        if people + (1 if host else 0) < 2:
-            return False, f"{name}至少要 2 个人（讲员 + 1 位嘉宾，或 2 个人物）。请先按「人物设置」或在人物栏里添加。"
-    elif mode == "counselor":
-        if not host and people < 1:
-            return False, f"{name}要有讲员，或至少 1 个人物。请先按「人物设置」或在人物栏里添加。"
+    if mode not in MODE_RULES:
+        return True, ""
+    if not host and people == 0:
+        return False, (f"{name}需要人物：人物栏现在是空的。请先按{CAST_BUTTON}生成"
+                       + ("讲员和人物" if MODE_RULES[mode][0] else "人物")
+                       + "（也可以在人物栏里手动添加），再生成场景。")
+    if mode == "podcast":
+        if not host:
+            return False, (f"{name}需要讲员（主持人）和至少 1 位嘉宾（人物）：人物栏里没有讲员。"
+                           f"请先在人物栏里选一个讲员，再按{CAST_BUTTON}生成嘉宾。")
+        if people < 1:
+            return False, f"{name}需要至少 1 位嘉宾（人物），现在有 0 位。请先按{CAST_BUTTON}生成，或在人物栏里添加。"
+    elif people < 2:
+        return False, f"{name}至少要 2 个人物（讲员不算），现在有 {people} 个。请先按{CAST_BUTTON}或在人物栏里添加。"
     return True, ""
 
 
@@ -212,20 +220,21 @@ def preset_cast(mode: str, analysis: str, *, narrator: str = "", history=None, c
 def program_mode_narrative(mode_label: str, story_style=None) -> tuple:
     """t448u: 节目生成跟主窗口选的场景生成方式走 → (显示名, 故事风格 key, 叙事方式)。
 
-    播客 / 主持人节目 → 讲述（narration）；故事对话 / 故事表演 → 故事（story）；
-    短故事（两个人物对话、没有讲员）→ 和故事对话一样（story）。旧的 tech / exec 已归到主持人节目。
-    主窗口不是这五种时，用这一条存的故事风格（没有就播客）。"""
+    t262: 方式有四种：短故事 / 播客 / 故事对话 / 故事表演，短故事是自己的一种（key = step_story），不再当故事对话；
+    旧的主持人节目 / Counselor / tech / exec 都读作故事表演。谁说话、人物怎么演由 utility/narration_modes 的规则原文给，
+    所以四种方式的叙事形式都是 story（字段用法一样，说话规则按方式）。
+    主窗口不是这四种时，用这一条存的故事风格（没有就播客）。"""
     import config_channel
     import config_prompt
 
     label = config_channel.canonical_prompt_label(mode_label or "")
     key = config_channel.series_style_key(label)
     if not key and config_channel.is_step_story_label(label):
-        key = "story_speak"
+        key = "step_story"
         shown = config_channel.STEP_STORY_LABEL
     else:
-        key = key or config_prompt.normalize_story_style(story_style) or config_prompt.STORY_STYLE_CHOICES[0][0]
+        key = key or config_prompt.normalize_story_style(story_style) or config_prompt.DEFAULT_STORY_STYLE
         shown = label if config_channel.series_style_key(label) else config_prompt.story_style_label(key)
-    return shown, key, config_prompt.story_style_narrative(key)
+    return shown, key, "story"
 
 

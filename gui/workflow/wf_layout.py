@@ -524,14 +524,14 @@ class LayoutMixin:
         )
         self.scene_style.set(config_prompt.SCENE_STYLE_LABELS[0])
         self.scene_style.pack(side=tk.LEFT, padx=(0, 0))
-        # 故事风格（Series · Podcast / Counselor / Story Speak / Story Act）：决定生场视频提示里谁说话、讲员出不出镜。
+        # 故事风格（短故事 / 播客 / 故事对话 / 故事表演；旧的主持人节目读作故事表演）：决定生场视频提示里谁说话、讲员出不出镜。
         self.story_style = ttk.Combobox(
             look_row2,
             width=18,
             values=list(config_prompt.STORY_STYLE_LABELS),
             state="readonly",
         )
-        self.story_style.set(config_prompt.STORY_STYLE_LABELS[0])
+        self.story_style.set(config_prompt.story_style_label(config_prompt.DEFAULT_STORY_STYLE))
         self.story_style.pack(side=tk.LEFT, padx=(4, 0))
 
         episode_gap = ttk.Frame(right_panel, height=24)

@@ -166,7 +166,20 @@ def _pnb_story_setting(video_detail):
     return story_setting_region_era(video_detail)
 
 
-def _pnb_program_cast(video_detail, scene_ui, output, cast_source="panel"):
+def _pnb_program_host_case(video_detail, source, scenes, avatar_dir, style):
+    """节目生成：讲员的情况，由真实数据决定（t263：没有「不知道」）。以场景为准 → 看各场景 actor 里有没有讲员；
+    以人物面板为准 → 看人物栏名单（没设过名单 = 没有讲员）。有讲员再查肖像（和 actor.pdf 同一个查法）。"""
+    from gui.dl.prompts_notebooklm import _story_cast_text
+
+    if source == "scenes":
+        texts = [str((s or {}).get("actor") or "") for s in (scenes or []) if isinstance(s, dict)]
+    else:
+        panel = _story_cast_text(video_detail)
+        texts = [panel] if panel else []
+    return config_prompt.program_host_case(texts, config_prompt.host_portrait_finder(avatar_dir, style))
+
+
+def _pnb_program_cast(video_detail, scene_ui, output, cast_source="panel", host_case=None):
     from gui.dl.prompts_notebooklm import build_program_cast_block
     label = ""
     var = scene_ui.get("prompt_combo_var") if isinstance(scene_ui, dict) else None
@@ -176,7 +189,7 @@ def _pnb_program_cast(video_detail, scene_ui, output, cast_source="panel"):
         label = ""
     if not label and isinstance(video_detail, dict):
         label = (video_detail.get("scene_prompt_label") or "").strip()
-    return build_program_cast_block(video_detail, label, output, cast_source=cast_source)
+    return build_program_cast_block(video_detail, label, output, cast_source=cast_source, host_case=host_case)
 
 
 def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: dict) -> None:
@@ -529,7 +542,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             on_image_response=_on_pasted_image if kind == "infographic" else None,
         )
 
-    # 节目生成的叙事方式跟着预览里选的 Series 选项走（Podcast/Counselor  旁白，Story Speak/Act  故事）
+    # 节目生成的方式跟着预览里选的方式走（短故事 / 播客 / 故事对话 / 故事表演；t262: 谁说话、人物怎么演用共用规则）
     _series_label = ""
     try:
         _var = scene_ui.get("prompt_combo_var") if isinstance(scene_ui, dict) else None
@@ -537,13 +550,13 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
     except tk.TclError:
         _series_label = ""
     _series_label = _series_label or (video_detail.get("scene_prompt_label") or "").strip()
-    # t448u: 节目生成没有自己的风格选项，跟主窗口选的方式走（短故事 / 播客 / 主持人节目 / 故事对话 / 故事表演）。
-    # 主窗口不是这五种时用这一条存的故事风格；旧的技术方案汇报 / 高管简报默默归到主持人节目（不预填 FYI）。
+    # t448u: 节目生成没有自己的风格选项，跟主窗口选的方式走（短故事 / 播客 / 故事对话 / 故事表演）。
+    # 主窗口不是这四种时用这一条存的故事风格；旧的主持人节目 / 技术方案汇报 / 高管简报默默归到故事表演（不预填 FYI）。
     _old_narr = str((saved or {}).get("narrative") or "") if isinstance(saved, dict) else ""
     _fallback_style = (
         config_prompt.normalize_story_style(video_detail.get("story_style"))
         or config_prompt.NARRATIVE_TO_STORY_STYLE.get(_old_narr, "")
-        or config_prompt.STORY_STYLE_CHOICES[0][0]
+        or config_prompt.DEFAULT_STORY_STYLE
     )
     from utility.cast_preset import program_mode_narrative
 
@@ -560,7 +573,10 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
         copy_text=copy_text,
         host_narrator=narrator,
         get_place=lambda: _pnb_story_setting(video_detail),
-        get_cast_block=lambda output, source="panel": _pnb_program_cast(video_detail, scene_ui, output, source),
+        get_cast_block=lambda output, source="panel", host_case=None: _pnb_program_cast(
+            video_detail, scene_ui, output, source, host_case),
+        get_host_case=lambda source, scenes: _pnb_program_host_case(
+            video_detail, source, scenes, _story_avatar_dir(video_detail), (get_style() or "").strip() or None),
         initial_source=(video_detail.get("program_content_source") or "").strip(),
         on_source_change=save_source,
         saved_choice=saved,
@@ -2507,9 +2523,10 @@ class SceneEditorImpl:
                     label = ((pv.get() if pv is not None else "") or "").strip()
                     if label:
                         look["scene_prompt_label"] = label
-                        st = config_channel.series_style_key(label)
-                        if not st and config_channel.is_step_story_label(label):
-                            st = "story_speak"
+                        # t258: 预览里选的叙事方式（含 短故事）原样带进新项目，不再把 短故事 换成 故事对话
+                        from utility import narration_modes as _nm
+
+                        st = _nm.new_project_default(label)
                         if st:
                             look["story_style"] = st
                     return look
@@ -2662,6 +2679,13 @@ class SceneEditorImpl:
                     return ""
 
             def _copy_selected_scene_prompt(_event=None):
+                # t263: 没有人物就没有这份提示词（人物决定谁说话、怎么演）：先按「人物设置」
+                from gui.dl.prompts_notebooklm import scene_cast_check as _scene_cast_check
+
+                _cast_ok, _cast_why = _scene_cast_check(video_detail, (prompt_combo_var.get() or "").strip())
+                if not _cast_ok:
+                    show_auto_close_popup(dlg, "场景生成", _cast_why, kind="error", duration_ms=6000)
+                    return
                 text = (_scene_prompt_text_now() or "").strip()
                 if (
                     not text
@@ -3394,7 +3418,8 @@ class SceneEditorImpl:
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
-                        # t447u: 生成前检查人物：故事对话 / 故事表演 / 短故事 至少 2 个人物；播客至少 2 人；主持人节目要有讲员或人物
+                        # t447u / t263: 生成前检查人物：没有人物就不生成，请先按「人物设置」；
+                        # 故事对话 / 故事表演 / 短故事至少 2 个人物；播客要讲员 + 至少 1 位嘉宾
                         from utility import cast_preset as _cast_preset
 
                         _cast_mode = _cast_preset.mode_for_label(label)
@@ -3758,7 +3783,7 @@ class SceneEditorImpl:
                         if not mode:
                             show_auto_close_popup(
                                 dlg, "人物设置",
-                                "这个场景生成方式不用设置人物（播客 / 主持人节目 / 故事对话 / 故事表演 / 短故事 才用）。",
+                                "这个场景生成方式不用设置人物（短故事 / 播客 / 故事对话 / 故事表演 才用）。",
                                 kind="error", duration_ms=4500,
                             )
                             return
