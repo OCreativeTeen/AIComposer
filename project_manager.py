@@ -715,10 +715,10 @@ def _normalize_host_alias(text: str) -> str:
 
 
 def _strip_actor_label(part: str) -> str:
-    """去掉前缀标签；「人物2：讲员：…」这类叠加的标签也一并去掉。"""
+    """去掉前缀标签；「人物2：讲员：…」这类叠加的标签也一并去掉。t280: 新写法讲员前面的「H 」也去掉。"""
     text = _normalize_host_alias(part).strip()
     while True:
-        new = re.sub(r"^(?:人物\s*\d*|讲员)\s*[：:]\s*", "", text).strip()
+        new = re.sub(r"^(?:(?:人物\s*\d*|讲员)\s*[：:]|H(?=\s))\s*", "", text).strip()
         if new == text:
             return new
         text = new
@@ -769,8 +769,12 @@ def _host_voice_in(part: str, voices: set) -> str:
 
 
 def _is_host_segment(part: str, voices: set) -> bool:
-    part = part or ""
-    return any(alias in part for alias in HOST_ALIASES)
+    """t280: 新写法 ``H …`` 是讲员；旧写法看标签里有没有 讲员 / 主持人（只看括号说明以外的部分）。"""
+    part = (part or "").strip()
+    if re.match(r"^H\s", part):
+        return True
+    base = split_actor_motion(part)[0]
+    return any(alias in base for alias in HOST_ALIASES)
 
 
 def _race_token(token: str) -> str:
@@ -916,8 +920,17 @@ def resolve_actor_voice(body: str) -> str:
     return ordered[0]
 
 
-def normalize_actor_text(text: str) -> str:
-    """保留各段原来的先后。人物按出现次序编号，讲员留在原来的位置。"""
+ACTOR_MAX_PRESENT = 4  # 一场的 actor 最多 4 个人（讲员算一个）——每一场的上限，t279 不变
+# t279: 人物栏（整个故事的名单，STORY 预览窗）：最多 10 个人物 + 1 个讲员（讲员不算进 10 个）。
+# 动态 / 不动态都一样；每一场的 actor 还是最多 4 个人（ACTOR_MAX_PRESENT）。
+CAST_MAX_PEOPLE = 10
+CAST_MAX_PRESENT = CAST_MAX_PEOPLE + 1
+CAST_MAX_PRESENT_DYNAMIC = CAST_MAX_PRESENT  # t272 的旧名字（现在和不动态的人物栏一样大）
+
+
+def normalize_actor_text(text: str, max_present: int = ACTOR_MAX_PRESENT, max_people: int | None = None) -> str:
+    """保留各段原来的先后。人物按出现次序编号，讲员留在原来的位置。max_present：最多留几个人（默认 4 = 一场）；
+    max_people：人物最多几个（讲员不算；t279: 人物栏用 normalize_cast_text = 10 个人物 + 1 个讲员）。"""
     voices = _actor_voice_names()
     present = []
     absent = []
@@ -925,7 +938,7 @@ def normalize_actor_text(text: str) -> str:
     seen_host = False
     for part in _actor_segments(text):
         if _is_host_segment(part, voices):
-            if seen_host or len(present) >= 4:
+            if seen_host or len(present) >= max_present:
                 continue
             seen_host = True
             _base, motion = split_actor_motion(_strip_actor_label(part))
@@ -934,21 +947,21 @@ def normalize_actor_text(text: str) -> str:
                 continue
             if "已经在画面" in (motion or ""):
                 motion = ""
-            present.append(f"讲员：{_with_actor_motion(host, motion)}")
+            present.append(f"H {_with_actor_motion(host, motion)}")  # t280: 新写法 H + 空格
             continue
         body = _person_body(part)
         if not body:
             continue
         if actor_is_absent(body):
-            absent.append(f"人物：{ACTOR_ABSENT}")
+            absent.append(ACTOR_ABSENT)
             continue
-        if len(present) >= 4:
+        if len(present) >= max_present or (max_people is not None and person_n >= max_people):
             continue
         person_n += 1
         _pb, note = split_actor_motion(_strip_actor_label(part))  # t158u: 保留（这一场的样子）
         if "已经在画面" in (note or ""):
             note = ""
-        present.append(f"人物{person_n}：{_with_actor_motion(body, note)}")
+        present.append(_with_actor_motion(body, note))  # t280: 人物不写「人物N：」，位置就是第几个人
     return " | ".join(present + absent)
 
 
@@ -961,12 +974,12 @@ def actor_host_name(text: str) -> str:
     return ""
 
 
-def actor_entries(text: str) -> list:
+def actor_entries(text: str, max_present: int = ACTOR_MAX_PRESENT, max_people: int | None = None) -> list:
     """``[{role, label, body}, ...]``，role 为 person 或 host。"""
     voices = _actor_voice_names()
     rows = []
     person_n = 0
-    normalized = normalize_actor_text(text)
+    normalized = normalize_actor_text(text, max_present, max_people)
     for part in _actor_segments(normalized):
         if _is_host_segment(part, voices):
             rows.append({
@@ -984,8 +997,46 @@ def actor_entries(text: str) -> list:
     return rows
 
 
+def normalize_cast_text(text: str) -> str:
+    """t279: 人物栏（整个故事的名单）：最多 10 个人物 + 1 个讲员。"""
+    return normalize_actor_text(text, CAST_MAX_PRESENT, CAST_MAX_PEOPLE)
+
+
+def cast_entries(text: str) -> list:
+    """t279: 人物栏名单 → ``[{role, label, body}]``（最多 10 个人物 + 1 个讲员）。"""
+    return actor_entries(text, CAST_MAX_PRESENT, CAST_MAX_PEOPLE)
+
+
+def migrate_actor_text(text: str) -> str:
+    """t280: 旧写法（人物N： / 人物： / 讲员：）→ 新写法（人物只写 body，讲员 ``H body``）。只改标签，顺序和内容不动。"""
+    from utility import actor_format
+
+    return actor_format.migrate(_normalize_host_alias(text or "")) if (text or "").strip() else (text or "")
+
+
+def migrate_scene_actors(scenes) -> int:
+    """t280: 存场景之前把每一场的 actor 改成新写法。返回改了几场（原地改）。"""
+    n = 0
+    for sc in scenes or []:
+        if isinstance(sc, dict) and isinstance(sc.get("actor"), str) and sc["actor"].strip():
+            new = migrate_actor_text(sc["actor"])
+            if new != sc["actor"]:
+                sc["actor"] = new
+                n += 1
+    return n
+
+
+def actor_display_id(row) -> str:
+    """t279: 给人看的短编号：讲员 = ``H``，人物N = ``N``。只用在界面上；t280: 存的文字是新写法（讲员 ``H …``，人物不带标签），<N> 按位置。"""
+    row = row if isinstance(row, dict) else {}
+    if row.get("role") == "host":
+        return "H"
+    m = re.match(r"\s*人物\s*(\d+)", str(row.get("label") or ""))
+    return m.group(1) if m else ""
+
+
 def format_actor_entries(rows: list) -> str:
-    """按给定顺序写成 actor 文字。人物在这个顺序里重新编号，讲员留在被放到的位置。"""
+    """按给定顺序写成 actor 文字（t280 新写法：人物只写 body，讲员写 ``H body``），讲员留在被放到的位置。"""
     out = []
     person_n = 0
     for row in rows or []:
@@ -994,13 +1045,13 @@ def format_actor_entries(rows: list) -> str:
         if row.get("role") == "host":
             body = (row.get("body") or "").strip()
             if body and not actor_is_absent(body):
-                out.append(f"讲员：{body}")
+                out.append(f"H {body}")
             continue
         body = (row.get("body") or "").strip()
         if not body:
             continue
         person_n += 1
-        out.append(f"人物{person_n}：{body}")
+        out.append(body)
     return " | ".join(out)
 
 
@@ -1276,6 +1327,7 @@ LIST_ITEM_TOP_PROJECT_KEYS = (
     "scene_content",
     "scene_source",
     "scene_source_path",
+    "scene_source_range",  # t271: PDF 场景生成时用的页范围
     "topic_category",
     "topic_subtype",
     "tags",
@@ -1704,6 +1756,7 @@ def hydrate_config_cover_media(cfg: dict, video_detail: dict | None = None) -> N
     row = video_detail if isinstance(video_detail, dict) else None
     if row is None:
         row = load_video_detail_row_for_config(cfg)
+    row_known = row is not None  # t271: 找到了列表行（它才是页范围的准信）
     if row is None:
         row = cfg
     media = resolve_video_detail_cover_media(row)
@@ -1735,6 +1788,12 @@ def hydrate_config_cover_media(cfg: dict, video_detail: dict | None = None) -> N
         if k in LISTISH_FIELDS and isinstance(cfg.get(k), list):
             continue
         cfg[k] = v
+    # t267: PDF 的页范围（开始页 / 结束页）跟着带进项目配置（运行时字段）：建项目按 PDF 拆页时只拆选中的页
+    if isinstance(row, dict) and isinstance(row.get("pdf_page_ranges"), dict) and row.get("pdf_page_ranges"):
+        cfg["pdf_page_ranges"] = copy.deepcopy(row["pdf_page_ranges"])
+    elif row_known and isinstance(row, dict) and row is not cfg:
+        # t271: 列表行上已经没有页范围（用户把范围改回整份 / 删掉了）→ 清掉配置里残留的旧范围，不然会按旧范围拆
+        cfg.pop("pdf_page_ranges", None)
     # 列表行已写 slide 但 gen_video 查找未命中时仍保留已有合法路径
     if not get_primary_program_media(cfg, "slides"):
         stored = get_primary_program_media(row if isinstance(row, dict) else None, "slides") or get_primary_program_media(cfg, "slides")
@@ -2372,8 +2431,13 @@ class ProjectSelectionDialog:
             pid = f"p{stamp}_{n}"
 
         sc = sr.get('scene_content')
-        if not sc:
-            messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目", parent=form_parent)
+        from utility import story_scenes
+
+        _sc_problem = story_scenes.create_problem(sc)
+        if _sc_problem:  # t271: 没有有效的场景 JSON 不能创建项目
+            messagebox.showerror(
+                story_scenes.BLOCK_CREATE_TITLE, story_scenes.create_message(_sc_problem), parent=form_parent
+            )
             return
         # t373u: scenes are never split by <Ns> (here or after the image); <Ns> / <s>
         # segments are generated one by one at video time (utility/video_segments.py).
@@ -2448,8 +2512,17 @@ class ProjectSelectionDialog:
         item = selection[0]
         config_file = self.project_tree.item(item)['tags'][0]
         self.selected_config = self.config_manager.load_project_config(config_file)
-        
+
         if self.selected_config:
+            from utility import story_scenes
+
+            _open_problem = story_scenes.project_open_problem(self.selected_config)
+            if _open_problem:  # t271: 没有有效的场景 JSON 不能打开项目（留在列表里，可以选别的）
+                messagebox.showerror(
+                    story_scenes.BLOCK_OPEN_TITLE, story_scenes.open_message(_open_problem), parent=self.dialog
+                )
+                self.selected_config = None
+                return
             # 更新全局 PROJECT_CONFIG（selected_config 已由 load_project_config 读取，无需重复 load_config）
             ProjectConfigManager.set_global_config(self.selected_config)
             self.config_manager.pid = self.selected_config.get('pid')
@@ -2886,12 +2959,13 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
     ``setting_region`` / ``setting_era``：STORY 窗口选的地域和时代，写进新项目。
     ``scene_style``：STORY 窗口选的场景风格（Real / Gentle / …），写进新项目。"""
     global PROJECT_CONFIG
-    sc_ok = False
-    if isinstance(scene_content, list) and scene_content:
-        sc_ok = True
-    elif isinstance(scene_content, str) and scene_content.strip():
-        sc_ok = True
-    if not sc_ok:
+    from utility import story_scenes
+
+    _sc_problem = story_scenes.create_problem(scene_content)
+    if _sc_problem:  # t271: 没有有效的场景 JSON 不能创建项目（以前这里是悄悄取消）
+        messagebox.showerror(
+            story_scenes.BLOCK_CREATE_TITLE, story_scenes.create_message(_sc_problem), parent=parent
+        )
         return 'cancel', None
 
     config_manager = ProjectConfigManager()

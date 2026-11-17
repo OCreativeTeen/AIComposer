@@ -31,7 +31,7 @@ def person_names(actor_text: str) -> list[str]:
     """名单文字里的「人物」（不含讲员 / 不出现），按顺序。"""
     out = []
     try:
-        rows = project_manager.active_actor_entries(project_manager.actor_text_for_generation(actor_text or ""))
+        rows = project_manager.cast_entries(actor_text or "")  # t279: 人物栏最多 10 个人物，不按一场的 4 个截
     except Exception:  # noqa: BLE001
         return out
     for row in rows:

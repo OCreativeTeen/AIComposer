@@ -410,7 +410,10 @@ def _upload(page, paths: list, status: Status) -> None:
     files = [str(p) for p in paths]
     steps = []
     before_count = len(_image_srcs(page))
-    _say(status, f"上传 {len(paths)} 张图（第 1 张是基础图，后面是人物参考）…")
+    if all(str(p).lower().endswith(".pdf") for p in files):  # t272: PDF 文件（场景生成：整份选中页的 PDF 一起发给 Gemini）
+        _say(status, f"上传 PDF（{', '.join(os.path.basename(p) for p in files)}）…")
+    else:
+        _say(status, f"上传 {len(paths)} 张图（第 1 张是基础图，后面是人物参考）…")
     done = False
     # (a) 页面上已经有 file input：直接设文件（CDP DOM.setFileInputFiles）。
     target = _image_input(page)
@@ -1021,15 +1024,30 @@ def ask_text(prompt: str, status: Status = None, timeout_s: float = SCENE_TEXT_T
         return gs.send_text(prompt, timeout_s=timeout_s)
 
 
-def make_image(prompt: str, image_path, status: Status = None):
-    """贴基础图和人物参考图，再贴提示词。返回生成结果的 PIL Image。"""
+def ask_text_with_file(prompt: str, file_path: str, status: Status = None,
+                       timeout_s: float = SCENE_TEXT_TIMEOUT_S) -> str:
+    """t272: Gemini 网页文字问答，带一个文件（场景生成的 PDF）：新对话 → 上传文件 → 贴提示词 → 发送 → 等回复文字。
+    上传走和图片一样的路径（file input / 「+」菜单 / 合成粘贴）；文件没了或提示词是空的就报错，不发送。"""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise RuntimeError("提示词是空的")
+    if not (isinstance(file_path, str) and os.path.isfile(file_path)):
+        raise RuntimeError(f"要发给 Gemini 的文件不存在：{file_path}")
+    with GeminiSession(status=status, model=gemini_model()) as gs:
+        return gs.send_text(prompt, images=[file_path], timeout_s=timeout_s)
+
+
+def make_image(prompt: str, image_path, status: Status = None, *, allow_text: bool = False):
+    """贴基础图和人物参考图，再贴提示词。返回生成结果的 PIL Image。
+
+    t280: ``allow_text=True`` 时可以一张输入图都没有（文生图，只贴提示词）。"""
     prompt = _to_simplified(prompt)  # t210u: 送出前转简体
     prompt = (prompt or "").strip()
     if not prompt:
         raise RuntimeError("提示词是空的")
     paths = [image_path] if isinstance(image_path, str) else [p for p in (image_path or []) if p]
     paths = [p for p in paths if isinstance(p, str) and os.path.isfile(p)]
-    if not paths:
+    if not paths and not allow_text:
         raise RuntimeError("没有输入图片")
     if len(paths) > MAX_IMAGES:
         raise RuntimeError(f"Gemini 这次最多 {MAX_IMAGES} 张输入图，现在有 {len(paths)} 张")
@@ -1055,7 +1073,8 @@ def make_image(prompt: str, image_path, status: Status = None):
             _new_chat(page)
             _select_model(page, status)
             known = set(_image_srcs(page))
-            _upload(page, paths, status)
+            if paths:
+                _upload(page, paths, status)
             known |= set(_image_srcs(page))
             _say(status, "把提示词写进 Gemini 输入框 …")
             _submit_prompt(page, prompt, status)

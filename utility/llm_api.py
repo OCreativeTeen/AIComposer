@@ -40,6 +40,15 @@ MODEL_HARD = MANUAL  # 不再用 DeepSeek，难任务也走手动窗口
 MODEL_MANUAL = MANUAL
 # 生成长度上限。模型总窗口是 65536，提示词也算在里面，所以回答不要占满。
 STRATA_MAX_TOKENS = 32768
+def cli_auto_allows_file(file_kind: str, backend: str, win_mode: str) -> bool:
+    """t272: 「CLI自动」能不能带文件附件：没有文件 = 可以；PDF 只有 Gemini 网页可以（上传 PDF 再问）；
+    音频 / 视频、Grok（grok.com 对话没有文件上传）带文件时不能自动，只能手动。
+    以前：任何 PDF / 音频 / 视频附件都不自动，所以场景生成选 Gemini 也只停在手动窗口（模型按钮灰、不自动提交）。"""
+    if not file_kind:
+        return True
+    return file_kind == "pdf" and str(backend or "").strip().lower() == "gemini" and win_mode == "file"
+
+
 STRATA_SCENE_TIMEOUT_S = 900.0  # t122u: 场景生成直接调本机 Strata，长回答慢，给足时间
 
 MODELS = {
@@ -63,6 +72,8 @@ AUTO_CLI_DELAY_MS = 300
 
 # CLI自动 returns a file for these kinds (video = Grok Imagine; the rest = NotebookLM Studio).
 STUDIO_CLI_KINDS = ("slides", "infographic", "audio_overview", "video_overview")
+# t280: 文生图（没有输入图）：窗口显示提示词和「返回的图」区（可粘贴）；CLI自动 用 Grok / Gemini 文生图。
+TEXT_IMAGE_CLI_KIND = "text_image"
 FILE_CLI_KINDS = ("video",) + STUDIO_CLI_KINDS
 
 
@@ -404,6 +415,8 @@ class LLMApi:
     ):
         """只打开手动窗口，用来复制提示词和图片。不调用模型。
 
+        ``cli_kind="text_image"``（t280）：文生图。不需要输入图；CLI自动 用 Grok Imagine / Gemini 按提示词出图，
+        也可以把图贴进「返回的图」区再按确定。结果是 PIL Image。
         ``cli_kind="video"``：CLI自动 用 Grok Imagine 把（第一张）图做成视频，下载到 ``file_dest_dir``，
         结果是 :class:`FileResult`（mp4 路径）；手动时也可以点「选视频文件…」交回一个文件。
         ``on_file_response(path)`` 在拿到文件结果时调用。
@@ -856,7 +869,7 @@ class LLMApi:
             "notebook" if cli_kind in STUDIO_CLI_KINDS
             else "video" if cli_kind == "video"
             else "file" if file_kind
-            else "image" if image_paths
+            else "image" if (image_paths or cli_kind == TEXT_IMAGE_CLI_KIND)
             else "text"
         )
         model_btns = []
@@ -1537,7 +1550,8 @@ class LLMApi:
                     _manual_video_on_ok()
                     return
                 # 图片：「返回的图」还空着、也没贴文字 → 从剪贴板取图；取不到就提示并留着窗口
-                if paste_image_handler[0] is not None and response_image[0] is None and not typed and image_paths:
+                if (paste_image_handler[0] is not None and response_image[0] is None and not typed
+                        and (image_paths or cli_kind == TEXT_IMAGE_CLI_KIND)):
                     img = self._image_from_clipboard()
                     if img is None:
                         try:
@@ -1727,13 +1741,21 @@ class LLMApi:
             selected_model.set(mid)
             on_ok()  # 交回调用方，用这个 API 模型生成（和原来先点模型再点确定一样）
 
+        def _auto_files_ok(backend: str = "") -> bool:
+            """t272: 没有文件附件 = 可以自动；PDF 附件只有 Gemini 网页能自动（上传 PDF 再问）；音频 / 视频 / Grok 带文件仍手动。"""
+            return cli_auto_allows_file(file_kind, backend or str(extra_params.get("text_backend") or ""), win_mode)
+
         def on_cli_auto(text_backend_override: str = ""):
             """有图：Grok Imagine 以图生图，结果进「返回的图」。没图：grok.com 对话，结果进「响应」。然后点完成。
             失败时只显示错误，窗口照旧可以手动粘贴。"""
             if cli_busy[0]:
                 return
-            if file_kind:
-                cli_status.config(text="CLI自动 不支持 PDF / 音频 / 视频附件，请手动操作", foreground="#c00000")
+            if not _auto_files_ok(text_backend_override):
+                cli_status.config(
+                    text=("CLI自动 的 PDF 只支持 Gemini（Grok 网页不能上传文件），请选 Gemini 或手动操作"
+                          if file_kind == "pdf" else "CLI自动 不支持音频 / 视频附件，请手动操作"),
+                    foreground="#c00000",
+                )
                 return
             prompt = get_request_copy_content()
             image_path = image_paths[0] if image_paths else ""
@@ -1849,8 +1871,8 @@ class LLMApi:
                             _finish_with_file(mp4)
 
                         _cli_ui(_apply_file)
-                    elif image_path:
-                        # 全部输入图按顺序贴（第一张基础图，后面是人物参考图）。
+                    elif image_path or cli_kind == TEXT_IMAGE_CLI_KIND:
+                        # 全部输入图按顺序贴（第一张基础图，后面是人物参考图）。t280: 文生图时一张都没有。
                         use_gemini = video_backend == "gemini"  # t132u: 下面一行选的后端（初值来自 image_backend）
                         use_moss = video_backend == "moss"  # t229u: 本机 ComfyUI MOSS
                         use_qn = video_backend == "qn"  # t234u: 本机 ComfyUI Qwen
@@ -1859,7 +1881,10 @@ class LLMApi:
                             "QN" if use_qn else
                             ("Gemini" if use_gemini else "Grok Imagine")
                         )
-                        _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…")
+                        if not image_paths and (use_moss or use_qn):
+                            raise RuntimeError(f"{who} 只能以图生图；文生图请选 Grok / Gemini，或手动把图贴进「返回的图」")
+                        _cli_set_status(f"CLI自动：{who} 图生图（{len(image_paths)} 张）…" if image_paths
+                                        else f"CLI自动：{who} 文生图 …")
                         print(f"[CLI自动] 发给 {who} 的图（{len(image_paths)} 张）: " + " | ".join(
                             f"{k}={os.path.basename(str(p))}" for k, p in enumerate(image_paths, 1)))
                         # t356u: 图片修改给 MOSS / QN 时已写好 ComfyUI 专用提示 + 反向提示 + 画布（extra 里 comfy_*），
@@ -1885,7 +1910,12 @@ class LLMApi:
                             with chrome_account.use(acct):
                                 if use_gemini:
                                     from . import gemini_cdp
-                                    img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                                    if image_paths:
+                                        img = gemini_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
+                                    else:  # t280: 文生图
+                                        img = gemini_cdp.make_image(prompt, [], status=_cli_set_status, allow_text=True)
+                                elif not image_paths:
+                                    img = grok_cdp.make_image_from_text(prompt, status=_cli_set_status)
                                 else:
                                     img = grok_cdp.make_image(prompt, list(image_paths), status=_cli_set_status)
 
@@ -1905,8 +1935,12 @@ class LLMApi:
                         if text_backend_now == "gemini":
                             from . import gemini_cdp
 
-                            _cli_set_status("CLI自动：Gemini 生成文字 …")
-                            text = gemini_cdp.ask_text(prompt, status=_cli_set_status)
+                            if file_kind == "pdf":  # t272: 选中页的 PDF 整份发给 Gemini（提示词里写了一页一场、共 n 场）
+                                _cli_set_status("CLI自动：Gemini 读 PDF 生成文字 …")
+                                text = gemini_cdp.ask_text_with_file(prompt, attachment, status=_cli_set_status)
+                            else:
+                                _cli_set_status("CLI自动：Gemini 生成文字 …")
+                                text = gemini_cdp.ask_text(prompt, status=_cli_set_status)
                             who_text = "Gemini"
                         else:
                             text = grok_cdp.ask_text(prompt, status=_cli_set_status)
@@ -2038,8 +2072,8 @@ class LLMApi:
                 pass
 
         def _auto_start():
-            # 每个窗口最多自动一次；失败后不再自动。PDF / 音频 / 视频不自动。
-            if auto_state["started"] or auto_state["failed"] or cli_busy[0] or file_kind:
+            # 每个窗口最多自动一次；失败后不再自动。音频 / 视频不自动；PDF 只有选了 Gemini 才自动（t272）。
+            if auto_state["started"] or auto_state["failed"] or cli_busy[0] or not _auto_files_ok():
                 return
             if not auto_var.get():
                 return
@@ -2051,7 +2085,7 @@ class LLMApi:
             auto_state["started"] = True
             on_cli_auto()
 
-        if auto_var.get() and not file_kind:
+        if auto_var.get() and _auto_files_ok():
             dialog.after(AUTO_CLI_DELAY_MS, _auto_start)
         ttk.Separator(model_btn_row, orient=tk.VERTICAL).pack(side=tk.RIGHT, fill=tk.Y, padx=48, pady=2)
 

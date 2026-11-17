@@ -6,6 +6,10 @@ import config_channel
 import config_prompt
 from utility.file_util import safe_copy_overwrite, safe_clipboard_json_copy, show_auto_close_popup
 import project_manager
+from utility import pdf_range  # t267: PDF 页范围（开始页 / 结束页）
+from gui.dl import pdf_scene_mode as pdf_mode_mod  # t275: PDF 生成场景前问：一页一个场景 / 把 PDF 当文字内容
+from gui.dl import material_hint as material_hint_mod  # t277: 材料行下面那一行提示（跟着选中的东西变，一行放得下）
+from gui.dl import gen_row as gen_row_mod  # t268: 材料行里叙事方式 / 步数 / 共 N 集 / 按钮的固定顺序和大小
 try:
     from tkinterdnd2 import DND_FILES
     import tkinterdnd2 as _tkinterdnd2
@@ -205,6 +209,13 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
     material_pdf = (_find_gen_video_slide_for_row(video_detail) or "").strip()
     if material_pdf and not material_pdf.lower().endswith(".pdf"):
         material_pdf = ""
+    if material_pdf:
+        # t267: 材料 PDF 会整份上传 NotebookLM / 拷成 content.pdf：选了页范围就换成只含这几页的 PDF（截不出来就不带，不退回整份）
+        try:
+            material_pdf = pdf_range.effective_pdf(video_detail, material_pdf)
+        except pdf_range.PdfRangeError as exc:
+            messagebox.showwarning("节目生成", f"材料 PDF 的页范围用不了，这次不带材料 PDF：\n{exc}", parent=dlg)
+            material_pdf = ""
 
     def copy_text(text: str) -> None:
         _copy_text_to_clipboard(dlg, text)
@@ -307,6 +318,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             # 文字场景之后又生成了信息图：创建项目时按这张封面配图，不再看场数。
             video_detail["scene_source"] = project_manager.SCENE_SOURCE_INFOGRAPHIC
             video_detail["scene_source_path"] = os.path.abspath(current)
+            video_detail.pop("scene_source_range", None)
         gui._persist_video_detail_story(video_detail, parent=dlg)
         refresh_source = getattr(dlg, "_refresh_scene_source_label", None)
         if callable(refresh_source):
@@ -542,7 +554,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
             on_image_response=_on_pasted_image if kind == "infographic" else None,
         )
 
-    # 节目生成的方式跟着预览里选的方式走（短故事 / 播客 / 故事对话 / 故事表演；t262: 谁说话、人物怎么演用共用规则）
+    # 节目生成的方式跟着预览里选的方式走（播客 / 故事对话 / 故事表演；t262: 谁说话、人物怎么演用共用规则）
     _series_label = ""
     try:
         _var = scene_ui.get("prompt_combo_var") if isinstance(scene_ui, dict) else None
@@ -550,7 +562,7 @@ def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: d
     except tk.TclError:
         _series_label = ""
     _series_label = _series_label or (video_detail.get("scene_prompt_label") or "").strip()
-    # t448u: 节目生成没有自己的风格选项，跟主窗口选的方式走（短故事 / 播客 / 故事对话 / 故事表演）。
+    # t448u: 节目生成没有自己的风格选项，跟主窗口选的方式走（播客 / 故事对话 / 故事表演）。
     # 主窗口不是这四种时用这一条存的故事风格；旧的主持人节目 / 技术方案汇报 / 高管简报默默归到故事表演（不预填 FYI）。
     _old_narr = str((saved or {}).get("narrative") or "") if isinstance(saved, dict) else ""
     _fallback_style = (
@@ -705,13 +717,16 @@ class SceneEditorImpl:
             # 下面用 pack(in_=material_row) 放进材料行（Tk 不能换父控件，所以父控件取共同的 frm）。
             gen_host = ttk.Frame(frm)
             scene_ui["gen_host"] = gen_host
-            default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
+            # t266: 没存过 → 故事对话（旧短故事的接班人）；列表里没有它（别的频道）就用列表第一个
+            default_prompt_label = config_channel.default_scene_prompt_label([opt[0] for opt in nb_prompt_choices])
             _saved_prompt_label = ""
+            _saved_prompt_raw = ""
             for _src in (video_detail, video_detail.get(project_manager.PROJECT_PROFILE_KEY)):
                 if isinstance(_src, dict) and (_src.get("scene_prompt_label") or "").strip():
                     _saved_prompt_label = (_src.get("scene_prompt_label") or "").strip()
+                    _saved_prompt_raw = _saved_prompt_label  # t266: 旧的短故事 / Step Story 存值要靠它迁成故事对话 + 原来的步数
                     if not any((opt[0] or "").strip() == _saved_prompt_label for opt in nb_prompt_choices):
-                        # t447u: 旧名（Step Story、Series . Podcast、Series · Story Only …）→ 现在的中文名
+                        # t447u: 旧名（Step Story、Series . Podcast、Series · Story Only …）→ 现在的中文名；t266: 短故事 → 故事对话
                         _saved_prompt_label = config_channel.canonical_prompt_label(_saved_prompt_label)
                     break
             if config_channel.is_series_direct_label(_saved_prompt_label):
@@ -724,7 +739,7 @@ class SceneEditorImpl:
                      if config_prompt.normalize_story_style(opt[0]) == _want),
                     _saved_prompt_label,
                 )
-            # t205u: 这一条没存过 → 用列表第一个（Step Story），不再用频道上次的选择
+            # t205u: 这一条没存过 → 用默认（t266: 故事对话），不再用频道上次的选择
             if _saved_prompt_label in [opt[0] for opt in nb_prompt_choices]:
                 default_prompt_label = _saved_prompt_label
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
@@ -733,28 +748,31 @@ class SceneEditorImpl:
                 textvariable=prompt_combo_var,
                 values=[opt[0] for opt in nb_prompt_choices],
                 state="readonly" if nb_prompt_choices else "disabled",
-                width=28,
+                # t266: 叙事方式下拉缩到原来的一半（28 → 14），给后面的控件让地方；别的频道标签长（英文名），按需要放宽到不截断
+                width=config_channel.prompt_combo_width([opt[0] for opt in nb_prompt_choices]),
             )
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
-            # Step Story：步数；直接生成系列节目：共 N 集 / 第 k 集。只在选中对应模板时显示。
-            step_count_var = tk.StringVar(value=str(config_channel.STEP_STORY_DEFAULT))
+            gen_row = gen_row_mod.GenRow(gen_host)  # t268: 这一行的顺序登记处
+            scene_ui["gen_row"] = gen_row
+            gen_row.add(prompt_combo, "combo", padx=(0, 8))
+            # 故事对话（t266: 已并入短故事）：步数 0 = 按故事需要规划场景，1–6 = 固定场景数；共 N 集（每次生成都是全部集）。
+            step_count_var = tk.StringVar(value=str(config_channel.STORY_STEPS_DEFAULT))
             step_frm = ttk.Frame(gen_host)
             step_lbl = ttk.Label(step_frm, text="步数")
             step_lbl.pack(side=tk.LEFT, padx=(0, 2))
             step_count_combo = ttk.Combobox(
                 step_frm,
                 textvariable=step_count_var,
-                values=[
-                    str(i)
-                    for i in range(config_channel.STEP_STORY_MIN, config_channel.STEP_STORY_MAX + 1)
-                ],
+                values=[str(i) for i in config_channel.STORY_STEPS_CHOICES],
                 state="readonly",
                 width=3,
             )
             step_count_combo.pack(side=tk.LEFT)
+            # t273: PDF 一页一个场景时，步数（1–6 固定场景数）不用：下拉灰掉。
+            # t277: 步数和「共 N 集」之间不放任何说明；「步数不用」写在材料行下面那一行提示里。
+            _material_is_pdf = [False]
+            gen_row.add(step_frm, "step", padx=(0, 8))
             series_total_var = tk.StringVar(value="1")  # t436u: 共 1 集 = 不分集；共 N 集 = 一次生成全部 N 集
-            series_ep_var = tk.StringVar(value="1")
-            series_only_var = tk.BooleanVar(value=False)  # t436u: 勾上 = 只重新生成第 k 集（其它集不动）
             series_frm = ttk.Frame(gen_host)
             ttk.Label(series_frm, text="共").pack(side=tk.LEFT, padx=(0, 2))
             series_total_combo = ttk.Combobox(
@@ -765,14 +783,9 @@ class SceneEditorImpl:
                 width=3,
             )
             series_total_combo.pack(side=tk.LEFT)
-            ttk.Label(series_frm, text="集").pack(side=tk.LEFT, padx=(2, 6))
-            series_only_chk = ttk.Checkbutton(series_frm, text="只重新生成第", variable=series_only_var)
-            series_only_chk.pack(side=tk.LEFT)
-            series_ep_combo = ttk.Combobox(
-                series_frm, textvariable=series_ep_var, state="readonly", width=3
-            )
-            series_ep_combo.pack(side=tk.LEFT)
             ttk.Label(series_frm, text="集").pack(side=tk.LEFT, padx=(2, 0))
+            gen_row.add(series_frm, "series", padx=(0, 8))
+            # t266: 不再有分集重新生成（复选框 + 第 k 集下拉已删）：每次生成都是全部集。
 
             def _int_of(var, default: int) -> int:
                 try:
@@ -780,57 +793,89 @@ class SceneEditorImpl:
                 except (TypeError, ValueError):
                     return default
 
-            def _sync_series_episode_choices(*_a):
-                n = max(1, _int_of(series_total_var, config_channel.SERIES_DIRECT_DEFAULT_EPISODES))
-                series_ep_combo.configure(values=[str(i) for i in range(1, n + 1)])
-                if _int_of(series_ep_var, 1) > n:
-                    series_ep_var.set(str(n))
-                _multi = n > 1  # t436u: 共 1 集时「只重新生成第 k 集」没有意义
-                series_only_chk.configure(state="normal" if _multi else "disabled")
-                series_ep_combo.configure(state="readonly" if _multi else "disabled")
-                if not _multi:
-                    series_only_var.set(False)
+            _step_kind_of = gen_row_mod.step_kind  # t268: 搬到 gui/dl/gen_row.py（测试要用）
 
-            _sync_series_episode_choices()
-            series_total_var.trace_add("write", _sync_series_episode_choices)
-
-            # 步数下拉两用：Step Story = 共几场（默认 3），图片分解 = 取第几步（默认 1）；各自记住自己的值。
-            # t205u: 这一条存过步数就用存的，没有就默认 STEP_STORY_DEFAULT（4）
+            # 步数下拉三用：故事对话 = 几场（默认 0 = 自由规划）、FlyLink 固定步数故事 = 几场（默认 4）、图片分解 = 取第几步（默认 1）；各自记住自己的值。
+            # t266: 故事对话的步数存在 scene_steps_dialogue；旧的 scene_steps 只给旧的短故事 / Step Story 存值迁移（原来是几步还是几步）
+            # 和 FlyLink 的固定步数故事用。旧的故事对话项目里残留的 scene_steps（那时步数框不显示）不会变成固定场景数。
             _saved_steps = ""
+            _saved_steps_dialogue = ""
             for _src in (video_detail, video_detail.get(project_manager.PROJECT_PROFILE_KEY)):
-                if isinstance(_src, dict) and str(_src.get("scene_steps") or "").strip().isdigit():
+                if not isinstance(_src, dict):
+                    continue
+                if not _saved_steps and str(_src.get("scene_steps") or "").strip().isdigit():
                     _saved_steps = str(_src.get("scene_steps")).strip()
-                    break
-            _step_memory = {"story": _saved_steps or str(config_channel.STEP_STORY_DEFAULT), "image": "1"}
-            step_count_var.set(_step_memory["story"])
+                if not _saved_steps_dialogue and str(_src.get("scene_steps_dialogue") if _src.get("scene_steps_dialogue") is not None else "").strip().isdigit():
+                    _saved_steps_dialogue = str(_src.get("scene_steps_dialogue")).strip()
+            _dlg_steps = _saved_steps_dialogue
+            if not _dlg_steps and config_channel.legacy_story_steps(_saved_prompt_raw):
+                _dlg_steps = _saved_steps or str(config_channel.legacy_story_steps(_saved_prompt_raw))
+            _step_memory = {
+                "dialogue": _dlg_steps or str(config_channel.STORY_STEPS_DEFAULT),
+                "fixed": _saved_steps or str(config_channel.STEP_STORY_DEFAULT),
+                "image": "1",
+            }
+            _step_values = {
+                "dialogue": [str(i) for i in config_channel.STORY_STEPS_CHOICES],
+                "fixed": [str(i) for i in range(config_channel.STEP_STORY_MIN, config_channel.STEP_STORY_MAX + 1)],
+                "image": [str(i) for i in range(config_channel.STEP_STORY_MIN, config_channel.STEP_STORY_MAX + 1)],
+            }
+            step_count_var.set(_step_memory["dialogue"])
             _step_kind = [None]
+
+            def _pdf_mode_now() -> str:
+                """t275: 这一条的 PDF 用法（上一次问用户选的；没选过 = 一页一个场景）：page / text。"""
+                return pdf_mode_mod.remembered_mode(video_detail)
+
+            def _steps_ignored_now() -> bool:
+                """t273 / t275: 材料选 PDF 且用法是「一页一个场景」时，故事对话的步数不用（场数 = 选中的页数）。
+                「把 PDF 当文字内容」和别的材料照旧用步数。"""
+                return (
+                    bool(_material_is_pdf[0]) and _pdf_mode_now() == pdf_mode_mod.MODE_PAGE
+                    and _step_kind_of((prompt_combo_var.get() or "").strip()) == "dialogue"
+                )
+
+            def _sync_steps_for_pdf(*_a):
+                off = _steps_ignored_now()
+                step_count_combo.configure(state="disabled" if off else "readonly")
+                _hint_sync = scene_ui.get("sync_material_hint")  # t277: 提示行跟着叙事方式 / PDF 用法变
+                if callable(_hint_sync):
+                    _hint_sync()
+
+            def _sync_episode_enable(*_a):
+                # t266: 故事对话固定 N 场（步数 1–6）= 一个故事，不分集：共 N 集不可选（生成按 1 集）；步数 0 = 共 N 集照常有效
+                sel = (prompt_combo_var.get() or "").strip()
+                fixed = bool(config_channel.fixed_story_steps(
+                    sel, {"steps": 0 if _steps_ignored_now() else _int_of(step_count_var, 0)}))
+                series_total_combo.configure(state="disabled" if fixed else "readonly")
 
             def _sync_dynamic_prompt_widgets(*_a):
                 sel = (prompt_combo_var.get() or "").strip()
-                kind = (
-                    "image" if config_channel.is_step_image_label(sel)
-                    else "story" if config_channel.is_step_story_label(sel)
-                    else None
-                )
+                kind = _step_kind_of(sel)
                 if kind != _step_kind[0]:
                     if _step_kind[0] is not None:
                         _step_memory[_step_kind[0]] = step_count_var.get() or _step_memory[_step_kind[0]]
                     if kind is not None:
+                        step_count_combo.configure(values=_step_values[kind])
                         step_count_var.set(_step_memory[kind])
                     _step_kind[0] = kind
-                step_frm.pack_forget()
-                series_frm.pack_forget()
-                if config_channel.is_step_story_label(sel) or config_channel.is_step_image_label(sel):
-                    # Step Story：共几场；图片分解：取图里的第几步
-                    step_lbl.configure(
-                        text="第几步" if config_channel.is_step_image_label(sel) else "步数"
-                    )
-                    step_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
-                if not (config_channel.is_step_image_label(sel) or config_channel.is_scene_summary_image_label(sel)):
-                    # t436u: 共 N 集对所有场景提示词都有效（以前只给 Series）
-                    series_frm.pack(side=tk.LEFT, padx=(0, 8), after=step_frm if step_frm.winfo_manager() else prompt_combo)
+                if kind is not None:
+                    # 故事对话 / 固定步数故事：几场；图片分解：取图里的第几步
+                    step_lbl.configure(text="第几步" if kind == "image" else "步数")
+                # t268: 这一行的顺序只由 GenRow 定（下拉 → 步数 → 共 N 集 → 分隔线 → 按钮），切叙事方式不会再让「共 N 集」跳位置
+                # t436u: 共 N 集对所有场景提示词都有效（以前只给 Series）
+                for _k, _on in gen_row_mod.visible_parts(sel).items():
+                    gen_row.show(_k, _on)
+                from utility import cast_preset as _cast_dyn  # t272: 「动态生成人物」只给播客 / 故事对话 / 故事表演
+                _dyn_sync = scene_ui.get("sync_dynamic_chk")  # t274: 勾选框现在在第 3 行（人物栏右边），不在这一行
+                if callable(_dyn_sync):
+                    _dyn_sync(bool(_cast_dyn.mode_for_label(sel)))
+                gen_row.relayout()
+                _sync_steps_for_pdf()
+                _sync_episode_enable()
 
             prompt_combo_var.trace_add("write", _sync_dynamic_prompt_widgets)
+            step_count_var.trace_add("write", _sync_episode_enable)
             _sync_dynamic_prompt_widgets()
 
             def _commit_prompt_label(_e=None):
@@ -851,16 +896,20 @@ class SceneEditorImpl:
             prompt_combo.bind("<<ComboboxSelected>>", _commit_prompt_label, add="+")
 
             def _commit_steps(_e=None):
-                # t205u: 只记 Step Story 的步数（图片分解的“第几步”不存）
-                if not config_channel.is_step_story_label((prompt_combo_var.get() or "").strip()):
+                # t205u: 只记故事对话 / 固定步数故事的步数（图片分解的“第几步”不存）
+                # t266: 故事对话存 scene_steps_dialogue（0 也存）；固定步数故事仍存 scene_steps
+                kind = _step_kind_of((prompt_combo_var.get() or "").strip())
+                if kind not in ("dialogue", "fixed"):
                     return
+                key = "scene_steps_dialogue" if kind == "dialogue" else "scene_steps"
                 v = (step_count_var.get() or "").strip()
-                if not v.isdigit() or str(video_detail.get("scene_steps") or "") == v:
+                _cur = video_detail.get(key)
+                if not v.isdigit() or (_cur is not None and str(_cur) == v):
                     return
-                video_detail["scene_steps"] = int(v)
+                video_detail[key] = int(v)
                 pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
                 if isinstance(pp, dict):
-                    pp["scene_steps"] = int(v)
+                    pp[key] = int(v)
                 try:
                     persist(video_detail, parent=dlg)
                 except Exception:
@@ -873,9 +922,16 @@ class SceneEditorImpl:
 
             material_var = tk.StringVar(value="analyzed")
             pdf_layout_var = tk.StringVar(value="ai")
-            pdf_source_cache = {"path": "", "text": "", "pages": 0, "has_text": False}
+            pdf_source_cache = {"path": "", "text": "", "pages": 0, "has_text": False, "range": None, "error": ""}
             material_row = ttk.Frame(frm)
             material_row.pack(fill=tk.X, pady=(0, 6))
+            # t277: 材料行下面一行小字提示：跟着选中的东西变（PDF / 分析报告 / 图片 / 音视频 / 文字稿 / 没选），量字宽放进一行
+            material_hint_var = tk.StringVar(value="")
+            material_hint_lbl = ttk.Label(
+                frm, textvariable=material_hint_var, font=("TkDefaultFont", 8), foreground="gray30", anchor="w"
+            )
+            material_hint_lbl.pack(fill=tk.X, pady=(0, 2))
+            scene_ui["material_hint_lbl"] = material_hint_lbl
             btn_analyzed = tk.Button(
                 material_row,
                 text="分析报告",
@@ -899,12 +955,28 @@ class SceneEditorImpl:
             scene_count_var = slide_info_var if slide_info_var is not None else tk.StringVar(value="")
             scene_count_lbl = ttk.Label(material_row, textvariable=scene_count_var)
             scene_count_lbl.pack(side=tk.LEFT, padx=(4, 4))
-            ttk.Separator(material_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=14)
+            ttk.Separator(material_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=8)
             gen_host.pack(in_=material_row, side=tk.LEFT, padx=(4, 0))
             gen_host.lift(material_row)  # 子控件叠在材料行上面才看得见
             smart_slot = ttk.Frame(material_row)
             smart_slot.pack(side=tk.LEFT, padx=(4, 0))
             scene_ui["smart_slot"] = smart_slot
+            # t268: 这一行放不下（窗口窄）时，让状态文字（PDF · 图片 0 · 无媒体）自己换行变窄，不把按钮挤出窗口
+            _fit_job = {"id": None}
+
+            def _fit_status(_e=None):
+                def _go():
+                    _fit_job["id"] = None
+                    gen_row_mod.fit_status_label(material_row, scene_count_lbl)
+
+                if _fit_job["id"] is None:
+                    try:
+                        _fit_job["id"] = material_row.after_idle(_go)
+                    except tk.TclError:
+                        pass
+
+            material_row.bind("<Configure>", _fit_status, add="+")
+            gen_host.bind("<Configure>", _fit_status, add="+")
             pdf_layout_combo = ttk.Combobox(
                 material_row,
                 state="readonly",
@@ -920,6 +992,12 @@ class SceneEditorImpl:
 
             def _copy_slide_pdf():
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                if slide:
+                    try:  # t267: 选了页范围就拷只含这几页的 PDF
+                        slide = pdf_range.effective_pdf(video_detail, slide)
+                    except pdf_range.PdfRangeError as exc:
+                        messagebox.showwarning("PDF", f"页范围用不了，没有复制：\n{exc}", parent=dlg)
+                        return
                 if _copy_file_to_clipboard_hdrop(dlg, slide):
                     show_auto_close_popup(
                         dlg,
@@ -1015,14 +1093,29 @@ class SceneEditorImpl:
                 return "page" if shown.startswith("每一页") else "ai"
 
             def _remember_pdf_source(path: str | None = None) -> dict:
+                """场景生成用的 PDF 说明（文件名 + 页数）。t267: 选了页范围时说的是「只含选中页」的那一份：页数 = 选中的页数。
+                截不出来时 text 为空、error 写原因（场景生成会提示，不退回整份）。"""
                 slide = (path if path is not None else _find_gen_video_slide_for_row(video_detail) or "").strip()
-                if slide and slide == pdf_source_cache["path"]:
+                start, end, total = pdf_range.get_range(video_detail, slide) if slide else (1, 0, 0)
+                if slide and slide == pdf_source_cache["path"] and pdf_source_cache.get("range") == (start, end):
                     return pdf_source_cache
-                text, pages, has_text = _pdf_pages_as_scene_source(slide) if slide else ("", 0, False)
+                text, pages, has_text, error = "", 0, False, ""
+                if slide:
+                    try:
+                        text, pages, has_text = _pdf_pages_as_scene_source(pdf_range.effective_pdf(video_detail, slide))
+                        if text and pdf_range.is_partial(start, end, total):
+                            text += (
+                                f"\nThis file holds only pages {start}-{end} of the original {total}-page PDF; "
+                                "treat these pages as the whole material."
+                            )
+                    except pdf_range.PdfRangeError as exc:
+                        error = str(exc)
                 pdf_source_cache["path"] = slide
                 pdf_source_cache["text"] = text
                 pdf_source_cache["pages"] = pages
                 pdf_source_cache["has_text"] = has_text
+                pdf_source_cache["range"] = (start, end)
+                pdf_source_cache["error"] = error
                 return pdf_source_cache
 
             def _fill_material_preview():
@@ -1060,7 +1153,8 @@ class SceneEditorImpl:
                     pages = int(cached.get("pages") or 0)
                     material_preview.insert(
                         "1.0",
-                        f"{os.path.basename(slide)}\n共 {pages} 页\n\n"
+                        f"{os.path.basename(slide)}\n"
+                        f"{pdf_range.label(*pdf_range.get_range(video_detail, slide)) or f'共 {pages} 页'}\n\n"
                         "双击这里，把这份 PDF 拷到剪贴板。\n"
                         "双击上面的 PDF 按钮，可以从下载文件夹换一份 PDF，或按顺序把图片合成 PDF。",
                     )
@@ -1189,6 +1283,7 @@ class SceneEditorImpl:
                         )
                         safe_copy_overwrite(pdf_path, dest)
                         append_program_media(video_detail, "slides", os.path.abspath(dest))
+                        pdf_range.forget(video_detail, os.path.abspath(dest))  # t267: 新 PDF 一律从第 1 页到最后一页
                     except Exception as exc:
                         messagebox.showerror("PDF", f"无法保存这份 PDF：\n{exc}", parent=dlg)
                         return
@@ -1204,7 +1299,7 @@ class SceneEditorImpl:
                     if callable(refresh_media):
                         refresh_media()
                     persist(video_detail, parent=dlg)
-                    note = f"这份 PDF 已挂到这一条（{page_count} 页）。"
+                    note = f"这份 PDF 已挂到这一条（{page_count} 页，默认用整份；PDF 行右边可以选开始页 / 结束页）。"
                     if config_channel.is_series_label(prompt_combo_var.get() or ""):
                         note += "\n\n系列提示词可以在材料旁边选择：每一页一个场景，或由 AI 判断场数。"
                     show_auto_close_popup(dlg, "PDF", note)
@@ -1445,13 +1540,14 @@ class SceneEditorImpl:
                         slides = [one]
                 if slides:
                     for i, slide in enumerate(slides, 1):
-                        pages = int(_remember_pdf_source(slide).get("pages") or 0)
+                        # t267: 每份 PDF 一个页范围（开始页 / 结束页），默认整份；行文字写「共 N 页 · 第 a–b 页」
+                        pstart, pend, pages = pdf_range.get_range(video_detail, slide)
                         label = f"PDF {i}/{len(slides)}" if len(slides) > 1 else "PDF"
-                        detail = f"共 {pages} 页"
-                        if len(slides) > 1 and i == 1:
-                            detail += " · 当前（最新）"
+                        suffix = " · 当前（最新）" if len(slides) > 1 and i == 1 else ""
+                        detail = (pdf_range.label(pstart, pend, pages) or "（打不开这份 PDF）") + suffix
                         out.append({"kind": "pdf", "path": slide, "select": "pdf", "analyze": True,
-                                    "title": f"{label}：{os.path.basename(slide)}", "detail": detail})
+                                    "title": f"{label}：{os.path.basename(slide)}", "detail": detail,
+                                    "pages": pages, "page_start": pstart, "page_end": pend, "suffix": suffix})
                 else:
                     out.append({"kind": "pdf", "path": "", "select": "", "placeholder": True,
                                 "tile": "无 PDF", "title": "（没有 PDF）",
@@ -1597,6 +1693,12 @@ class SceneEditorImpl:
                     if not path or not os.path.isfile(path):
                         show_auto_close_popup(dlg, "没有文字稿", "这一条还没有文字稿文件。")
                         return
+                if kind == "pdf" and path:
+                    try:  # t267: 选了页范围就拷只含这几页的 PDF（文件名带 _p起-止）
+                        path = pdf_range.effective_pdf(video_detail, path)
+                    except pdf_range.PdfRangeError as exc:
+                        messagebox.showwarning("PDF", f"页范围用不了，没有复制：\n{exc}", parent=dlg)
+                        return
                 if path and _copy_file_to_clipboard_hdrop(dlg, path):
                     show_auto_close_popup(
                         dlg, "已复制", f"文件已拷到剪贴板，可以粘贴到别处：\n{os.path.basename(path)}"
@@ -1659,6 +1761,7 @@ class SceneEditorImpl:
                 if kind == "pdf":
                     from utility.program_media import get_program_media_list, remove_program_media
 
+                    pdf_range.forget(video_detail, path)  # t267: PDF 去掉了，页范围一起去掉
                     if len(get_program_media_list(video_detail, "slides")) > 1:
                         remove_program_media(video_detail, "slides", path)
                         persist(video_detail, parent=dlg)
@@ -1715,7 +1818,11 @@ class SceneEditorImpl:
                 if not scenes:
                     messagebox.showwarning("图片对场景", "这一条还没有场景（scene_content 为空），先生成场景。", parent=dlg)
                     return
-                what = "PDF 里每页的图" if source == "pdf" else "视频里每一张幻灯片"
+                pages_sel = pdf_range.pages_arg(video_detail, path) if source == "pdf" else None  # t267: 只抽选中的页
+                what = (
+                    ("PDF 第 %d–%d 页里每页的图" % pages_sel) if pages_sel
+                    else "PDF 里每页的图" if source == "pdf" else "视频里每一张幻灯片"
+                )
                 out_dir = mim.working_dir_for(path)
                 if not messagebox.askyesno(
                     "图片对场景",
@@ -1734,7 +1841,10 @@ class SceneEditorImpl:
 
                 def _work() -> None:
                     try:
-                        holder["result"] = mim.run_match(path, source, snapshot, out_dir=out_dir, progress=_progress)
+                        holder["result"] = mim.run_match(
+                            path, source, snapshot, out_dir=out_dir, progress=_progress,
+                            **({"pages": pages_sel} if pages_sel else {}),
+                        )
                     except Exception as exc:  # noqa: BLE001
                         holder["error"] = f"{type(exc).__name__}: {exc}"
                     holder["done"] = True
@@ -1807,6 +1917,13 @@ class SceneEditorImpl:
                     menu.add_separator()
                 if real and kind == "pdf":
                     menu.add_command(label="抽图对场景…", command=lambda: _material_image_match(entry, "pdf"))
+                    if pdf_range.is_partial(
+                        int(entry.get("page_start") or 1), int(entry.get("page_end") or 0), int(entry.get("pages") or 0)
+                    ):
+                        menu.add_command(
+                            label=f"页范围恢复成整份（第 1–{int(entry.get('pages') or 0)} 页）",
+                            command=lambda: _pdf_range_changed(entry, "start", 1, int(entry.get("pages") or 1), refresh=True),
+                        )
                     menu.add_separator()
                 elif real and kind == "video":
                     menu.add_command(label="抽幻灯片对场景…", command=lambda: _material_image_match(entry, "video"))
@@ -1927,7 +2044,8 @@ class SceneEditorImpl:
                     # 读 PDF 里的真文字。_remember_pdf_source 是给场景生成的（只有文件名 + 页数，has_text 永远 False）。
                     from utility.pdf_util import pdf_text_content
 
-                    src = pdf_text_content(path)
+                    pages_sel = pdf_range.pages_arg(video_detail, path)  # t267: 只读选中的页
+                    src = pdf_text_content(path, pages=pages_sel) if pages_sel else pdf_text_content(path)
                     text = (src.get("text") or "").strip()
                     if not text:
                         if src.get("error"):
@@ -1939,7 +2057,8 @@ class SceneEditorImpl:
                             why = "（没有页面）"
                         else:
                             why = "（是空白的）"
-                        messagebox.showwarning("分析", f"这份 PDF 没有可以提取的文字{why}。", parent=dlg)
+                        where = f"的第 {pages_sel[0]}–{pages_sel[1]} 页" if pages_sel else ""
+                        messagebox.showwarning("分析", f"这份 PDF{where}没有可以提取的文字{why}。", parent=dlg)
                         return
                 elif kind == "transcript":
                     _tp, ttext = _item_transcript_text(video_detail)
@@ -1949,13 +2068,53 @@ class SceneEditorImpl:
                         return
                 else:
                     return
-                label = f"{'PDF' if kind == 'pdf' else '文字稿'}：{os.path.basename(path)}（{len(text)} 字）"
+                span = f"第 {pages_sel[0]}–{pages_sel[1]} 页，" if (kind == "pdf" and pages_sel) else ""
+                label = f"{'PDF' if kind == 'pdf' else '文字稿'}：{os.path.basename(path)}（{span}{len(text)} 字）"
                 _run_analyze(text, label)
+
+            _range_job = {"id": None}
+
+            def _persist_range_now() -> None:
+                _range_job["id"] = None
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ PDF 页范围没有存下：{exc}")
+
+            def _pdf_range_changed(entry: dict, which: str, start, end, refresh: bool = False) -> tuple:
+                """t267: PDF 行的开始页 / 结束页改了：夹进 1..总页数、开始 ≤ 结束（刚改的那格算数，另一格跟着挪），
+                记进这一条（pdf_page_ranges），稍等一下保存（点箭头连点不会每下都写一次列表）。返回（开始, 结束, 行说明文字）。"""
+                path = entry.get("path") or ""
+                s, e, total = pdf_range.set_range(video_detail, path, start, end, edited=which)
+                if total <= 0:
+                    return int(start or 1), int(end or 1), None
+                detail = pdf_range.label(s, e, total) + (entry.get("suffix") or "")
+                if _range_job["id"] is not None:
+                    try:
+                        dlg.after_cancel(_range_job["id"])
+                    except tk.TclError:
+                        pass
+                try:
+                    _range_job["id"] = dlg.after(600, _persist_range_now)
+                except tk.TclError:
+                    _range_job["id"] = None
+                    _persist_range_now()
+                if refresh:
+                    _sync_material_widgets()
+                return s, e, detail
+
+            scene_ui["pdf_range_changed"] = _pdf_range_changed
 
             def _walk_materials_drop(widget) -> None:
                 walker = scene_ui.get("walk_drop")
                 if callable(walker):
                     walker(widget)
+
+            def _on_materials_rebuilt(widget) -> None:
+                _walk_materials_drop(widget)
+                _hint_sync = scene_ui.get("sync_material_hint")  # t277: 材料变了（拖进来 / 删掉）提示也跟着变
+                if callable(_hint_sync):
+                    _hint_sync()
 
             materials_panel = MaterialsPanel(
                 frm,
@@ -1965,12 +2124,41 @@ class SceneEditorImpl:
                 on_select=_material_select,
                 on_copy=_material_double,  # t206u: 双击 = 打开
                 build_menu=_material_menu,
-                on_rebuilt=_walk_materials_drop,
+                on_rebuilt=_on_materials_rebuilt,
                 on_analyze=_material_analyze,
                 on_delete=_material_delete,
                 on_reorder_images=lambda paths: _set_cover_list(list(paths)),  # t214u: 拖动排序，第一张 = 封面
+                on_pdf_range=_pdf_range_changed,  # t267: PDF 行的开始页 / 结束页
+                hint=False,  # t277: 提示行在材料行下面（分析报告页也看得见），由这里按选中的东西改
+                on_focus=lambda _e: _sync_material_hint(),
             )
             scene_ui["materials_panel"] = materials_panel
+
+            def _material_hint_state() -> str:
+                return material_hint_mod.state_for(
+                    material_var.get(),
+                    getattr(materials_panel, "focused_entry", None),
+                    pdf_mode=_pdf_mode_now(),
+                    dialogue=_step_kind_of((prompt_combo_var.get() or "").strip()) == "dialogue",
+                )
+
+            def _sync_material_hint(*_a) -> None:
+                """t277: 按选中的东西换提示文字；按窗口宽度量字宽，放不下就缩短（总是一行）。"""
+                try:
+                    import tkinter.font as _tkfont
+
+                    full = material_hint_mod.text_for(_material_hint_state())
+                    width = int(frm.winfo_width() or 0)
+                    if width <= 1:
+                        width = 1000
+                    fnt = _tkfont.Font(root=frm, font=material_hint_lbl.cget("font"))
+                    material_hint_var.set(material_hint_mod.fit_text(full, fnt.measure, width - 16))
+                except (tk.TclError, ValueError):
+                    pass
+
+            scene_ui["sync_material_hint"] = _sync_material_hint
+            scene_ui["material_hint_state"] = _material_hint_state
+            frm.bind("<Configure>", _sync_material_hint, add="+")
 
             def _chosen_media_path() -> str:
                 """点中的语音概览 / 视频概览优先；没点中就用拖进材料区的音频或 mp4。"""
@@ -1988,10 +2176,10 @@ class SceneEditorImpl:
             def _show_materials(on: bool) -> None:
                 if on:
                     material_preview.pack_forget()
-                    materials_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 8), after=material_row)
+                    materials_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 8), after=material_hint_lbl)
                 else:
                     materials_panel.pack_forget()
-                    material_preview.pack(fill=tk.X, expand=False, pady=(0, 8), after=material_row)
+                    material_preview.pack(fill=tk.X, expand=False, pady=(0, 8), after=material_hint_lbl)
 
             def _materials_button_caption() -> str:
                 parts = ["PDF" if (_find_gen_video_slide_for_row(video_detail) or "").strip() else "无 PDF"]
@@ -2042,6 +2230,9 @@ class SceneEditorImpl:
             scene_ui["sync_scene_json_height"] = _sync_scene_json_height
 
             def _sync_material_widgets(*_args):
+                _material_is_pdf[0] = material_var.get() == "pdf"  # t273
+                _sync_steps_for_pdf()
+                _sync_episode_enable()
                 _sync_scene_json_height()
                 # PDF 一律一页一个场景，不再让人选。
                 pdf_layout_combo.pack_forget()
@@ -2164,6 +2355,7 @@ class SceneEditorImpl:
 
             material_var.trace_add("write", _on_material_selected)
             _sync_material_widgets()
+            _sync_material_hint()
 
             _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
             _vs_cur, _talk_cur, _ = _project_look_from_row(video_detail)
@@ -2523,10 +2715,12 @@ class SceneEditorImpl:
                     label = ((pv.get() if pv is not None else "") or "").strip()
                     if label:
                         look["scene_prompt_label"] = label
-                        # t258: 预览里选的叙事方式（含 短故事）原样带进新项目，不再把 短故事 换成 故事对话
+                        # t258: 预览里选的叙事方式原样带进新项目（t266: 短故事已并入故事对话，旧存值读作故事对话）
                         from utility import narration_modes as _nm
 
                         st = _nm.new_project_default(label)
+                        if not st and config_channel.is_step_story_label(label):
+                            st = "story_speak"  # FlyLink 的固定步数故事（原来的短故事）按故事对话算
                         if st:
                             look["story_style"] = st
                     return look
@@ -2551,27 +2745,34 @@ class SceneEditorImpl:
             visual_style_combo.bind("<<ComboboxSelected>>", _commit_visual_style)
 
             def _scene_prompt_params() -> dict:
+                # t266: steps = 步数下拉的值（故事对话：0 = 按故事需要规划场景，1–6 = 固定场景数；图片分解：第几步）；
+                # 不再带第几集 / 只重新生成某一集的参数（每次生成都是全部集）。故事对话固定 N 场 = 一个故事，episodes 一律 1。
+                _sel = (prompt_combo_var.get() or "").strip()
+                _steps = _int_of(step_count_var, config_channel.STORY_STEPS_DEFAULT)
+                if _steps_ignored_now():  # t273: PDF 来源：步数不用，场数 = 选中的页数
+                    _steps = 0
+                _fixed = config_channel.fixed_story_steps(_sel, {"steps": _steps})
                 return {
-                    "steps": _int_of(step_count_var, config_channel.STEP_STORY_DEFAULT),
-                    "episode": _int_of(series_ep_var, 1),
-                    "episodes": _int_of(series_total_var, 1),
-                    "episode_only": bool(series_only_var.get()),  # t436u
+                    "steps": _steps,
+                    "episodes": 1 if _fixed else _int_of(series_total_var, 1),
                     "visual_style": (visual_style_var.get() or "").strip(),
                 }
 
             def _pdf_instruction_for(label: str, pages: int) -> str:
                 p = _scene_prompt_params()
-                only = config_channel.episode_only(p)
-                if only:  # t436u: 只重新生成第 k 集
-                    return (
-                        f"The PDF has {int(pages)} pages and describes the whole program of {p['episodes']} episodes. "
-                        f"Read it all, then use only the part for episode {p['episode']} of {p['episodes']}. "
-                        "One scene per page does not apply."
-                    )
                 if config_channel.is_series_direct_label(label):
                     return (
                         f"The PDF has {int(pages)} pages and describes the whole series. "
                         "Read it all. One scene per page does not apply."
+                    )
+                # t273: PDF 一律一页一个场景：故事对话的步数（p["steps"] 已在 _scene_prompt_params 里按 PDF 归 0）不管用；
+                # 只有 FlyLink 自己的「固定步数故事」（模板本身就是固定 N 场）仍由它的步数定。
+                _fixed = config_channel.fixed_story_steps(label, p) if config_channel.is_step_story_label(label) else 0
+                if _fixed:
+                    return (
+                        f"The PDF has {int(pages)} pages. Read it all for the content. The story has exactly {_fixed} "
+                        "scenes (the steps rule of this prompt), so one scene per page does not apply: tell what the PDF "
+                        f"holds across those {_fixed} scenes."
                     )
                 line = _pdf_scene_generation_instruction(
                     label,
@@ -2641,6 +2842,20 @@ class SceneEditorImpl:
                     return _media_kind_for_path(_chosen_media_path()) or "audio"
                 return "analyzed"
 
+            def _pdf_text_content_now() -> tuple:
+                """t275: 「把 PDF 当文字内容」：选中页（页范围已截好）的文字。返回 (全文, 页数, 有文字的页数, 错误说明)。"""
+                slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                if not slide:
+                    return "", 0, 0, "这条没有可用的 PDF。"
+                try:
+                    eff = pdf_range.effective_pdf(video_detail, slide)
+                    from utility import pdf_scene_pages as _psp
+
+                    text, n_pages, n_text = _psp.pdf_text_content(eff)
+                except Exception as exc:  # noqa: BLE001
+                    return "", 0, 0, str(exc)
+                return text, n_pages, n_text, ""
+
             def _scene_prompt_text_now() -> str:
                 sel = (prompt_combo_var.get() or "").strip()
                 if not sel or not nb_prompt_choices:
@@ -2655,6 +2870,12 @@ class SceneEditorImpl:
                     return prompt or ""
                 if kind == "image":
                     override = _image_material_override(video_detail)
+                elif kind == "pdf" and _pdf_mode_now() == pdf_mode_mod.MODE_TEXT:
+                    # t275: 当文字内容：和分析内容同一条提示词路，{content} = 选中页的文字
+                    override = _pdf_text_content_now()[0]
+                    if not override:
+                        return ""
+                    kind = "analyzed"
                 elif kind == "pdf":
                     cached = _remember_pdf_source()
                     override = cached.get("text") or ""
@@ -2705,7 +2926,7 @@ class SceneEditorImpl:
 
             if nb_prompt_choices:
                 prompt_combo.bind("<<ComboboxSelected>>", _copy_selected_scene_prompt)
-                for _w in (step_count_combo, series_total_combo, series_ep_combo, visual_style_combo):
+                for _w in (step_count_combo, series_total_combo, visual_style_combo):
                     _w.bind("<<ComboboxSelected>>", _copy_selected_scene_prompt, add="+")
 
             _sync_material_widgets()
@@ -3066,6 +3287,9 @@ class SceneEditorImpl:
                     "selected_material_kind": _selected_material_kind,
                     "scene_prompt_params": _scene_prompt_params,
                     "pdf_instruction_for": _pdf_instruction_for,
+                    "pdf_mode_now": _pdf_mode_now,  # t275: 生成前问 PDF 用法（一页一个场景 / 当文字内容）要用的
+                    "pdf_text_content_now": _pdf_text_content_now,
+                    "sync_pdf_steps": lambda: (_sync_steps_for_pdf(), _sync_episode_enable()),
                     "pick_cover_image": _pick_cover_image,
                     "chosen_media_path": _chosen_media_path,
                     "read_analyzed_draft": _read_analyzed_draft,
@@ -3086,6 +3310,9 @@ class SceneEditorImpl:
             _remember_pdf_source = scene_ui["remember_pdf_source"]
             _scene_prompt_params = scene_ui["scene_prompt_params"]
             _pdf_instruction_for = scene_ui["pdf_instruction_for"]
+            _pdf_mode_now = scene_ui["pdf_mode_now"]
+            _pdf_text_content_now = scene_ui["pdf_text_content_now"]
+            _sync_pdf_steps = scene_ui["sync_pdf_steps"]
             _pick_cover_image = scene_ui["pick_cover_image"]
             _chosen_media_path = scene_ui["chosen_media_path"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
@@ -3343,6 +3570,18 @@ class SceneEditorImpl:
                                 refresh_source()
                             except Exception:  # noqa: BLE001
                                 pass
+                        try:  # t276: 动态生成人物：人物栏已整个换成内容里的人 → 演员栏先照这份显示（不留原来的人）
+                            from utility import cast_preset as _cast_dyn_saved
+
+                            _panel_now = scene_ui.get("actor_panel")
+                            if _panel_now is not None and _cast_dyn_saved.dynamic_cast_enabled(video_detail):
+                                from utility.cast_consolidate import clean_cast_text as _clean_cast_text
+
+                                _new_cast = _clean_cast_text(str(video_detail.get("story_actors") or ""))  # t278: 人物栏不带括号
+                                if _new_cast != _panel_now.get_text():
+                                    _panel_now.set_text(_new_cast, notify=False)
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"演员栏：没有换成新的人物 {exc}")
                         sync_cast = scene_ui.get("sync_cast_from_scenes")
                         if callable(sync_cast):
                             dlg.after(100, sync_cast)  # 场景生成后：演员栏 = 场景里出现的人
@@ -3359,8 +3598,9 @@ class SceneEditorImpl:
                         except Exception as exc:  # noqa: BLE001
                             print(f"⚠️ 自动摘要没有启动:{exc}")
 
-                    def _ask_scene_text_backend(parent, text_only_blocked: bool = False) -> str:
-                        """t119u/t121u: 场景生成前选 Grok / Gemini / DeepSeek（记住上次；DeepSeek 直接调 API）。取消 / Esc 返回空串。"""
+                    def _ask_scene_text_backend(parent, text_only_blocked: bool = False, pdf_source: bool = False) -> str:
+                        """t119u/t121u: 场景生成前选 Grok / Gemini / DeepSeek / Strata（记住上次；DeepSeek 直接调 API）。取消 / Esc 返回空串。
+                        t272: 素材是 PDF（pdf_source）时 Strata 可选（一页一页看图，一页一场）；DeepSeek 仍不行；音频 / 视频两个都不行。"""
                         pref_key = "scene_gen_text_backend"
                         try:
                             last = str(config.load_yt_tools_prefs().get(pref_key) or "grok").lower()
@@ -3368,7 +3608,7 @@ class SceneEditorImpl:
                             last = "grok"
                         if last not in ("grok", "gemini", "deepseek", "strata"):
                             last = "grok"
-                        text_only = ("deepseek", "strata")  # 只收文字，不能带 PDF/音视频附件
+                        text_only = ("deepseek",) if pdf_source else ("deepseek", "strata")  # 不能带 PDF / 音视频附件（Strata 的 PDF 按页看图）
                         if text_only_blocked and last in text_only:
                             last = "grok"
                         box = tk.Toplevel(parent)
@@ -3395,7 +3635,12 @@ class SceneEditorImpl:
                             if text_only_blocked and v in text_only:
                                 btns[v].state(["disabled"])
                         if text_only_blocked:
-                            ttk.Label(box, text="素材是 PDF/音视频，DeepSeek / Strata 不支持", foreground="gray40").pack(padx=20, pady=(0, 12))
+                            ttk.Label(
+                                box,
+                                text=("素材是 PDF：DeepSeek 不支持；Strata 一页一页看图，一页一个场景" if pdf_source
+                                      else "素材是音频 / 视频，DeepSeek / Strata 不支持"),
+                                foreground="gray40",
+                            ).pack(padx=20, pady=(0, 12))
                         ttk.Button(row, text="取消", width=8, command=box.destroy).pack(side=tk.LEFT, padx=6)
                         box.bind("<Escape>", lambda _e: box.destroy())
                         box.bind("<Return>", lambda _e: pick(last))
@@ -3418,12 +3663,13 @@ class SceneEditorImpl:
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+                        _pdf_raw_instr = user_instr  # t272: 用户自己写的说明（还没加 PDF 页数 / 材料说明）
                         # t447u / t263: 生成前检查人物：没有人物就不生成，请先按「人物设置」；
-                        # 故事对话 / 故事表演 / 短故事至少 2 个人物；播客要讲员 + 至少 1 位嘉宾
+                        # 故事对话（步数 0 或 1–6 都一样）/ 故事表演至少 2 个人物；播客要讲员 + 至少 1 位嘉宾
                         from utility import cast_preset as _cast_preset
 
                         _cast_mode = _cast_preset.mode_for_label(label)
-                        if _cast_mode:
+                        if _cast_mode and not _cast_preset.dynamic_cast_enabled(video_detail):  # t272: 勾了「动态生成人物」不拦
                             _panel = scene_ui.get("actor_panel")
                             _cast_now = (_panel.get_text() if _panel is not None
                                          else str(video_detail.get("story_actors") or ""))
@@ -3433,6 +3679,7 @@ class SceneEditorImpl:
                                 return
                         kind = _selected_material_kind()
                         override = None
+                        pdf_text_mode = False  # t275: 「把 PDF 当文字内容」
                         if config_channel.is_scene_summary_image_label(label):
                             # 场景总图不调 LLM / 图片 API：按编辑区（或已存）的 scene_content 出提示词。
                             scenes = _parse_scene_json_list(tx.get("1.0", tk.END) or "") or []
@@ -3596,13 +3843,39 @@ class SceneEditorImpl:
                             if not (cached.get("text") or "").strip():
                                 messagebox.showwarning(
                                     "PDF",
-                                    "这条没有可用的 PDF。",
+                                    "这条没有可用的 PDF。" + (f"\n\n{cached['error']}" if cached.get("error") else ""),
                                     parent=dlg,
                                 )
                                 return
-                            override = cached["text"]
-                            extra = _pdf_instruction_for(label, int(cached.get("pages") or 0))
-                            user_instr = (user_instr + "\n\n" + extra).strip() if user_instr else extra
+                            # t275: 先问：一页一个场景（每页当图），还是把 PDF 当文字内容（提取文字、整个故事来理解）。
+                            # 上一次的选择只当默认选中，每次都问；取消 = 不生成。
+                            _slide_now = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                            _s0, _e0, _t0 = pdf_range.get_range(video_detail, _slide_now)
+                            _ptext, _pn, _pnt, _perr = _pdf_text_content_now()
+                            _mode = pdf_mode_mod.ask_pdf_scene_mode(
+                                dlg,
+                                pdf_name=os.path.basename(_slide_now),
+                                range_text=(f"第 {_s0}–{_e0} 页" if _e0 else "全部页"),
+                                pages=int(cached.get("pages") or _pn or 0),
+                                text_chars=len(_ptext or ""),
+                                last=_pdf_mode_now(),
+                            )
+                            if not _mode:
+                                return  # 取消 / Esc
+                            pdf_mode_mod.remember_mode(video_detail, _mode)
+                            try:
+                                persist(video_detail, parent=dlg)
+                            except Exception as exc:  # noqa: BLE001
+                                print(f"⚠️ PDF 生成方式没有记下：{exc}")
+                            _sync_pdf_steps()  # 步数「不用」的提示只在一页一个场景时显示（同时刷新共 N 集能不能选）
+                            if _mode == pdf_mode_mod.MODE_TEXT:
+                                pdf_text_mode = True
+                                override = _ptext  # 和分析内容同一条提示词路：{content} = 选中页的文字
+                                kind = "analyzed"
+                            else:
+                                override = cached["text"]
+                                extra = _pdf_instruction_for(label, int(cached.get("pages") or 0))
+                                user_instr = (user_instr + "\n\n" + extra).strip() if user_instr else extra
                         elif material_var.get() == "media":
                             media_path = _chosen_media_path()
                             if not media_path:
@@ -3620,9 +3893,22 @@ class SceneEditorImpl:
                         source_note = _prompt_text_for_material(" ", kind).strip()
                         if source_note:
                             user_instr = (user_instr + "\n\n" + source_note).strip() if user_instr else source_note
+                            _pdf_raw_instr = (_pdf_raw_instr + "\n\n" + source_note).strip() if _pdf_raw_instr else source_note
                         attachment = ""
-                        if kind == "pdf":
-                            attachment = _find_gen_video_slide_for_row(video_detail)
+                        pdf_original = ""
+                        pdf_source_range = None  # t271: 场景生成用的页范围，和场景一起存（scene_source_range）
+                        if kind == "pdf" or pdf_text_mode:
+                            # t267: 附件只带选中的页（选了范围 = 截出来的新 PDF）；场景来源仍记原文件，页范围按它找
+                            # t275: 当文字内容时不带附件（文字已经在 {content} 里），来源和页范围照记（手动「图片对场景」要用）
+                            pdf_original = _find_gen_video_slide_for_row(video_detail) or ""
+                            try:
+                                _eff_pdf = pdf_range.effective_pdf(video_detail, pdf_original)
+                                if not pdf_text_mode:
+                                    attachment = _eff_pdf
+                            except pdf_range.PdfRangeError as exc:
+                                messagebox.showwarning("PDF", f"页范围用不了，没有生成场景：\n{exc}", parent=dlg)
+                                return
+                            pdf_source_range = pdf_range.source_range_record(video_detail, pdf_original)
                         elif kind == "image":
                             attachment = _find_gen_video_webp_for_row(video_detail)
                         elif material_var.get() == "media" and kind != "transcript":
@@ -3630,9 +3916,9 @@ class SceneEditorImpl:
                             attachment = _find_item_media_file(video_detail)
                         source_kind = project_manager.SCENE_SOURCE_TEXT
                         source_path = ""
-                        if kind == "pdf":
+                        if kind == "pdf" or pdf_text_mode:
                             source_kind = project_manager.SCENE_SOURCE_PDF
-                            source_path = attachment or ""
+                            source_path = pdf_original or attachment or ""
                         elif kind == "image":
                             source_kind = project_manager.SCENE_SOURCE_INFOGRAPHIC
                             source_path = attachment or ""
@@ -3647,6 +3933,7 @@ class SceneEditorImpl:
                             dlg,
                             text_only_blocked=self.llm_api.__class__._attachment_kind(attachment or "")
                             in ("pdf", "audio", "video"),
+                            pdf_source=self.llm_api.__class__._attachment_kind(attachment or "") == "pdf",
                         )
                         if not backend:
                             return  # 取消 / Esc
@@ -3670,6 +3957,8 @@ class SceneEditorImpl:
                             text_backend=backend,
                             scene_source=source_kind,
                             scene_source_path=source_path,
+                            scene_source_range=pdf_source_range if source_kind == project_manager.SCENE_SOURCE_PDF else None,
+                            pdf_user_instruction=_pdf_raw_instr,  # t272: Strata 一页一页时用（没有「共 n 页 n 场」那句）
                         )
 
                     def on_persist_keep_open():
@@ -3735,12 +4024,9 @@ class SceneEditorImpl:
                         if callable(on_saved):
                             on_saved()
 
-                    smart_style = "StorySmartGenerate.TButton"
-                    ttk.Style().configure(
-                        smart_style,
-                        font=("Microsoft YaHei UI", 9, "bold"),
-                        padding=(3, 6),  # t447u: 多了「人物设置」，按钮收窄
-                    )
+                    # t268: 五个动作按钮比原来大约 30%（字号 10、padding (10, 8)、不再定死 width=6 —— 汉字比 "0" 宽，原来被截），
+                    # 大小在 gui/dl/gen_row.py 定
+                    smart_style = gen_row_mod.configure_button_style()
                     ttk.Style().configure(
                         "StoryMidAction.TButton",
                         font=("Microsoft YaHei UI", 9, "bold"),
@@ -3751,11 +4037,10 @@ class SceneEditorImpl:
                         text="场景生成",
                         command=on_smart_generate,
                         style=smart_style,
-                        width=6,
                     )
                     # 方案下拉在前,中间一道和前面同宽的分隔,场景生成按钮在后
                     _smart_sep = ttk.Separator(scene_ui["prompt_combo"].master, orient="vertical")
-                    _smart_sep.pack(side=tk.LEFT, fill=tk.Y, padx=14, after=scene_ui["prompt_combo"])
+                    scene_ui["gen_row"].add(_smart_sep, "sep", fill=tk.Y, padx=gen_row_mod.SEPARATOR_PADX)
                     def _on_program_btn() -> None:
                         # t213: 先按「保存」写回 STORY 所有字段(含手改的场景 JSON);JSON 无效就报错中止
                         if not _presave_story_before_action(on_save_story, on_persist_keep_open, dlg):
@@ -3770,7 +4055,6 @@ class SceneEditorImpl:
                         text="生成节目",
                         command=_on_program_btn,
                         style=smart_style,
-                        width=6,
                     )
 
                     def _on_cast_preset() -> None:
@@ -3783,7 +4067,7 @@ class SceneEditorImpl:
                         if not mode:
                             show_auto_close_popup(
                                 dlg, "人物设置",
-                                "这个场景生成方式不用设置人物（短故事 / 播客 / 故事对话 / 故事表演 才用）。",
+                                "这个场景生成方式不用设置人物（播客 / 故事对话 / 故事表演 才用）。",
                                 kind="error", duration_ms=4500,
                             )
                             return
@@ -3850,12 +4134,70 @@ class SceneEditorImpl:
                         text="人物设置",
                         command=_on_cast_preset,
                         style=smart_style,
-                        width=6,
                     )
                     scene_ui["cast_preset"] = _on_cast_preset
-                    program_btn.pack(side=tk.LEFT, padx=(0, 4), after=_smart_sep)
-                    cast_btn.pack(side=tk.LEFT, padx=(0, 4), after=program_btn)
-                    smart_btn.pack(side=tk.LEFT, padx=(0, 4), after=cast_btn)
+
+                    # t272: 「动态生成人物」：不勾 = 固定人物栏（人物不够就拦住、请先按「人物设置」）；
+                    # 勾了 = 场景生成时按出场自动加新人物进人物栏（t279: 最多 10 个人物，讲员不算），不再拦人物不够。每一条各存各的。
+                    from utility import cast_preset as _cast_dynmod
+
+                    dynamic_cast_var = tk.BooleanVar(value=_cast_dynmod.dynamic_cast_enabled(video_detail))
+                    scene_ui["dynamic_cast_var"] = dynamic_cast_var
+
+                    def _on_dynamic_cast_toggle() -> None:
+                        on = bool(dynamic_cast_var.get())
+                        video_detail[_cast_dynmod.DYNAMIC_CAST_KEY] = on
+                        pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                        if isinstance(pp, dict):
+                            pp[_cast_dynmod.DYNAMIC_CAST_KEY] = on
+                        panel = scene_ui.get("actor_panel")
+                        if panel is not None:  # t279: 勾不勾人物栏都是最多 10 个人物 + 1 个讲员，切换时不用截
+                            panel.max_present = project_manager.CAST_MAX_PRESENT
+                        try:
+                            persist(video_detail, parent=dlg)
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"⚠️ 动态生成人物没有存下：{exc}")
+
+                    from gui.dl import story_actor_panel as story_actor_panel_mod
+
+                    # t274: 「动态生成人物」勾选框搬到第 3 行（人物栏右边，原来「打开项目」的位置）；
+                    # 还是只在 播客 / 故事对话 / 故事表演 三种叙事方式下显示，勾选 / 保存规则不变
+                    # t280: 勾选框和「人物合并」按钮放在同一个小框里（cast_side）：勾选框在上，按钮紧挨着在下面。
+                    cast_side = ttk.Frame(scene_ui["prompt_row"])
+                    cast_side.pack(side=tk.RIGHT, padx=(8, 0))
+                    scene_ui["cast_side"] = cast_side
+                    dynamic_cast_chk = ttk.Checkbutton(
+                        cast_side,
+                        text=_cast_dynmod.DYNAMIC_CAST_LABEL,
+                        variable=dynamic_cast_var,
+                        command=_on_dynamic_cast_toggle,
+                    )
+                    scene_ui["dynamic_cast_chk"] = dynamic_cast_chk
+
+                    def _on_cast_merge_btn() -> None:
+                        panel = scene_ui.get("actor_panel")
+                        if panel is not None:
+                            panel.merge_selected()
+
+                    cast_merge_btn = ttk.Button(cast_side, text="人物合并", command=_on_cast_merge_btn)
+                    cast_merge_btn.pack(side=tk.BOTTOM, anchor="w")
+                    cast_merge_btn.state(["disabled"])  # 人物栏里选了 2 个以上人物才能按
+                    scene_ui["cast_merge_btn"] = cast_merge_btn
+
+                    def _sync_dynamic_chk(show: bool) -> None:
+                        if show:
+                            if not dynamic_cast_chk.winfo_ismapped():
+                                dynamic_cast_chk.pack(side=tk.TOP, anchor="w", before=cast_merge_btn)
+                        else:
+                            dynamic_cast_chk.pack_forget()
+
+                    scene_ui["sync_dynamic_chk"] = _sync_dynamic_chk
+                    from utility import cast_preset as _cast_dyn0
+                    _sync_dynamic_chk(bool(_cast_dyn0.mode_for_label((prompt_combo_var.get() or "").strip())))
+                    # t268: 按钮一律登记进 GenRow（下拉 → 步数 → 共 N 集 → 分隔线 → 按钮），不再各自 pack(after=…)
+                    for _b, _k in ((program_btn, "program"), (cast_btn, "cast"), (smart_btn, "smart")):
+                        scene_ui["gen_row"].add(_b, _k, padx=gen_row_mod.BUTTON_PADX)
+                    scene_ui["gen_row"].relayout()
 
                     def _on_gen_review() -> None:
                         """t168u: 生成查看：三步看历史的 名字 / 摘要 / 场景，各选一个。"""
@@ -3888,9 +4230,9 @@ class SceneEditorImpl:
                         text="生成查看",
                         command=_on_gen_review,
                         style=smart_style,
-                        width=6,
                     )
-                    review_btn.pack(side=tk.LEFT, padx=(0, 4), after=smart_btn)
+                    scene_ui["gen_row"].add(review_btn, "review", padx=gen_row_mod.BUTTON_PADX)
+                    scene_ui["gen_row"].relayout()
 
                     def _on_scene_prep() -> None:
                         """t436u: 整理场景（和建项目时自动做的一样）：Strata 改写视觉、拆长讲话、分镜视觉连贯、写 shot。"""
@@ -3920,9 +4262,9 @@ class SceneEditorImpl:
                         text="整理场景",
                         command=_on_scene_prep,
                         style=smart_style,
-                        width=6,
                     )
-                    prep_btn.pack(side=tk.LEFT, padx=(0, 4), after=review_btn)
+                    scene_ui["gen_row"].add(prep_btn, "prep", padx=gen_row_mod.BUTTON_PADX)
+                    scene_ui["gen_row"].relayout()
 
                     def _on_tx_ctrl_double(event=None):
                         """t436u: Ctrl+双击场景 JSON → 看这一场的参考图、选一张（移到第一张）。普通双击照旧。"""
@@ -3968,8 +4310,8 @@ class SceneEditorImpl:
                             title_var = tk.StringVar(value=_youtube_row_source_title(video_detail))
                         # 人物栏放在名称栏前面（第 2 行开头），名称栏改短。
                         scene_ui["actor_host"] = title_host
-                        title_entry = ttk.Entry(scene_ui.get("size_frm") or title_host, textvariable=title_var, width=28)
-                        title_entry.pack(side=tk.RIGHT, padx=(8, 6))
+                        title_entry = ttk.Entry(scene_ui.get("size_frm") or title_host, textvariable=title_var, width=14)
+                        title_entry.pack(side=tk.RIGHT, padx=(6, 0))
                         scene_ui["title_entry"] = title_entry
 
                         # 拖进文件改名时用这个名称栏和「保存」按钮的保存
@@ -4019,13 +4361,21 @@ class SceneEditorImpl:
                     if callable(on_save_story):
                         ttk.Frame(scene_ui["smart_slot"], width=28).pack(side=tk.LEFT)
                     if callable(on_save_story):
-                        ttk.Button(
-                            scene_ui.get("size_frm") or scene_ui["smart_slot"], text="保存", width=8, command=on_save_story
-                        ).pack(side=tk.RIGHT, padx=(8, 4))
+                        # t274: 第 2 行最右边：[名称栏] [保存] [打开项目]（先 pack 的在最右）
+                        _row2 = scene_ui.get("size_frm") or scene_ui["smart_slot"]
+                        if callable(on_open_project):
+                            _open_style = "StoryOpenProject.TButton"
+                            ttk.Style().configure(_open_style, font=("Microsoft YaHei UI", 9, "bold"), padding=(4, 5))
+                            scene_ui["open_project_btn"] = ttk.Button(
+                                _row2, text="打开项目", style=_open_style, width=8, command=on_open_project,
+                            )
+                            scene_ui["open_project_btn"].pack(side=tk.RIGHT, padx=(0, 2))
+                        scene_ui["save_story_btn"] = ttk.Button(_row2, text="保存", width=5, command=on_save_story)
+                        scene_ui["save_story_btn"].pack(side=tk.RIGHT, padx=(6, 4))
                         _te = scene_ui.get("title_entry")
                         if _te is not None and _te.master is scene_ui.get("size_frm"):
                             _te.pack_forget()
-                            _te.pack(side=tk.RIGHT, padx=(8, 0))
+                            _te.pack(side=tk.RIGHT, padx=(6, 0))
 
                     def _offer_pdf_scene_generate(pdf_path: str) -> None:
                         importer = scene_ui.get("import_slide_pdf")
@@ -4131,21 +4481,30 @@ class SceneEditorImpl:
 
                     _saved_cast = video_detail.get("story_actors")
                     if not isinstance(_saved_cast, str):
-                        _saved_cast = f"讲员：{_narr_named}" if _narr_named else ""
+                        _saved_cast = f"H {_narr_named}" if _narr_named else ""  # t280: 讲员写 H
+
+                    def _cast_base(body) -> str:
+                        """人物栏里的 id：去掉括号里的表现。t278: 勾了「动态生成人物」= 末尾的括号全去掉（人物栏一个括号都不带）。"""
+                        base = project_manager.split_actor_motion((body or "").strip())[0]
+                        if __import__("utility.cast_preset", fromlist=["x"]).dynamic_cast_enabled(video_detail):
+                            from utility.cast_consolidate import clean_body as _clean_cast_body
+
+                            base = _clean_cast_body(base)
+                        return base.strip()
 
                     def _cast_key(row: dict) -> tuple:
                         """同一个人：讲员按角色（每场最多一个）；人物按 性别/年龄段/族裔/名字（括号前）。"""
                         if row.get("role") == "host":
                             return ("host", "")
-                        base = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+                        base = _cast_base(row.get("body"))
                         return ("person", base.strip().lower())
 
                     def _cast_from_scenes() -> str:
-                        """所有场景 actor 里出现过的人（去掉括号里的表现），讲员在前，最多 4 个。"""
+                        """所有场景 actor 里出现过的人（去掉括号里的表现），讲员在前；t279: 最多 10 个人物 + 1 个讲员。"""
                         host, people, seen = None, [], set()
                         for sc in _story_scene_list(video_detail, scene_ui):
                             for row in project_manager.actor_entries(str(sc.get("actor") or "")):
-                                base = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+                                base = _cast_base(row.get("body"))  # t278: 动态人物 = 括号全去掉
                                 if not base or project_manager.actor_is_absent(base):
                                     continue
                                 key = _cast_key(row)
@@ -4157,10 +4516,10 @@ class SceneEditorImpl:
                                     host = clean
                                 else:
                                     people.append(clean)
-                        rows = ([host] if host else []) + people
-                        if len(rows) > 4:
-                            print(f"演员栏：场景里有 {len(rows)} 个不同的人，只放前 4 个")
-                        return project_manager.format_actor_entries(rows[:4])
+                        cap = project_manager.CAST_MAX_PEOPLE  # t279: 人物栏最多 10 个人物，讲员不算（动态 / 不动态一样）
+                        if len(people) > cap:
+                            print(f"演员栏：场景里有 {len(people)} 个不同的人物，只放前 {cap} 个（讲员不算）")
+                        return project_manager.format_actor_entries(([host] if host else []) + people[:cap])
 
                     def _prune_silent_cast() -> None:
                         """讲话里没有的人（讲员或人物）自动从所有场景删掉，<N> 往前挪。
@@ -4286,14 +4645,10 @@ class SceneEditorImpl:
                                     if new_sp != speaking:
                                         sc["speaking"] = new_sp
                                         sc.pop("speaking_timing", None)  # 时间轴对不上了，重新算
-                            out, person_n = [], 0
+                            out = []  # t280: 新写法（讲员 = H …，人物不带标签）
                             for g in segs:
                                 r = g["row"]
-                                if r.get("role") == "host":
-                                    out.append(f"讲员：{r.get('body')}{g['tail']}")
-                                else:
-                                    person_n += 1
-                                    out.append(f"人物{person_n}：{r.get('body')}{g['tail']}")
+                                out.append(("H " if r.get("role") == "host" else "") + f"{r.get('body')}{g['tail']}")
                             sc["actor"] = " | ".join(out)
                             changed += 1
                         if not changed:
@@ -4309,6 +4664,46 @@ class SceneEditorImpl:
                         self._persist_video_detail_story(video_detail, parent=dlg)
                         verb = {"edit": "改", "delete": "删除", "order": "重排"}.get(what, what)
                         print(f"演员栏：{verb} {old_base or '讲员'}，同步了 {changed} 场")
+
+                    def _cast_merge_scenes(rows: list, body: str) -> None:
+                        """t280: 人物合并：每一场里这些人并成 body（第一个出现的位置留下、括号说明保留；
+                        同一场里有两个就只留一个，<N> 重排），再保存。"""
+                        from utility import cast_merge as _cast_merge
+
+                        scenes = _story_scene_list(video_detail, scene_ui)
+                        if not scenes:
+                            return
+                        keys = {_cast_key(r) for r in rows if r.get("role") != "host"}
+                        changed = _cast_merge.merge_people_in_scenes(scenes, keys, body, key=_cast_key)
+                        if not changed:
+                            return
+                        video_detail["scene_content"] = scenes
+                        try:
+                            tx_box = scene_ui.get("tx")
+                            if tx_box is not None:
+                                tx_box.delete("1.0", tk.END)
+                                tx_box.insert("1.0", json.dumps(scenes, ensure_ascii=False, indent=2))
+                        except tk.TclError:
+                            pass
+                        self._persist_video_detail_story(video_detail, parent=dlg)
+                        print(f"演员栏：合并 {len(rows)} 人 → {body}，同步了 {changed} 场")
+
+                    def _cast_portrait_context() -> dict:
+                        """t280: 生成肖像：所有场景 + 地域 / 时代 / 舞台 + 画面风格。"""
+                        from gui.dl import prompts_notebooklm as _pnb_ctx
+
+                        _vs = scene_ui.get("video_size_var")
+                        try:
+                            ratio = (_vs.get() if _vs is not None else "") or ""
+                        except tk.TclError:
+                            ratio = ""
+                        return {
+                            "scenes": _story_scene_list(video_detail, scene_ui) or [],
+                            "setting": _pnb_ctx.story_setting_context(video_detail),
+                            "style": (visual_style_var.get() or ""),
+                            # t281: 画面比例（STORY 窗选的；没有就用这一条存的 / 上次选的）
+                            "ratio": ratio or video_detail.get("story_video_size") or project_manager.video_size_key(),
+                        }
 
                     def _story_person_dir() -> str:
                         d = _story_avatar_dir(video_detail)
@@ -4348,7 +4743,12 @@ class SceneEditorImpl:
                         on_row_edit=lambda old, new: _cast_rewrite_scenes("edit", old, new),
                         on_row_delete=lambda old: _cast_rewrite_scenes("delete", old, None),
                         on_reorder=lambda rows: _cast_rewrite_scenes("order", {}, rows),
+                        max_present=project_manager.CAST_MAX_PRESENT,  # t279: 10 个人物 + 1 个讲员
+                        on_merge=_cast_merge_scenes,  # t280: 人物合并
+                        portrait_context=_cast_portrait_context,  # t280: 生成肖像
                     )
+                    if scene_ui.get("cast_merge_btn") is not None:
+                        actor_panel.attach_merge_button(scene_ui["cast_merge_btn"])
                     _title_entry = scene_ui.get("title_entry")
                     if _title_entry is not None and _title_entry.master is actor_panel.master:
                         actor_panel.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(16, 0), before=_title_entry)
@@ -4373,24 +4773,6 @@ class SceneEditorImpl:
                         _sync_cast_from_scenes()
 
                     dlg.after(300, _sync_cast_when_ready)  # 打开时：按场景里的人重排演员栏
-                    if callable(on_open_project):
-                        open_host = scene_ui["prompt_row"]
-                        open_style = "StoryOpenProject.TButton"
-                        ttk.Style().configure(
-                            open_style,
-                            font=("Microsoft YaHei UI", 9, "bold"),
-                            padding=(10, 5),
-                        )
-                        ttk.Button(
-                            open_host,
-                            text="打开项目",
-                            style=open_style,
-                            width=10,
-                            command=on_open_project,
-                        ).pack(side=tk.RIGHT, padx=(8, 0))
-                        ttk.Separator(open_host, orient=tk.VERTICAL).pack(
-                            side=tk.RIGHT, fill=tk.Y, padx=(16, 10)
-                        )
                     save_btn = ttk.Button(btn_row, text="保存", command=on_confirm)
                     if not embedded:
                         save_btn.pack(side=tk.LEFT, padx=(0, 8))

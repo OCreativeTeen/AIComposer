@@ -151,15 +151,16 @@ pick next          # 下一条
 
 | 序号 | 名称 | 常用 |
 |------|------|------|
-| 1 | Short Story | |
-| 2 | 2 Step Story | |
-| 3 | 3 Step Story | |
-| 4 | **4 Step Story** | **故事视频流水线用这个** |
-| 5 | Mini Story | |
-| 6 | Long Story | |
-| 7 | Content to Scenes | |
-| 8 | Talk | |
-| 9 | Conversation | |
+| 1 | 播客 | |
+| 2 | 故事对话 | 步数 0 = 自由规划场景 |
+| 3 | 故事表演 | |
+| 4 | Mini Story | |
+| 5 | Long Story | |
+| 6 | Content to Scenes | |
+| 7 | Conversation | |
+
+> t266：短故事已并入故事对话。**固定场景数**（原来的 N Step Story）用名字直接写：`scnlm 4 Step Story` = 故事对话 · 步数 4
+> （`Short Story` = 步数 1，`2`–`6 Step Story` 同理）；列表里选「故事对话」= 步数 0（按故事需要规划场景）。故事视频流水线用 `scnlm 4 Step Story`。
 
 **用法：** 先 `scnlm` 看列表，再 `scnlm 4`。Hermes 全自动时会先发列表、等你 Telegram 回序号后再执行 `scnlm N`。
 

@@ -23,8 +23,9 @@ from utility import cast_preset as cpr  # noqa: E402
 from utility import narration_modes as nm  # noqa: E402
 
 STYLE = "三维卡通 (Pixar-Art-Cartoon)"
-FOUR = ["短故事", "播客", "故事对话", "故事表演"]
-FOUR_KEYS = ["step_story", "podcast", "story_speak", "story_act"]
+# t266: 短故事已并入故事对话，只剩三种方式（名字沿用 FOUR* 只是为了少改测试）
+FOUR = ["播客", "故事对话", "故事表演"]
+FOUR_KEYS = ["podcast", "story_speak", "story_act"]
 CASES = (nm.HOST_PORTRAIT, nm.HOST_VOICEOVER, nm.HOST_NONE)  # (a) (b) (c)
 LEGACY_ACT = ("counselor", "Counselor", "Series · Counselor", "Series . Counselor", "主持人节目", "主持人節目",
               "tech", "exec", "技术方案汇报", "高管简报")
@@ -56,8 +57,6 @@ def preview_prompt(key, host=nm.HOST_NONE, params=None):
     """场景生成里最终拼出来的模板（规则按讲员的真实情况 host 现拼进去）。"""
     p = dict(params or {})
     p["host_case"] = host
-    if key == "step_story":
-        return cc.resolve_dynamic_scene_template(cc.STEP_STORY_LABEL, cc.COUNSELING_STORY_STEP, dict({"steps": 4}, **p))
     return cc.resolve_dynamic_scene_template(nm.LABEL_OF[key], _BASE_TEMPLATE[key](), p)
 
 
@@ -128,12 +127,12 @@ class NotOfferedAnywhere(unittest.TestCase):
         self.assertNotIn("COUNSELOR_FRAME", cfg)
 
     def test_program_window_modes(self):
-        """节目生成跟预览窗口的场景生成方式走：四种，短故事自己一种，没有 counselor。"""
+        """节目生成跟预览窗口的场景生成方式走：三种（t266: 短故事已并入故事对话），没有 counselor。"""
         seen = {}
         for lab in FOUR:
             shown, key, narrative = cpr.program_mode_narrative(lab)
             seen[lab] = (shown, key, narrative)
-        self.assertEqual(seen, {"短故事": ("短故事", "step_story", "story"), "播客": ("播客", "podcast", "story"),
+        self.assertEqual(seen, {"播客": ("播客", "podcast", "story"),
                                 "故事对话": ("故事对话", "story_speak", "story"),
                                 "故事表演": ("故事表演", "story_act", "story")})
         res = _real(
@@ -261,11 +260,10 @@ class SharedRuleText(unittest.TestCase):
         self.assertEqual(nm.host_case(True), nm.HOST_VOICEOVER)
 
     def test_other_modes_only_change_with_a_real_host(self):
-        # 短故事永远没有讲员
-        base = nm.rules_block("step_story")
-        for h in CASES:
-            self.assertEqual(nm.rules_block("step_story", h), base, h)
-        self.assertIn("there is no 讲员", nm.speaking_rule("step_story"))
+        # t266: 短故事已并入故事对话：旧存值读作故事对话，没有单独的 step_story 规则
+        self.assertEqual(nm.normalize("短故事"), "story_speak")
+        self.assertEqual(nm.speaking_rule("step_story"), nm.speaking_rule("story_speak"))
+        self.assertIn("there is no 讲员", nm.speaking_rule("story_speak"))
         # 播客 / 故事对话：讲员在不在、有没有肖像各是一段话
         for key in ("podcast", "story_speak"):
             self.assertEqual(len({nm.rules_block(key, h) for h in CASES}), 3, key)
@@ -320,7 +318,7 @@ print(json.dumps(out, ensure_ascii=False))
         for rule in (nm.speaking_rule("story_act", nm.HOST_PORTRAIT), nm.performance_rule("story_act", nm.HOST_PORTRAIT)):
             self.assertEqual(p.count(rule), 1)
         self.assertIn("exactly 3 people are in this clip: 讲员, 阿明, 小美", p)  # 讲员出镜，和人物一起
-        self.assertIn("actor: 讲员：woman/mature/chinese/秦 | 人物1", p)
+        self.assertIn("actor: H woman/mature/chinese/秦 | man/youth/chinese/阿明", p)  # t280: 新写法（讲员 H …，人物不带 人物N：）
         self.assertIn("lip-synced", p.lower())
         self.assertNotIn("off-screen voice-over of the 讲员", p)
 
@@ -332,8 +330,9 @@ print(json.dumps(out, ensure_ascii=False))
         self.assertIn("Do not show a narrator or host", p)
         self.assertIn("exactly 2 people are in this clip: 阿明, 小美", p)   # 讲员不在出镜名单
         self.assertNotIn("讲员：woman/mature/chinese/秦", p)                # 也不在 actor 载荷里
+        self.assertNotIn("H woman/mature/chinese/秦", p)  # t280: 新写法也没有
         self.assertIn("narration: 今天讲一个关于信的故事。", p)
-        self.assertIn("actor: 人物1：man/youth/chinese/阿明（低头） | 人物2", p)
+        self.assertIn("actor: man/youth/chinese/阿明（低头） | woman/", p)  # t280: 新写法（讲员 H …，人物不带 人物N：）
 
     def test_case_c_no_host(self):
         p = self.res["c"]
@@ -390,8 +389,8 @@ HOST_SPEECH = "<1> 今天讲一个关于信的故事。"
 PEOPLE_SPEECH = "<1> 你今天怎麼来了？ <2> 想你了。"
 out = {"video": {}, "program": {}, "program_cases": {}, "video_cases": {}, "derived": {}}
 for key, lab in nm.MODES:
-    # 每种方式：视频 / 节目的人物都是真实的 讲员 + 两个人物（短故事没有讲员），讲员肖像固定为「有」
-    rows = (P1, P2) if key == "step_story" else (HOST, P1, P2)
+    # 每种方式：视频 / 节目的人物都是真实的 讲员 + 两个人物，讲员肖像固定为「有」
+    rows = (HOST, P1, P2)
     sc = scene(actors(*rows), HOST_SPEECH if key == "story_act" else PEOPLE_SPEECH, story=key == "story_act")
     cp.host_portrait_finder = lambda *a, **k: (lambda row: "x.png")
     out["video"][key] = video(sc, True, mode=key)
@@ -416,7 +415,7 @@ print(json.dumps(out, ensure_ascii=False))
 
     def test_each_mode_three_windows(self):
         for key in FOUR_KEYS:
-            host = nm.HOST_NONE if key == "step_story" else nm.HOST_PORTRAIT
+            host = nm.HOST_PORTRAIT
             spk, perf = nm.speaking_rule(key, host), nm.performance_rule(key, host)
             tpl = preview_prompt(key, host)
             vid = self.res["video"][key]
@@ -442,13 +441,12 @@ print(json.dumps(out, ensure_ascii=False))
         self.assertEqual(self.res["derived_block"].count(nm.speaking_rule("story_act", nm.HOST_NONE)), 1)
         self.assertEqual(self.res["derived_block_host"].count(nm.speaking_rule("story_act", nm.HOST_VOICEOVER)), 1)
 
-    def test_short_story_is_its_own_mode_in_program(self):
-        # t263: 短故事和故事对话的说话 / 表演规则是同一份文字（没有讲员时一字不差）；它们的区别只在场景数 / 结构
-        blk = self.res["program"]["step_story"]
-        self.assertIn(nm.speaking_rule("step_story"), blk)
+    def test_short_story_is_merged_into_story_dialogue_in_program(self):
+        # t266: 短故事已并入故事对话：没有 step_story 这个方式；旧值读作故事对话，规则就是故事对话那一份
+        self.assertNotIn("step_story", self.res["program"])
         self.assertEqual(nm.speaking_rule("step_story"), nm.speaking_rule("story_speak", nm.HOST_NONE))
         self.assertEqual(nm.performance_rule("step_story"), nm.performance_rule("story_speak", nm.HOST_NONE))
-        self.assertIn(nm.speaking_rule("story_speak", nm.HOST_NONE), blk)
+        self.assertIn(nm.speaking_rule("story_speak", nm.HOST_PORTRAIT), self.res["program"]["story_speak"])
 
     def test_program_cast_block_never_names_counselor(self):
         for key in FOUR_KEYS:
@@ -518,7 +516,7 @@ class NewProjectDefault(unittest.TestCase):
     def test_four_modes_carried_into_new_project(self):
         for lab, key in zip(FOUR, FOUR_KEYS):
             self.assertEqual(nm.new_project_default(lab), key, lab)
-        self.assertEqual(nm.new_project_default("短故事"), "step_story")  # 没被换成故事对话
+        self.assertEqual(nm.new_project_default("短故事"), "story_speak")  # t266: 短故事已并入故事对话
         self.assertEqual(nm.new_project_default("主持人节目"), "story_act")  # 旧选择读作故事表演
         self.assertEqual(nm.new_project_default("Series · Counselor"), "story_act")
         self.assertEqual(nm.new_project_default("Mini Story", "podcast"), "podcast")

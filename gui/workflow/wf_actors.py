@@ -110,7 +110,7 @@ class ActorsMixin:
             return 24
 
     def _fit_actor_labels(self) -> None:
-        """t164u: 每行显示完整原文（人物N：性别/年龄/族裔/名字（…）），放不下就在最后省略。"""
+        """t164u: 每行显示完整原文（t280: 性别/年龄/族裔/名字（…），讲员 H …），放不下就在最后省略。"""
         row = getattr(self, "scene_actor_row", None)
         if row is None:
             return
@@ -162,10 +162,12 @@ class ActorsMixin:
         body = (entry.get("body") or "").strip()
         base, motion = project_manager.split_actor_motion(body)
         # t164u: 一行显示这个人的完整原文（和 actor 里存的一样）
+        # t279: 编号只显示短的：人物N → N，讲员 → H（存的 actor 文字、<N> 都不变）
+        sid = project_manager.actor_display_id(entry)
         if entry.get("role") == "host":
-            text = f"讲员：{body}" if base else "讲员"
+            text = f"H：{body}" if base else "H"
         else:
-            text = f"{entry.get('label') or '人物'}：{body}"
+            text = f"{sid}：{body}" if sid else body
         # 可以 Tab / 点一下获得焦点（蓝框 + 浅蓝底），再按 Delete / BackSpace 删除。
         chip = tk.Frame(
             row, bg="white", relief="sunken", bd=1, cursor="fleur", takefocus=1,
@@ -417,6 +419,40 @@ class ActorsMixin:
         except Exception:
             value = ""
         return config.match_visual_style(value) or value or project_manager.current_visual_style()
+
+    # t281: 当前场景上有这些设置就用场景的，没有再用项目的
+    PORTRAIT_SCENE_KEYS = ("setting_region", "setting_era", "story_stage", "story_stage_brief", "story_stage_visual",
+                           "story_stage_key", "video_width", "video_height")
+
+    def _portrait_gen_context(self) -> dict:
+        """t280/t281: 生成肖像（utility/portrait_gen）：本集所有场景 + 当前场景的设置（画面比例、地域 / 时代 / 舞台），
+        场景上没有的用项目设置补上；地域 / 时代还没有就用上次选的（LAST_SETTING_*），再没有就让 Strata 按描述推断；
+        比例没有就用上次选的画面比例（默认 1080x1920）。风格 = 当前画面风格。"""
+        wf = getattr(self, "workflow", None)
+        scenes = list(getattr(wf, "scenes", None) or getattr(self, "scenes", None) or [])
+        cur = None
+        try:
+            cur = wf.get_scene_by_index(self.current_scene_index) if wf is not None else None
+        except Exception:  # noqa: BLE001
+            cur = None
+        pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+        merged = dict(pc)
+        if isinstance(cur, dict):
+            for k in self.PORTRAIT_SCENE_KEYS:
+                if str(cur.get(k) or "").strip():
+                    merged[k] = cur[k]
+        setting = ""
+        try:
+            from gui.dl import prompts_notebooklm as _pnb
+
+            # 地域和时代是一对：场景上的和项目的拼起来对不上（例如场景只写了 日本，项目是 明朝），就整对用项目的
+            if not _pnb.story_setting_phrase(merged) and _pnb.story_setting_phrase(pc):
+                merged["setting_region"], merged["setting_era"] = pc.get("setting_region"), pc.get("setting_era")
+            setting = _pnb.story_setting_context(merged)
+        except Exception as exc:  # noqa: BLE001
+            print(f"生成肖像：读地域 / 时代 / 舞台失败 {exc}")
+        ratio = project_manager.video_size_key(merged.get("video_width"), merged.get("video_height"))
+        return {"scenes": scenes, "setting": setting, "style": self._portrait_style(), "ratio": ratio}
 
     def _set_actor_text(self, text: str, *, save_scene: bool = False) -> None:
         self._actor_text = project_manager.normalize_actor_text(text)
@@ -1105,6 +1141,48 @@ class ActorsMixin:
                 show_at(holder["index"])
             return "break"
 
+        def gen_portrait() -> None:
+            """t280: 生成肖像（和 STORY 人物预览同一个模块 utility/portrait_gen）：Strata 按所有场景里这一位的描述
+            + 地域 / 时代 / 舞台 + 风格写提示词 → Grok 文生图（LLM 手动窗口，可贴图）→ 存成肖像（原来的 .bak）→ 显示。"""
+            if holder.get("mode") != "person" or not holder["names"]:
+                messagebox.showinfo(title, "讲员的形象按音色表固定，不生成。", parent=dlg)
+                return
+            name = holder["names"][holder["index"]]
+            body = project_manager.split_actor_motion((_person_body_from_fields() or name or "").strip())[0]
+            dest = holder["dest_for"](body) if body else ""
+            if not body or len([b for b in body.split("/") if b.strip()]) < 4 or not dest:
+                messagebox.showwarning(title, "先填好 性别 / 年龄 / 族裔 / 名字。", parent=dlg)
+                return
+            from utility import portrait_gen
+
+            ctx = self._portrait_gen_context()
+            try:
+                gen_btn.state(["disabled"])
+            except tk.TclError:
+                pass
+            hint_var.set("生成肖像：Strata 写提示词 → Grok 出图（手动窗口里可以贴图）…")
+
+            def job():
+                return portrait_gen.generate_portrait(body, ctx.get("scenes") or [], dest,
+                                                      setting=ctx.get("setting") or "", style=ctx.get("style") or "",
+                                                      ratio=ctx.get("ratio") or "")
+
+            def done(res):
+                try:
+                    if not dlg.winfo_exists():
+                        return
+                    gen_btn.state(["!disabled"])
+                except tk.TclError:
+                    return
+                if res.get("ok"):
+                    reset_browser(body)
+                    hint_var.set(f"已生成肖像：{res.get('path')}")
+                else:
+                    hint_var.set(person_hint)
+                    messagebox.showwarning(title, res.get("error") or "没有生成。", parent=dlg)
+
+            portrait_gen.run_in_background(dlg, job, done)
+
         def ask_motion_choice() -> str:
             dlg.grab_release()
             picked = askchoice(
@@ -1355,6 +1433,10 @@ class ActorsMixin:
                 force_btn.pack_forget()
             if not add_btn.winfo_ismapped():
                 add_btn.pack(side=tk.LEFT, padx=6, before=confirm_btn)
+            try:  # t280: 生成肖像只给人物（讲员形象按音色表）
+                gen_btn.state(["disabled"] if holder["mode"] == "host" else ["!disabled"])
+            except (tk.TclError, NameError):
+                pass
 
         def toggle_domain() -> None:
             if holder["mode"] == "host":
@@ -1390,6 +1472,9 @@ class ActorsMixin:
         use_btn = ttk.Button(btns, text="用这张", command=use_picked)
         if not review:
             use_btn.pack(side=tk.LEFT, padx=6)
+        gen_btn = ttk.Button(btns, text="生成肖像", command=gen_portrait)  # t280
+        if not review:
+            gen_btn.pack(side=tk.LEFT, padx=6)
         delete_btn = ttk.Button(btns, text="删除肖像", command=delete_portrait)
         delete_btn.pack(side=tk.LEFT, padx=6)
         confirm_btn = ttk.Button(btns, text="确认", command=confirm)
@@ -1789,7 +1874,7 @@ class ActorsMixin:
             return
         names = self._span_voice_names()
         voice = names[0] if names else "woman/mature/chinese"
-        scene["actor"] = f"讲员：{voice}"
+        scene["actor"] = f"H {voice}"  # t280: 讲员写 H
 
 
 # verbatim references to WorkflowGUI.<attr> in the methods above resolve to this mixin

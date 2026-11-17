@@ -376,8 +376,8 @@ class StoryEngine:
         labels = [lbl for lbl, _ in lm_choices(self.session.channel_id())]
         if not labels:
             labels = [
-                "Short Story",
-                "短故事",
+                "故事对话",
+                "播客",
                 "Mini Story",
                 "Long Story",
             ]
@@ -387,6 +387,13 @@ class StoryEngine:
             self._patch_wf({"step": "scnlm", "lm_label": lab})
             return True, f"scnlm ok — {lab}"
 
+        # t266: 短故事已并入故事对话（步数 1–6 = 固定场景数）。列表里不再有 "N Step Story"，但直接写这个名字
+        # （scnlm 4 Step Story）仍然认：它 = 故事对话 + 步数 N（build_gemini_prompt / scene_count_from_lm_label 都认这个写法）。
+        import config_channel
+
+        want = (value or "").strip()
+        if want and not want.isdigit() and config_channel.legacy_step_label(want) and want not in labels:
+            return _set(want)
         return self._list_or_set(
             labels, "scnlm", value, setter=_set, empty_msg="没有 LM 提示词选项。"
         )
@@ -498,7 +505,7 @@ class StoryEngine:
         from cli.browser_tasks import generate_gemini_scene_variants
 
         if not self.session.lm_label:
-            return False, "请先 scnlm 选 LM 提示（如 4 Step Story），再 scnge。"
+            return False, "请先 scnlm 选 LM 提示（如 4 Step Story = 故事对话固定 4 场），再 scnge。"
         prompt = build_gemini_prompt(
             self.session.video_detail,
             channel_id=self.session.channel_id(),

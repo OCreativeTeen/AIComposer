@@ -921,12 +921,19 @@ class MagicWorkflow(EpisodeOpsMixin):
 
         self.scenes = []
 
+        # t271: 没有有效的场景 JSON 就不建项目（正常入口在打开前已经拦住；这里是最后一道）。
+        from utility import story_scenes
+
+        _problem = story_scenes.scene_content_problem(project_manager.PROJECT_CONFIG.get('scene_content'))
+        if _problem:
+            raise story_scenes.NoValidScenesError(story_scenes.open_message(_problem))
+
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
 
         self.title = config.get_channel_config(self.channel)["channel_name"]
 
         scene_content = project_manager.PROJECT_CONFIG.get('scene_content') or []
-        scene_list = scene_content if isinstance(scene_content, list) else []
+        scene_list = story_scenes.parse_scene_value(scene_content) or []
         if scene_list:
             if isinstance(scene_list[0], dict):
                 self.title = project_manager.caption_from_scene_content_item(scene_list[0])
@@ -1633,28 +1640,6 @@ class MagicWorkflow(EpisodeOpsMixin):
         pages = self._pdf_pages_to_images(pdf_path, out_dir=folder, start_number=highest + 1)
         return folder, pages
 
-    def _copy_slide_pdf_into_episode(self, slide_pdf: str, episode: str) -> str:
-        """把 slide PDF 拷成 media/<集号>/<集号>.pdf，保留原文件时间。"""
-        episode = (episode or "").strip() or "1"
-        dest = self.episode_pdf_path(episode)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        src = os.path.abspath(slide_pdf)
-        if os.path.abspath(dest) != src:
-            shutil.copy2(src, dest)
-        return dest
-
-    def _stamp_episode_folder_to_pdf(self, episode: str) -> None:
-        """拆页之后，把这一集文件夹的时间改成 PDF 的时间。"""
-        pdf_path = self.episode_pdf_path(episode)
-        folder = self.episode_media_dir(episode)
-        if not os.path.isfile(pdf_path) or not os.path.isdir(folder):
-            return
-        codec_path = self._episode_pdf_codec_path(episode)
-        with open(codec_path, "w", encoding="utf-8") as f:
-            f.write(f"jpeg{_PAGE_JPEG_QUALITY}")
-        stamp = os.path.getmtime(pdf_path)
-        os.utime(folder, (stamp, stamp))
-
     def fit_group_to_page_count(self, group_name: str, page_count: int, mode: str) -> tuple[int, int]:
         """按选定页数调整这个 group 的场景数。extend 复制最后一场；trim 删掉多出来的场。"""
         added = 0
@@ -2304,13 +2289,13 @@ class MagicWorkflow(EpisodeOpsMixin):
         """按记下的 scene_source 配图。文字 / 音频 / 视频不在这里改图。
 
         信息图：封面拷进每一场，不看场数。
-        PDF：页数必须等于场数，一页一张 clip_image，clip 保持默认。
+        PDF（t271）：不在这里处理——视频生成窗口不再把 PDF 的页拆成场景图（预览窗口「场景生成」自动配图）。
         不再弹出「用封面还是 PDF」。
         """
         pc = project_manager.PROJECT_CONFIG
         if not isinstance(pc, dict):
             return
-        from utility.program_media import get_primary_program_media, get_program_media_list
+        from utility.program_media import get_program_media_list
 
         if not (project_manager.get_cover_images(pc) or get_program_media_list(pc, "slides") or pc.get("cover_video")):
             project_manager.hydrate_config_cover_media(pc)
@@ -2340,69 +2325,13 @@ class MagicWorkflow(EpisodeOpsMixin):
                 )
             return
 
-        slide_pdf = path if path.lower().endswith(".pdf") and os.path.isfile(path) else ""
-        if not slide_pdf:
-            slide_pdf = get_primary_program_media(pc, "slides") or ""
-        if not slide_pdf or not os.path.isfile(slide_pdf):
-            self._source_warning(
-                "PDF",
-                "这条场景来源是 PDF，但找不到这份 PDF。\n各场先用默认图片。",
-            )
-            return
-        try:
-            from utility.pdf_util import _pdf_page_count
-
-            pages = int(_pdf_page_count(slide_pdf) or 0)
-        except Exception:  # noqa: BLE001
-            pages = 0
-        if pages != n_scenes:
-            self._source_warning(
-                "PDF 与场景数不一致",
-                f"这条场景是按 PDF 生成的，但这份 PDF 有 {pages} 页，场景有 {n_scenes} 场。\n"
-                "页数和场数不一致，这次不按 PDF 配图，各场用默认图片。",
-            )
-            return
-        group_name = "1"
-        for scene in self.scenes:
-            if isinstance(scene, dict) and str(scene.get("episode") or "").strip():
-                group_name = self.scene_group(scene)
-                break
-        pdf_path = self._copy_slide_pdf_into_episode(slide_pdf, group_name)
-        pdf_name = os.path.basename(pdf_path)
-        _folder, page_images = self.export_pdf_pages_to_group(pdf_path, group_name)
-        if len(page_images) != n_scenes:
-            self._source_warning(
-                "PDF",
-                f"PDF 渲出 {len(page_images)} 张页图，场景有 {n_scenes} 场。\n各场先用默认图片。",
-            )
-            return
-        self._stamp_episode_folder_to_pdf(group_name)
-        written = 0
-        scene_i = 0
-        for scene in self.scenes:
-            if not isinstance(scene, dict):
-                continue
-            page_path = page_images[scene_i]
-            try:
-                if os.path.splitext(page_path)[1].lower() == ".webp":
-                    refresh_scene_media(scene, "clip_image", ".webp", page_path, True)
-                else:
-                    file_path = self.ffmpeg_processor.resize_image_smart(page_path)
-                    refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
-            except Exception as e:
-                print(f"⚠️ 场景 {scene_i} 设置 clip_image 失败: {e}")
-                scene_i += 1
-                continue
-            scene["episode"] = group_name
-            page_stem = os.path.splitext(os.path.basename(page_path))[0]
-            scene["episode_page"] = int(page_stem) if page_stem.isdigit() else scene_i + 1
-            scene["episode_pdf"] = pdf_name
-            scene.pop("group", None)
-            scene.pop("group_page", None)
-            scene.pop("group_pdf", None)
-            written += 1
-            scene_i += 1
-        print(f"✅ 已从 PDF 为 {written} 个场景设置 clip_image（clip 仍用默认）")
+        # t271: PDF 来源——视频生成窗口不再把 PDF 的页拆成场景图。
+        # 场景图在预览窗口「场景生成」（来源 PDF）之后自动配好，存在每一场的 ref_images 里；这里只提示，不动场景、不碰 PDF。
+        print(
+            f"SOURCE: {kind}，视频生成里不再按 PDF 拆页配图；"
+            "场景图来自预览窗口「场景生成」后自动配的 ref_images，没有的场用默认图片"
+        )
+        return
 
     def _seed_cover_path(self, pc: dict) -> str:
         """建项目时给场景用的封面：用户选中的当前封面（cover_image[0] / 最新一张）。"""
@@ -2618,6 +2547,11 @@ class MagicWorkflow(EpisodeOpsMixin):
             from utility.scene_shot import ensure_scene_shots
 
             ensure_scene_shots(self.scenes)  # t440u: 新加 / 新拆的场也都要有 shot（已有的不改）
+            try:  # t280: 存的时候 actor 旧写法（人物N： / 讲员：）改成新写法（只改标签）
+                import project_manager as _pm
+                _pm.migrate_scene_actors(self.scenes)
+            except Exception as _e:  # noqa: BLE001
+                print(f"⚠️ actor 新写法迁移失败（照原样保存）：{_e}")
             
             for scene in self.scenes:
                 normalized_scene = scene.copy()

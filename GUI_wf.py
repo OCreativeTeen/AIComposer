@@ -113,6 +113,16 @@ class WorkflowGUI(LayoutMixin, ConfigMixin, FinalizePublishMixin, PromptFlowsMix
         if selection_result is False:
             self.root.destroy()
             return
+        # t271: 没有有效的场景 JSON 不能打开项目（--open-pid / --open-from-list-json / 选择项目 都走到这里）
+        from utility import story_scenes
+
+        _open_problem = story_scenes.project_open_problem(project_manager.PROJECT_CONFIG or {}, pid=initial_pid or "")
+        if _open_problem:
+            messagebox.showerror(
+                story_scenes.BLOCK_OPEN_TITLE, story_scenes.open_message(_open_problem), parent=self.root
+            )
+            self.root.destroy()
+            return
         file_pid = (
             (project_manager.PROJECT_CONFIG or {}).get("pid") or initial_pid or ""
         )

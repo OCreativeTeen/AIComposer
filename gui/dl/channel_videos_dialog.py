@@ -15,6 +15,7 @@ import project_manager
 import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.messagebox as messagebox
+from utility import story_scenes
 from utility.tags_text import _plain_item_tags
 from utility.time_util import _should_update_upload_date
 from gui.dl.youtube_dl import _normalize_channel_videos_for_storage, _write_channel_list_json_file, _youtube_row_display_title, _youtube_row_project_title, _youtube_row_source_title
@@ -1247,13 +1248,11 @@ class ChannelVideosDialogImpl:
                 scene_style=None,
                 title=None,
             ):
-                if not _scene_content_nonempty(
-                    {"scene_content": scene_content}
-                ):
-                    messagebox.showwarning(
-                        "提示",
-                        "scene_content 须为有效 JSON array，无法启动新项目。\n"
-                        "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
+                _sc_problem = story_scenes.create_problem(scene_content)
+                if _sc_problem:  # t271: 没有有效的场景 JSON 不能建项目
+                    messagebox.showerror(
+                        story_scenes.BLOCK_CREATE_TITLE,
+                        story_scenes.create_message(_sc_problem),
                         parent=parent,
                     )
                     return
@@ -1466,10 +1465,9 @@ class ChannelVideosDialogImpl:
                 messagebox.showwarning("重新生成项目", "这条还没有项目。", parent=parent)
                 return
             if not _video_detail_can_create_project(vd):
-                messagebox.showwarning(
-                    "重新生成项目",
-                    "scene_content 须为有效 JSON array，无法重新生成。\n"
-                    "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
+                messagebox.showerror(
+                    story_scenes.BLOCK_CREATE_TITLE,
+                    story_scenes.create_message(story_scenes.create_problem(vd.get("scene_content"))),
                     parent=parent,
                 )
                 return
@@ -1550,10 +1548,9 @@ class ChannelVideosDialogImpl:
                 )
                 return
             if not _video_detail_can_create_project(vd):
-                messagebox.showwarning(
-                    "打开项目",
-                    "scene_content 须为有效 JSON array，无法启动新项目。\n"
-                    "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
+                messagebox.showerror(
+                    story_scenes.BLOCK_CREATE_TITLE,
+                    story_scenes.create_message(story_scenes.create_problem(vd.get("scene_content"))),
                     parent=parent,
                 )
                 return

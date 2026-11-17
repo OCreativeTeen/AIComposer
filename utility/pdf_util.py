@@ -51,10 +51,11 @@ def _images_to_temp_pdf(paths: list[str]) -> str:
     return dest
 
 
-def pdf_text_content(pdf_path: str) -> dict:
+def pdf_text_content(pdf_path: str, pages=None) -> dict:
     """读 PDF 里真正的文字（PyMuPDF），给「分析」用。
 
-    返回 {"text", "pages", "image_pages", "scanned", "error"}：
+    ``pages`` = None 读整份；``(开始页, 结束页)``（1 起、含两端）= 只读选中的页（t267，STORY 窗 PDF 行的页范围）。
+    返回 {"text", "pages", "image_pages", "scanned", "error"}（``pages`` = 实际读了几页）：
     ``scanned`` = 有页但读不出文字、而且页上有图片（多半是扫描件，要先 OCR）。
     注意：``_pdf_pages_as_scene_source`` 只给场景生成写文件名 + 页数（让模型自己看 PDF），不读文字。
     """
@@ -75,7 +76,12 @@ def pdf_text_content(pdf_path: str) -> dict:
             out["error"] = "PDF 有密码"
             return out
         parts = []
-        for page in doc:
+        first, last = 0, len(doc) - 1
+        if pages:
+            first = min(max(int(pages[0]) - 1, 0), max(len(doc) - 1, 0))
+            last = min(max(int(pages[1]) - 1, first), len(doc) - 1)
+        for pno in range(first, last + 1):
+            page = doc[pno]
             out["pages"] += 1
             t = (page.get_text("text") or "").strip()
             if t:

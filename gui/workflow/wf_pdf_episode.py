@@ -257,20 +257,25 @@ class PdfEpisodeMixin:
         group_name = self.workflow.scene_group(scene)
         media = config.get_media_path(self.workflow.pid)
         gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+        gen_candidate = os.path.join(gen_dir, base) if gen_dir else ""
+        # t271: 不再退回项目的整份原始 PDF（slide）——那是没截页的整份文档，页码对不上这一集
         candidates = [
-            os.path.join(gen_dir, base) if gen_dir else "",
+            gen_candidate,
             os.path.join(media, group_name, base),
             os.path.join(media, base),
         ]
-        pc = project_manager.PROJECT_CONFIG
-        from utility.program_media import get_primary_program_media
-
-        slide = get_primary_program_media(pc, "slides") if isinstance(pc, dict) else ""
-        if slide and os.path.basename(slide) == base:
-            candidates.append(slide)
         for path in candidates:
             if path and os.path.isfile(path):
-                return os.path.abspath(path)
+                found = os.path.abspath(path)
+                if gen_candidate and found == os.path.abspath(gen_candidate):
+                    # 节目生成目录里的原始 PDF：用户选过页范围就只用选中的页，截不出来就当没找到（不退回整份）
+                    from utility import pdf_range
+
+                    try:
+                        return pdf_range.effective_pdf(project_manager.PROJECT_CONFIG, found)
+                    except pdf_range.PdfRangeError:
+                        return ""
+                return found
         return ""
 
     def _scenes_as_prompt_content(self, scenes: list, episode_name: str) -> str:

@@ -1727,6 +1727,43 @@ def make_image(prompt: str, image_path, status: Status = None):
     return run_imagine(prompt, status)
 
 
+def make_image_from_text(prompt: str, status: Status = None):
+    """t280: Grok Imagine 文生图（不贴输入图）：打开 Imagine，确认「图片」模式，贴提示词，提交，返回新图（PIL）。
+
+    和 :func:`make_image` 走同一套提交 / 等待 / 取图；任何一步不确定就抛错，调用方（手动窗口）留给人手动粘贴。
+    """
+    prompt = (_to_simplified(prompt) or "").strip()
+    if not prompt:
+        raise RuntimeError("提示词是空的")
+    bt = _bt()
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        from utility import chrome_account
+
+        chrome_account.ensure_known(browser, GROK_IMAGINE_URL, status)
+        page = _imagine_page(ctx, want_image=False) or site_page(ctx, "grok.com", GROK_IMAGINE_URL)
+        page.bring_to_front()
+        _say(status, "打开 Grok Imagine（文生图）…")
+        page.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=45_000)
+        if _logged_out(page):
+            raise RuntimeError("Chrome 里的 grok.com 没有登录，请先在这个 Chrome (端口 9222) 里登录 Grok")
+        _ensure_image_mode(page, status)  # 绝不生成视频
+        _say(status, "粘贴提示词 …")
+        bt._grok_paste_prompt_cdp(page, prompt)
+        _ensure_image_mode(page, status)
+        before_st = _imagine_state(page)
+        old = set(page.evaluate(IMAGINE_OUTPUT_IMAGES_JS) or [])
+        old.add(before_st.get("src") or "")
+        min_thumbs = int(before_st.get("thumbCount") or 0)
+        _imagine_submit(page, status)
+        st = _imagine_wait_done(page, old, status, min_thumbs=min_thumbs)
+        return extract_imagine_result(page, st, status)
+
+
 # ---- cross-process lock: the Telegram bot and the app share one Chrome ----
 # %LOCALAPPDATA%\AIComposer\grok_cdp.lock is held while one grok_cdp operation runs.
 # Waits up to LOCK_WAIT_S, then raises so the caller falls back to manual.
@@ -1848,5 +1885,6 @@ prepare_imagine = _locked(prepare_imagine)
 fetch_current_imagine_result = _locked(fetch_current_imagine_result)
 run_imagine = _locked(run_imagine)
 make_image = _locked(make_image)
+make_image_from_text = _locked(make_image_from_text)
 run_imagine_video = _locked(run_imagine_video)
 make_video = _locked(make_video)

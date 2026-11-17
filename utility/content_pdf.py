@@ -400,14 +400,15 @@ def scene_actor_reference_images(
         return []
     text = project_manager.actor_text_for_generation(scene.get("actor") or "")
     rows = []
-    for row in project_manager.active_actor_entries(text):
+    for pos, row in enumerate(project_manager.active_actor_entries(text), 1):
         body, _motion = project_manager.split_actor_motion((row.get("body") or "").strip())
         body = body.strip()
         if not body or project_manager.actor_is_absent(body):
             continue
         role = "host" if row.get("role") == "host" else "person"
+        # t281: pos = 这一场 actor 里的第几个人（讲员也算），提示词里用新写法 + 位置称呼（actor_format.ref_who）
         rows.append({"label": "讲员" if role == "host" else (row.get("label") or "人物"), "role": role, "name": body,
-                     "override": short})
+                     "override": short, "pos": pos})
         if len(rows) >= max_actors:
             break
     sent = [os.path.abspath(base_image)] if base_image and os.path.isfile(base_image) else []

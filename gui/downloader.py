@@ -278,9 +278,14 @@ def _project_look_from_row(vd, cfg=None) -> tuple[str, str, str]:
 
 
 
-def _start_scene_auto_ref_images(app, parent, video_detail, scenes, src_kind, set_scene_json, get_scene_json, persist) -> None:
-    """t409u: 生成场景成功、保存以后：来源是 PDF → 抽图 + Strata 顺序对场景；来源是视频 → 每场按起止取中段一帧。
+def _start_scene_auto_ref_images(app, parent, video_detail, scenes, src_kind, set_scene_json, get_scene_json, persist,
+                                 pdf_per_page: bool = True) -> None:
+    """t409u: 生成场景成功、保存以后自动配图。t275: PDF「一页一个场景」→ 第 k 页直接对第 k 场（不用 Strata 判断）；
+    PDF「当文字内容」→ 不自动配图（要配图用户在 PDF 资源上右键 → 图片对场景）；来源是视频 → 每场按起止取中段一帧。
     后台跑、不挡界面，结果追加到每一场的 ref_images，再写回编辑框并保存。文字 / 音频 / 信息图来源不动。"""
+    if str(src_kind or "").strip().lower() == "pdf" and not pdf_per_page:
+        print("[场景配图] PDF 当文字内容生成的场景：不自动配图（要配图：在 PDF 资源上右键 → 图片对场景）")
+        return
     try:
         from utility.material_image_matcher import start_auto_attach
         from utility.scene_json import _parse_scene_json_list
@@ -313,8 +318,19 @@ def _start_scene_auto_ref_images(app, parent, video_detail, scenes, src_kind, se
         persist(video_detail, parent=parent if alive else None)
 
     root = getattr(app, "root", None) or parent
+    extra = {}
+    if str(src_kind or "").strip().lower() == "pdf" and path:
+        try:  # t267: PDF 选了页范围 → 只对选中的页抽图配图（页码仍是原文档的页码）
+            from utility import pdf_range
+
+            pages = pdf_range.source_pages_arg(video_detail, path)  # t271: 用场景生成时记下的范围
+            if pages:
+                extra["pages"] = pages
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ PDF 页范围没读到，按整份配图：{exc}")
+        extra["direct"] = True  # t275: 一页一个场景，页和场景一一对应
     try:
-        start_auto_attach(root.after, src_kind, path, scenes, get_current=_current, commit=_commit)
+        start_auto_attach(root.after, src_kind, path, scenes, get_current=_current, commit=_commit, **extra)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ 场景配图没有启动：{exc}")
 
@@ -796,8 +812,10 @@ def _video_detail_has_scene_content(vd: dict) -> bool:
 
 
 def _video_detail_can_create_project(vd: dict) -> bool:
-    """有 ``scene_content`` 即可新建项目；``analyzed_content`` 可选。"""
-    return _video_detail_has_scene_content(vd)
+    """``scene_content`` 必须是有效的场景 JSON（t271：不再只看非空）才能新建项目；``analyzed_content`` 可选。"""
+    from utility import story_scenes
+
+    return isinstance(vd, dict) and not story_scenes.create_problem(vd.get("scene_content"))
 
 
 
@@ -1178,8 +1196,8 @@ class MediaGUIManager:
     ) -> tuple[str, str]:
         """按频道 LM 提示 label 生成完整 prompt 文本（``{content}`` = analyzed_content）。
 
-        ``prompt_params``（可选）：``steps``（Step Story 步数）、``episode`` / ``episodes``
-        （直接生成系列节目 第 k 集 / 共 N 集）、``visual_style``（画面风格）。不传 = 旧行为。
+        ``prompt_params``（可选）：``steps``（故事对话的步数：0 / 不给 = 按故事需要规划场景；1–6 = 固定场景数）、
+        ``episodes``（共 N 集；每次生成都是全部集）、``visual_style``（画面风格）。不传 = 旧行为。
         """
         channel_key = self._channel_config_key()
         params = dict(prompt_params or {})
@@ -1188,8 +1206,17 @@ class MediaGUIManager:
             (l or "").strip() == (prompt_label or "").strip()
             for l, _ in _prompt_choice_entries(channel_key)
         ):
-            prompt_label = config_channel.STEP_STORY_LABEL
+            # t266: 旧的 "N Step Story" / "Short Story" → 故事对话 + 步数 N（FlyLink 没有故事对话，仍是它自己的固定步数故事）
+            _labels = [(l or "").strip() for l, _ in _prompt_choice_entries(channel_key)]
+            prompt_label = (config_channel.STEP_STORY_LABEL if config_channel.STEP_STORY_LABEL in _labels
+                            else config_channel.SERIES_STYLE_LABELS["story_speak"])
             params.setdefault("steps", legacy)
+        from utility import cast_preset as _cast_fresh
+
+        if (_cast_fresh.dynamic_cast_enabled(video_detail) and _cast_fresh.mode_for_label(prompt_label)
+                and not _cast_fresh.is_fresh_view(video_detail)):
+            # t276: 动态生成人物 → 任何场景提示词（生成 / 手动复制）都不带原来的人物栏（含讲员）
+            video_detail = _cast_fresh.fresh_cast_view(video_detail)
         lbl, template, idx = _resolve_combined_prompt_template(
             channel_key, label=prompt_label
         )
@@ -1258,8 +1285,15 @@ class MediaGUIManager:
         prompt_params: dict | None = None,
         text_backend: str = "",
         from_transcript: bool = False,
+        pdf_user_instruction: str | None = None,
+        pdf_first_page: int = 1,
+        strata_ask=None,
     ) -> list | None:
-        """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
+        """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。
+
+        t272: Strata + PDF 附件 → 一页一页看图（_generate_pdf_scenes_per_page_strata），一页一场；
+        ``pdf_user_instruction`` = 用户自己写的说明（不含「共 n 页 n 场」那句，那句只给整份 PDF 的 Grok / Gemini 用）；
+        ``pdf_first_page`` = 选中范围的开始页（原文件的页号）；``strata_ask`` = 测试用的假 Strata。"""
         has_override = content_override is not None and str(content_override).strip()
         if not has_override and not _pnb.analyzed_content_text(video_detail.get("analyzed_content")):
             return None
@@ -1267,8 +1301,34 @@ class MediaGUIManager:
         _cast_ok, _cast_why = _pnb.scene_cast_check(video_detail, prompt_label)
         if not _cast_ok:
             raise ValueError(_cast_why)
+        # t276: 勾了「动态生成人物」（播客 / 故事对话 / 故事表演）→ 原来的人物栏（含讲员）这次完全不用、不发给模型；
+        # 人物全部从内容里找，生成完人物栏整个换成找出来的人（_merge_dynamic_cast / Strata 一页一页时 run_pages 的累计名单）。
+        from utility import cast_preset as _cast_fresh
+
+        fresh_cast = _cast_fresh.dynamic_cast_enabled(video_detail) and bool(_cast_fresh.mode_for_label(prompt_label))
+        gen_vd = _cast_fresh.fresh_cast_view(video_detail) if fresh_cast else video_detail
+        if fresh_cast:
+            print("动态生成人物：这次不用原来的人物栏（含讲员），人物全部从内容里找，生成完人物栏整个换掉")
+        if llm_api.LLMApi._attachment_kind((attachment or "").strip()) == "pdf" and (
+            config_channel.series_style_key(prompt_label) == "story_speak"
+        ):
+            # t273: PDF 来源一律一页一个场景（所有后端）：故事对话的步数（1–6 固定场景数）不用。界面已经归 0，这里再保一道。
+            prompt_params = dict(prompt_params or {}, steps=0)
+        if (text_backend or "").strip().lower() == "strata" and llm_api.LLMApi._attachment_kind(
+            (attachment or "").strip()
+        ) == "pdf":
+            return self._generate_pdf_scenes_per_page_strata(
+                video_detail,
+                prompt_label,
+                instruction=instruction if pdf_user_instruction is None else pdf_user_instruction,
+                attachment=(attachment or "").strip(),
+                prompt_params=prompt_params,
+                dialogue_mode=dialogue_mode,
+                first_page=pdf_first_page,
+                ask=strata_ask,
+            )
         _, prompt = self._combined_prompt_text_for_label(
-            video_detail,
+            gen_vd,  # t276: 动态生成人物 = 不带原来的人物栏
             prompt_label,
             instruction=instruction,
             content_override=content_override,
@@ -1306,15 +1366,179 @@ class MediaGUIManager:
             )
         if isinstance(parsed, dict):
             one = _normalize_scene_dict_entry(parsed)
-            return [one] if one else None
-        if isinstance(parsed, list):
-            out: list[dict] = []
+            out = [one] if one else None
+        elif isinstance(parsed, list):
+            out = []
             for it in parsed:
                 n = _normalize_scene_dict_entry(it) if isinstance(it, dict) else None
                 if n:
                     out.append(n)
-            return out if out else None
-        return None
+            out = out if out else None
+        else:
+            out = None
+        if out:
+            self._merge_dynamic_cast(video_detail, out, prompt_label, fresh=fresh_cast)  # t272 / t276: 人物栏换成找出来的人
+        return out
+
+    @staticmethod
+    def _store_story_actors(video_detail: dict, cast_text: str) -> None:
+        """名单写回这一条（和 project_profile 里的那一份）。"""
+        video_detail["story_actors"] = cast_text
+        prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+        if isinstance(prof, dict):
+            prof["story_actors"] = cast_text
+
+    @staticmethod
+    def _log_cast_replaced(old: str, new: str) -> None:
+        """t276: 人物栏被整个换掉时记一行（原来的肖像 / 声音文件不删，只是不再在人物栏里）。"""
+        old, new = (old or "").strip(), (new or "").strip()
+        if old == new:
+            return
+        print(f"动态生成人物：人物栏已整个换成内容里的人物：{new or '（没找到人物）'}")
+        if old:
+            print(f"动态生成人物：原来的人物栏不要了：{old}（他们的肖像 / 声音文件还在，只是不在人物栏里了）")
+
+    def _merge_dynamic_cast(self, video_detail: dict, scenes: list, prompt_label: str, fresh: bool = False) -> None:
+        """t272: 「动态生成人物」整份一次生成（Grok / Gemini / DeepSeek）之后：按场景顺序把 actor 里的新人物并进名单，
+        人物栏最多 10 个人物（t279，讲员不算；每一场还是最多 4 个人）；名单里已有的人，actor 里写成名单里的 id（前后一致）。没勾 = 什么都不做。
+        t276: ``fresh`` = 原来的人物栏（含讲员）不算：名单从空开始，生成完人物栏整个换成场景里找出来的人。"""
+        from utility import cast_preset
+
+        if not cast_preset.dynamic_cast_enabled(video_detail):
+            return
+        if fresh:  # t278: 每场自己找的人，全部生成完一次归拢（Strata），不再按场景顺序累加
+            self._consolidate_dynamic_cast(video_detail, scenes, prompt_label)
+            return
+        mode = cast_preset.mode_for_label(prompt_label)
+        old = str(_pnb._story_cast_text(video_detail) or "")
+        cast = "" if fresh else old
+        for i, sc in enumerate(scenes, 1):
+            cast, actor, notes = cast_preset.merge_scene_people(
+                cast, str(sc.get("actor") or ""), mode=mode, allow_host=(mode == "podcast"))
+            if actor or "actor" in sc:
+                sc["actor"] = actor
+            for note in notes:
+                print(f"动态人物：第 {i} 场 {note}")
+        self._store_story_actors(video_detail, cast)
+        if fresh:
+            self._log_cast_replaced(old, cast)
+
+    def _consolidate_dynamic_cast(self, video_detail: dict, scenes: list, prompt_label: str) -> dict:
+        """t278: 「动态生成人物」全部场景生成完以后：每场自己找的人 → 一次 Strata 归拢（同一个人并成一个、改正
+        性别 / 年龄段 / 民族、最多 10 个人物（t279），讲员只在播客要）→ 改写每场 actor 和 <N>；人物栏整个换成最终名单（不带括号）。
+        Strata 失败重试 1 次，再不行本地按名字合并（日志写清楚）。``self._cast_consolidate_ask`` 可换成假的（测试）。"""
+        from utility import cast_consolidate
+        from utility import cast_preset
+
+        mode = cast_preset.mode_for_label(prompt_label)
+        old = str(_pnb._story_cast_text(video_detail) or "")
+        print(f"[场景生成] 动态生成人物：{len(scenes)} 场都生成完了，归拢人物（Strata）…")
+        res = cast_consolidate.consolidate(
+            scenes, mode=mode, ask=getattr(self, "_cast_consolidate_ask", None),
+            cap=cast_preset.DYNAMIC_CAST_MAX_PEOPLE,
+            setting=_pnb.story_setting_context(video_detail),  # t280: 地域 / 时代 / 舞台
+        )
+        self._store_story_actors(video_detail, res["cast"])
+        self._log_cast_replaced(old, res["cast"])
+        return res
+
+    def _generate_pdf_scenes_per_page_strata(
+        self,
+        video_detail: dict,
+        prompt_label: str,
+        *,
+        instruction: str = "",
+        attachment: str = "",
+        prompt_params: dict | None = None,
+        dialogue_mode: str = "",
+        first_page: int = 1,
+        ask=None,
+    ) -> list | None:
+        """t272: PDF 来源 + Strata：选中的每一页渲染成图，按页序一页一页发给 Strata，一页一场（n 页 = n 场）。
+
+        每页的提示词 = 叙事方式（播客 / 故事对话 / 故事表演）的场景提示词 + 这一页的说明；
+        t278: 勾了「动态生成人物」时每页自己找人（不带前面页的人物），全部页跑完一次归拢（_consolidate_dynamic_cast）；
+        Strata 看图用 utility.material_image_matcher.strata_scene_vision（和 _strata_vision 同一套调用）。"""
+        import shutil
+        import tempfile
+
+        import config_prompt as _cp
+        from utility import cast_preset
+        from utility import pdf_scene_pages as _psp
+
+        if not (attachment and os.path.isfile(attachment)):
+            raise RuntimeError(f"PDF 文件不存在：{attachment}")
+        mode = cast_preset.mode_for_label(prompt_label)
+        dynamic = cast_preset.dynamic_cast_enabled(video_detail)
+        # t276: 动态生成人物 → 累计名单从空开始，原来的人物栏（含讲员）不发给 Strata
+        fresh = bool(dynamic and mode)
+        src_vd = cast_preset.fresh_cast_view(video_detail) if fresh else video_detail
+        old_cast = str(_pnb._story_cast_text(video_detail) or "")
+        base_params = dict(prompt_params or {})
+        base_params["steps"] = 0  # 一页一场：不用「固定 N 场」
+        base_params["episodes"] = 1
+        if ask is None:
+            from utility import material_image_matcher as _mim
+
+            ask = _mim.strata_scene_vision
+        pdf_name = os.path.basename(attachment)
+        tmp = tempfile.mkdtemp(prefix="t272_pages_")
+        try:
+            images = _psp.render_pages(attachment, tmp)
+            if not images:
+                raise RuntimeError("PDF 里没有页")
+            texts = _psp.page_texts(attachment)
+            first = max(1, int(first_page or 1))
+            cast0 = _pnb._story_cast_text(src_vd)
+            setting = _pnb.story_setting_context(video_detail)  # t280: 每页的用户文字也提醒 地域 / 时代 / 舞台
+
+            def build(k, n, cast, scenes):
+                vd = dict(src_vd)
+                if cast0 is not None or dynamic:
+                    vd["story_actors"] = cast
+                note = (
+                    f"PDF page {k} of {n} (page {first + k - 1} of the original file {pdf_name}). "
+                    "The picture of this page is attached. Judge each person's age band from the face and body: "
+                    "kids, youth, teenager, mature, or senior. Source rule: one scene per page, in page order."
+                )
+                _lbl, system = self._combined_prompt_text_for_label(
+                    vd, prompt_label, instruction=instruction, content_override=note,
+                    dialogue_mode=dialogue_mode, prompt_params=base_params,
+                )
+                if not (system or "").strip():
+                    raise RuntimeError("这个叙事方式没有场景提示词")
+                system = system.rstrip() + "\n\n" + _cp.scene_dialogue_budget_block().strip() + "\n"
+                system = system.rstrip() + "\n\n" + _cp.scene_speaker_id_block().strip() + "\n"
+                user = _psp.page_user_text(
+                    k, n, original_page=first + k - 1, page_text=(texts[k - 1] if k - 1 < len(texts) else ""),
+                    cast_text=str(cast or ""), scenes=scenes, independent=fresh, setting=setting,
+                )
+                return system, user
+
+            res = _psp.run_pages(
+                images, ask, build, texts=texts, first_page=first, cast_text=str(cast0 or ""), mode=mode,
+                dynamic=dynamic, cap=cast_preset.DYNAMIC_CAST_MAX_PEOPLE, allow_host=(mode == "podcast"),
+                on_progress=lambda k, n: print(f"[场景生成] Strata 第 {k}/{n} 页 …"),
+                independent=fresh,  # t278: 每页自己找人，前面页的人物不带过来
+            )
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        out = []
+        for it in res["scenes"]:
+            n = _normalize_scene_dict_entry(it) if isinstance(it, dict) else None
+            if n:
+                out.append(n)
+        if len(out) != len(res["scenes"]):
+            raise RuntimeError("Strata 回的有场景缺必要的字段，没有生成")
+        for note in res.get("notes") or []:
+            print(f"动态人物：{note}")
+        if fresh and out:
+            self._consolidate_dynamic_cast(video_detail, out, prompt_label)  # t278: 全部页跑完一次归拢
+        elif dynamic:
+            self._store_story_actors(video_detail, res["cast"])
+            if fresh:
+                self._log_cast_replaced(old_cast, res["cast"])
+        return out or None
 
     def _run_scene_smart_generate_async(
         self,
@@ -1337,11 +1561,14 @@ class MediaGUIManager:
         scene_source: str = "",
         scene_source_path: str = "",
         get_scene_json=None,
+        scene_source_range: dict | None = None,
+        pdf_user_instruction: str | None = None,
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。text_backend: "grok" / "gemini"（CLI自动 用哪个网页）。"""
         channel_key = self._channel_config_key()
         if not prompt_label:
-            prompt_label = _prompt_choice_entries(channel_key)[0][0]
+            prompt_label = config_channel.default_scene_prompt_label(
+                [l for l, _t in _prompt_choice_entries(channel_key)])
         has_override = content_override is not None and str(content_override).strip()
         if not has_override and not _pnb.analyzed_content_text(video_detail.get("analyzed_content")):
             messagebox.showwarning(
@@ -1378,6 +1605,8 @@ class MediaGUIManager:
                         project_manager.SCENE_SOURCE_AUDIO,
                         project_manager.SCENE_SOURCE_VIDEO,
                     ),
+                    pdf_user_instruction=pdf_user_instruction,  # t272: Strata 一页一页时用（不含「共 n 页 n 场」那句）
+                    pdf_first_page=int((scene_source_range or {}).get("start") or 1),
                 )
             except Exception as ex:
                 err_msg = str(ex)
@@ -1403,22 +1632,13 @@ class MediaGUIManager:
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 文字稿原句没有写回：{exc}")
             if scenes:
-                try:  # t436u: 集号由手工选的「共 N 集」决定；只重新生成第 k 集 → 换掉原来的第 k 集，其它集不动
+                try:  # t436u: 集号由手工选的「共 N 集」决定；每次生成都是全部集（t266: 没有「只重新生成第 k 集」了）
                     _ep = dict(prompt_params or {})
-                    _n, _k = _ep.get("episodes") or 1, _ep.get("episode") or 1
-                    _only = config_channel.episode_only(_ep)
-                    for _n_note in config_channel.normalize_scene_episodes(scenes, _n, _k, only=_only):
+                    _n = _ep.get("episodes") or 1
+                    if config_channel.fixed_story_steps(prompt_label, _ep):
+                        _n = 1  # 故事对话固定 N 场 = 一个故事，不分集
+                    for _n_note in config_channel.normalize_scene_episodes(scenes, _n):
                         print(f"⚠️ 分集：{_n_note}")
-                    if _only:
-                        _old = video_detail.get("scene_content")
-                        if isinstance(_old, str):
-                            try:
-                                _old = json.loads(_old)
-                            except ValueError:
-                                _old = []
-                        _new_count = len(scenes)
-                        scenes = config_channel.merge_episode_scenes(_old if isinstance(_old, list) else [], scenes, _k)
-                        print(f"分集：第 {int(_k)} 集换成新生成的 {_new_count} 场，其它集不动（共 {len(scenes)} 场）")
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 分集没有处理：{exc}")
                 try:  # t174u: 人物编号对齐（只重排 / 补位，不删内容），有问题只提醒
@@ -1429,6 +1649,10 @@ class MediaGUIManager:
                         print(f"⚠️ 人物编号：{_n}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"⚠️ 人物编号检查没做：{exc}")
+                try:  # t280: 编号对齐之后再把 actor 写成新写法（讲员 H …，人物不带 人物N：）
+                    project_manager.migrate_scene_actors(scenes)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ actor 新写法没改：{exc}")
                 # t440u: 每一场都要有 shot（没拆过 = "1-1"，已有的不改）
                 from utility.scene_shot import ensure_scene_shots
 
@@ -1458,6 +1682,15 @@ class MediaGUIManager:
                         video_detail["scene_source_path"] = os.path.abspath(src_path)
                     else:
                         video_detail.pop("scene_source_path", None)
+                    # t271: PDF 来源 → 记下这次场景生成用的页范围（scene_source_range）；其他来源 / 没有范围 → 去掉旧的
+                    if (
+                        src_kind == project_manager.SCENE_SOURCE_PDF
+                        and isinstance(scene_source_range, dict)
+                        and video_detail.get("scene_source_path")
+                    ):
+                        video_detail["scene_source_range"] = dict(scene_source_range)
+                    else:
+                        video_detail.pop("scene_source_range", None)
                 new_title = project_manager.caption_from_scene_content_item(scenes[0])
                 if new_title and _scene_caption_may_replace_title(video_detail, _old_sc):
                     _apply_project_video_title(video_detail, new_title)
@@ -1478,7 +1711,8 @@ class MediaGUIManager:
                     return
                 # t409u: PDF / 视频来源 → 后台自动给每场配图（ref_images）
                 _start_scene_auto_ref_images(
-                    self, parent, video_detail, scenes, src_kind, set_scene_json, get_scene_json, persist
+                    self, parent, video_detail, scenes, src_kind, set_scene_json, get_scene_json, persist,
+                    pdf_per_page=llm_api.LLMApi._attachment_kind((attachment or "").strip()) == "pdf",  # t275: 附 PDF = 一页一个场景
                 )
                 try:
                     _copy_text_to_clipboard(parent, scene_json)

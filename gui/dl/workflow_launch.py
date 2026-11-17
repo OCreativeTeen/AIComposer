@@ -73,11 +73,40 @@ def _watch_workflow_launch(pid: str, proc=None) -> None:
     _release_workflow_launch(pid)
 
 
+def _block_open_without_scenes(cfg, pid: str, parent=None) -> bool:
+    """t271: 这个故事没有有效的场景 JSON → 弹出说明，返回 True（调用方不要启动视频生成）。
+
+    读不出配置（cfg 为空）不拦——让视频生成自己报“无法加载项目”。"""
+    if not isinstance(cfg, dict) or not cfg:
+        return False
+    try:
+        from utility import story_scenes
+
+        problem = story_scenes.project_open_problem(cfg, pid=pid)
+        if not problem:
+            return False
+        from tkinter import messagebox
+
+        messagebox.showerror(story_scenes.BLOCK_OPEN_TITLE, story_scenes.open_message(problem), parent=parent)
+        return True
+    except Exception as exc:  # noqa: BLE001  判断本身出错：不拦（视频生成里还有一道）
+        print(f"⚠️ 场景 JSON 检查没做成，交给视频生成再检查：{exc}")
+        return False
+
+
 def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
     """另起进程启动 ``GUI_wf.py --open-pid``，与在主窗口用 ``--open-pid`` /「选择项目→打开」后的加载逻辑一致。"""
     pid = (pid or "").strip()
     if not pid:
         return False
+    try:
+        import project_manager
+
+        _cfg = project_manager.load_project_config_by_pid(pid)
+    except Exception:  # noqa: BLE001
+        _cfg = None
+    if _block_open_without_scenes(_cfg, pid, parent):
+        return True  # 已经提示过了；返回 True，调用方不再试别的启动方式
     if not _begin_workflow_launch(pid, parent):
         return True
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -109,6 +138,15 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
     except (OSError, json.JSONDecodeError, TypeError, ValueError, IndexError):
         row = None
     open_pid = _video_detail_project_pid(row) if isinstance(row, dict) else ""
+    if isinstance(row, dict):
+        try:
+            import project_manager
+
+            _cfg = project_manager.project_config_from_list_item(row, list_json_path, int(index))
+        except Exception:  # noqa: BLE001
+            _cfg = row
+        if _block_open_without_scenes(_cfg, open_pid, parent):
+            return True  # t271: 已经提示过了；返回 True，调用方不再试别的启动方式
     if open_pid and not _begin_workflow_launch(open_pid, parent):
         return True
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

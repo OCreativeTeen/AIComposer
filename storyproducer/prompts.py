@@ -120,14 +120,14 @@ def build_gemini_prompt(
     instruction: str = "",
     language: str = "tw",
     steps: int | None = None,
-    episode: int | None = None,
     episodes: int | None = None,
 ) -> str:
     """Assemble the LM template used by scnge (``{content}`` = analyzed_content).
 
-    ``steps`` (Step Story) / ``episode`` + ``episodes`` (直接生成系列节目) are optional;
-    left at None the old behaviour is kept. A legacy label like ``"5 Step Story"``
-    maps onto ``Step Story`` with that step count.
+    ``steps`` (故事对话 步数: 0 / None = free story planning, 1-6 = exactly that many scenes) and
+    ``episodes`` (共 N 集; every run writes all episodes) are optional; left at None the old behaviour is kept.
+    A legacy label like ``"5 Step Story"`` / ``"短故事"`` maps onto 故事对话 with that step count
+    (FlyLink, which has no 故事对话, keeps its own fixed-step story).
     """
     import config
     import config_channel
@@ -136,7 +136,8 @@ def build_gemini_prompt(
     want = lm_label
     legacy = config_channel.legacy_step_label(lm_label)
     if legacy and not any(lbl == lm_label for lbl, _ in rows):
-        want = config_channel.STEP_STORY_LABEL
+        want = (config_channel.STEP_STORY_LABEL if any(lbl == config_channel.STEP_STORY_LABEL for lbl, _ in rows)
+                else config_channel.SERIES_STYLE_LABELS["story_speak"])
         if steps is None:
             steps = legacy
     if not any(lbl == want for lbl, _ in rows):
@@ -169,7 +170,7 @@ def build_gemini_prompt(
             steps or 1, visual_style=(visual_style or "").strip()
         )
     template = config_channel.resolve_dynamic_scene_template(
-        want, template, {"steps": steps, "episode": episode, "episodes": episodes}
+        want, template, {"steps": steps, "episodes": episodes}
     )
     vd = video_detail if isinstance(video_detail, dict) else {}
     _cat, _sub, topic = _topic_fields(vd)
@@ -317,7 +318,9 @@ def build_grok_video_prompts(
     for i in range(n):
         actor = ""
         if isinstance(scenes[i], dict):
-            actor = (scenes[i].get("actor") or "").strip()
+            from utility.actor_format import migrate as _actor_new  # t280: 新写法
+
+            actor = _actor_new(scenes[i].get("actor") or "").strip()
         text = config_prompt.build_notebooklm_gen_instruction_clipbody(
             mode=base,
             variant=var,

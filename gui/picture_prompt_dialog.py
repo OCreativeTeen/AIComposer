@@ -763,7 +763,7 @@ def open_picture_prompt_dialog(
                     cimgs = images[:1] + cref
                     print(f"图片修改 · 补全/修正人物（{comfy.upper()}）：发出的图 = " + " | ".join(
                         [f"1 场景图 {os.path.basename(cimgs[0])}"]
-                        + [f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no") else f"（{r['label']} {r['name']} 只用文字）"
+                        + [f"{r['image_no']} {__import__('utility.actor_format', fromlist=['ref_who']).ref_who(r)}" if r.get("image_no") else f"（{__import__('utility.actor_format', fromlist=['ref_who']).ref_who(r)} 只用文字）"
                            for r in crow]))
                     return cpos, cimgs, {"aspect": "", "actors": crow, "base": cimgs[0], "full_images": True,
                                          "comfy": True, "negative": cneg, "size": comfy_size}
@@ -779,7 +779,7 @@ def open_picture_prompt_dialog(
                 if aspect:
                     prompt = aspect + "\n\n" + prompt
                 print("图片修改 · 补全/修正人物：发出的图 = " + " | ".join(
-                    [f"1 场景图 {os.path.basename(imgs[0])}"] + [f"{r['image_no']} {r['label']} {r['name']}" for r in rows]))
+                    [f"1 场景图 {os.path.basename(imgs[0])}"] + [f"{r['image_no']} {__import__('utility.actor_format', fromlist=['ref_who']).ref_who(r)}" for r in rows]))
                 return prompt, imgs, {"aspect": aspect, "actors": rows, "base": imgs[0], "full_images": True}
             if not images and not quiet:
                 messagebox.showinfo("图片修改", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
@@ -800,8 +800,8 @@ def open_picture_prompt_dialog(
                         images.append(row["image"])
                 sent = [f"1 基础图 {os.path.basename(images[0])}"] if path in images else []
                 for r in actor_images:
-                    sent.append(f"{r['image_no']} {r['label']} {r['name']}" if r.get("image_no")
-                                else f"（{r['label']} {r['name']} 没有形象图）")
+                    sent.append(f"{r['image_no']} {__import__('utility.actor_format', fromlist=['ref_who']).ref_who(r)}" if r.get("image_no")
+                                else f"（{__import__('utility.actor_format', fromlist=['ref_who']).ref_who(r)} 没有形象图）")
                 print(f"图片修改：发出的图 = " + " | ".join(sent))
             if comfy:  # t356u: 一般修改 / 人物提取：ComfyUI 专用短提示
                 crow, cref = config_prompt.comfy_cast_rows(actor_images, comfy)
@@ -1191,7 +1191,8 @@ def open_picture_prompt_dialog(
         elif missing:
             ok, why = False, "这些人物没有肖像图：" + "、".join(missing)
         else:
-            ok, why = True, ("当前场景图 + " + "、".join(f"{r['label']} {r['name']}" for r in rows)
+            ok, why = True, ("当前场景图 + " + "、".join(  # t279: 显示短编号（人物N → N，讲员 → H）
+                f"{project_manager.actor_display_id(r) or r['label']} {r['name']}" for r in rows)
                              + " 的肖像图一起发给 Grok Image：按场景描述和讲话补上缺的人、改正错的人，构图背景不变。")
         _fix_ok[0] = ok
         fix_cb.state(["!disabled"] if ok else ["disabled"])

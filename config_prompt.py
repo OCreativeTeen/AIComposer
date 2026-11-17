@@ -238,7 +238,7 @@ Each scene's ``show_this_content`` tells you WHAT to paint — setting, characte
 NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS = """
 ** When ``actor`` / ``speaking`` are present: the protagonist MUST appear with facial expression, posture, gesture, and action that MATCH the emotional state in ``speaking`` and ``actor``.
 ** Use ``speaking`` only to infer mood and body language — NEVER render speaking lines as subtitles, captions, or speech bubbles (unless variant explicitly allows Word-in-image video).
-** If ``actor`` is only ``讲员：名字``, there is no 人物. Mood, gesture, and camera direction are not people. Paint the narrator. ``speaking`` still must not become words on the image.
+** If ``actor`` is only ``H 名字``, there is no 人物. Mood, gesture, and camera direction are not people. Paint the narrator. ``speaking`` still must not become words on the image.
 """
 
 NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION = """
@@ -329,9 +329,9 @@ This is a variant of TELLING: only the 讲员 speaks. People rarely appear; if t
 """.strip(),
 }
 
-# t262: 节目生成按「方式」（短故事 / 播客 / 故事对话 / 故事表演）写，不再只按 narrative 分故事 / 讲述：
+# t262: 节目生成按「方式」（播客 / 故事对话 / 故事表演）写，不再只按 narrative 分故事 / 讲述：
 # 谁说话、人物怎么演由 utility/narration_modes 的规则原文给（放在提示词最前面的「人物与呈现」段，和场景生成、视频生成同一份），
-# 这里只写这个方式要的画面形式。短故事 / 故事对话沿用故事的形式说明。
+# 这里只写这个方式要的画面形式。故事对话（t266: 短故事已并入，步数 0 或 1–6 都一样）沿用故事的形式说明。
 PROGRAM_MODE_NOTES = {
     "podcast": """
 Narrative style: PODCAST. The speakers talk ABOUT the story as a third party, and the pictures illustrate what is being said.
@@ -553,7 +553,8 @@ def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords:
     if actor:
         lines.append(
             "- ``Actors``: the people, in order, joined by |. Place 1 is the first entry, place 2 the second, "
-            "and so on. ``讲员`` is the host. ``人物1``, ``人物2`` and so on are the other people. "
+            "and so on. An entry that starts with ``H`` (H, a space, then the look) is the 讲员, the host. Every other "
+            "entry is a 人物, another person, written as gender/age band/ethnicity/name with no label in front. "
             "A person not listed here is not one of them."
         )
     if keywords:
@@ -683,7 +684,7 @@ def _slide_flow_report_rules(visual: bool, speaking: bool, actor: bool) -> str:
 
 
 def _slide_flow_mode_rules(mode: str, visual: bool, speaking: bool, actor: bool) -> str:
-    """t262: 节目生成：这个方式（短故事 / 播客 / 故事对话 / 故事表演）要的字段用法。
+    """t262: 节目生成：这个方式（播客 / 故事对话 / 故事表演）要的字段用法。
     谁说话、人物怎么演不在这里重写：照最前面「人物与呈现」段里 utility/narration_modes 的规则原文
     （和场景生成、视频生成同一份），这里只说字段怎么对上。"""
     key = _narration_modes.normalize(mode)
@@ -1111,7 +1112,7 @@ def build_slide_flow_prompt(
 ) -> str:
     """``actor_source``（如 "actor.pdf"）非空且本次带 Actors 时，加一段 ``Actor_Reference``。
 
-    t262: ``mode`` = 节目生成的方式（短故事 / 播客 / 故事对话 / 故事表演）。给了就按方式写：谁说话、人物怎么演照
+    t262: ``mode`` = 节目生成的方式（播客 / 故事对话 / 故事表演）。给了就按方式写：谁说话、人物怎么演照
     最前面「人物与呈现」段的共用规则（utility/narration_modes），这里只写字段怎么用；没给（魔法工作流的全集生成）照旧按 narrative。
 
     ``content_source``（如 "content.pdf"）非空时：场景内容不写进提示词，改为说明它在笔记本来源里。
@@ -2226,6 +2227,7 @@ def output_aspect_line(video_size: str = "", width=None, height=None) -> str:
 def picture_reference_images_note(actor_images: list | None, *, task: str, narrative: str, base_image: bool = True) -> str:
     """图片提示：发出去的图各是什么，以及人物形象图怎么用。没有任何人物形象图返回 ""。"""
     rows = [r for r in (actor_images or []) if isinstance(r, dict) and (r.get("name") or "").strip()]
+    from utility import actor_format as _actor_format  # t281: 新写法称呼（H 讲员 / 人物不带 人物N）+ 位置
     if not any(r.get("image_no") for r in rows):
         return ""
     zh = ["参考图（必须遵守）："]
@@ -2235,8 +2237,8 @@ def picture_reference_images_note(actor_images: list | None, *, task: str, narra
         en.append("- Image 1 is the base picture of this scene.")
     for r in rows:
         ov = (r.get("override") or "").strip()
-        who_zh = f"{r.get('label') or '人物'}「{r['name']}」" + (f"（换成{ov}）" if ov else "")
-        who_en = (f"{'the 讲员 (host)' if r.get('role') == 'host' else (r.get('label') or '人物')} \"{r['name']}\""
+        who_zh = _actor_format.ref_who(r, zh=True) + (f"（换成{ov}）" if ov else "")
+        who_en = (("the 讲员 (host) " if r.get("role") == "host" else "") + _actor_format.ref_who(r)
                   + (f" (overridden to {ov})" if ov else ""))
         if r.get("image_no"):
             zh.append(f"- 第{r['image_no']}张图是{who_zh}的形象图。")
@@ -2254,7 +2256,7 @@ def picture_reference_images_note(actor_images: list | None, *, task: str, narra
     if base_image and with_img:
         def _who(r):
             ov = (r.get("override") or "").strip()
-            return f"{r.get('label') or '人物'} {r['name']}" + (f" (overridden to {ov})" if ov else "")
+            return _actor_format.ref_who(r) + (f" (overridden to {ov})" if ov else "")
         nos = sorted({int(r["image_no"]) for r in with_img})
         span = f"Image {nos[0]}" if len(nos) == 1 else f"Images {nos[0]}..{nos[-1]}"
         order = ", ".join(f"Image {r['image_no']} = {_who(r)}" for r in with_img)
@@ -2442,9 +2444,11 @@ def build_scene_speech_transform_prompt(
     silent = active[3:4]
 
     def who(row: dict) -> str:
-        role = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
+        from utility import actor_format as _actor_format  # t281: 新写法称呼 + 位置
+
         body = (row.get("body") or "").strip()
-        return f"{role}（{body}）"
+        pos = active.index(row) + 1 if row in active else None
+        return _actor_format.ref_who({"role": row.get("role"), "name": body}, pos=pos, zh=True)
 
     def tone(row: dict) -> str:
         if row.get("role") == "host":
@@ -2870,7 +2874,9 @@ def parse_nb_export_choice(want: str) -> tuple[str, str] | None:
 def _image_painting_direction(scene: dict, use_visual: bool = True) -> str:
     parts: list[str] = []
     vis = (scene.get("visual") or scene.get("story") or "").strip() if use_visual else ""
-    actor = (scene.get("actor") or "").strip()
+    from utility.actor_format import migrate as _actor_new  # t280: 提示词里的 actor 一律新写法
+
+    actor = _actor_new(scene.get("actor") or "").strip()
     speaking = (scene.get("speaking") or scene.get("story_content") or "").strip()
     caption = (scene.get("caption") or "").strip()
     if caption:
@@ -3005,7 +3011,7 @@ NOTEBOOKLM_VIDEO_ACT_SPEECH = """
 ** Show the story through action, facial expression, and how the scene changes. Use ``visual`` for that change.
 ** Read ``actor`` from left to right. Skip anyone named 不出现. Entry 1's text is ``speaking``. Entry 2's text, if any, is ``voiceover``.
 ** A 讲员 in entry 1 or entry 2 may speak that entry's line aloud as commentary.
-** A 讲员 listed in ``actor`` appears on screen, says only that commentary, then leaves. Face and clothes match the 讲员's reference portrait.
+** A 讲员 listed in ``actor`` (the entry written H, a space, then the look) appears on screen, says only that commentary, then leaves. Face and clothes match the 讲员's reference portrait.
 ** If no 讲员 is listed in ``actor``, nobody speaks on screen. Any commentary is an off-screen voice-over: no narrator is drawn and no mouth moves. Otherwise action, expression, and place sounds only.
 ** When the 讲员 speaks, every 人物 mouth stays closed. One voice at a time. No music.
 """
@@ -3527,8 +3533,10 @@ def speaking_voice_lines(scenes: list) -> str:
             voice = voice_for(body, row.get("role") or "person")
             if not voice:
                 continue
-            label = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
-            lines.append(f"** {prefix}{field}: {label} {body}. Voice: {voice}.")
+            from utility import actor_format as _actor_format  # t281: 新写法称呼 + 位置
+
+            who = _actor_format.ref_who({"role": row.get("role"), "name": body}, pos=slot + 1)
+            lines.append(f"** {prefix}{field}: {who}. Voice: {voice}.")
             noted = True
     if not noted:
         return ""
@@ -3582,7 +3590,7 @@ def _video_prompt_scene_payload(
 # t258: 名字、存值、旧存值怎么认、说话 / 表演规则全部来自 utility/narration_modes.py 这一张表；两个窗口不再各写各的。
 from utility import narration_modes as _narration_modes  # noqa: E402
 
-STORY_STYLE_CHOICES = tuple(_narration_modes.MODES)  # 短故事 / 播客 / 故事对话 / 故事表演（预览下拉的顺序；t262: 主持人节目已并入故事表演）
+STORY_STYLE_CHOICES = tuple(_narration_modes.MODES)  # 播客 / 故事对话 / 故事表演（预览下拉的顺序；t262: 主持人节目已并入故事表演；t266: 短故事已并入故事对话）
 # 叙事方式是唯一的权威：生场视频的「叙事风格」也用这一套。每个叙事方式对应提示词里的叙事形式（narrative）。
 STORY_STYLE_NARRATIVE = dict(_narration_modes.NARRATIVE)
 # 旧的生场视频「叙事风格」存值 → 叙事方式（迁移用）
@@ -3593,11 +3601,11 @@ DEFAULT_STORY_STYLE = _narration_modes.DEFAULT_MODE
 
 
 def normalize_story_style(value) -> str:
-    """存值 / 标签（中文名；旧写法 "Series . Podcast"、旧的 Story Only / Step Story）→ step_story / podcast /
+    """存值 / 标签（中文名；旧写法 "Series . Podcast"、旧的 Story Only / Step Story）→ podcast /
     story_speak / story_act；认不出返回空。
 
     t262: 主持人节目 / Counselor 和旧的 tech / exec（技术方案汇报 / 高管简报）都 → story_act（故事表演）。
-    t258: 短故事 / Step Story 现在是自己的一种（step_story），不再并进故事对话。"""
+    t266: 短故事 / Step Story / story_mini / step_story（旧存值）→ story_speak（短故事已并入故事对话）。"""
     return _narration_modes.normalize(value)
 
 
@@ -3617,9 +3625,8 @@ def story_style_mode_text(value, actor_checked: bool) -> str:
                 "没有讲员：全程没有人说话，只有表演和音效。"
                 "全程只有音效、没有音乐。如有自言自语（<Ns>），"
                 "只把本场「讲话」原文用该人物自己的声音说出（嘴巴不动），不是旁白员，也不念视觉描述。")
-    if key in ("story_speak", "step_story"):
-        head = (label + "：两个人物互相对话，没有讲员、旁白或画外音。" if key == "step_story"
-                else label + " · " + narrative_mode_text("story", actor_checked))
+    if key == "story_speak":
+        head = label + " · " + narrative_mode_text("story", actor_checked)
         return (head
                 + " 出场说话永远只来自本场「讲话」。视觉／说明只指导画面，绝不能念出来。"
                   " <N> 与 <Ns> 是同一个人（s 只表示自言自语，不是新角色）。"
@@ -3925,8 +3932,9 @@ def _who(row: dict) -> str:
     import project_manager
 
     body, _m = project_manager.split_actor_motion(row.get("body") or "")
-    label = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
-    return f"{label} {body}".strip()
+    from utility import actor_format as _actor_format  # t281: 新写法称呼（H 讲员 / 人物不带标签）
+
+    return _actor_format.ref_who({"role": row.get("role"), "name": body}).strip()
 
 
 _AGE_WORDS = {"kids": ("little", "a child's", "about 8-12"), "teenager": ("teenage", "a teenage", "about 15"),
@@ -4280,10 +4288,8 @@ def program_host_case(actor_texts, find_portrait=None, style: str | None = None)
 
 def _video_host_case(mode: str, scenes: list, host_portrait: bool | None = None, style: str | None = None) -> str:
     """视频窗口里讲员的情况（narration_modes.HOST_*），完全由真实数据决定：场景 actor 里有没有讲员、讲员有没有肖像。
-    host_portrait 没给（None）就现查（video_host_portrait）。短故事没有讲员。
+    host_portrait 没给（None）就现查（video_host_portrait）。
     只有一种旧数据没有讲员行：旧的故事表演项目里讲员的话写在 speaking 里、actor 里没有讲员 → 背景画外音。"""
-    if mode == "step_story":
-        return _narration_modes.HOST_NONE
     real = [s for s in scenes if isinstance(s, dict)]
     if any(r.get("role") == "host" for s in real for r in _scene_speakers(s)):
         if host_portrait is None:
@@ -4339,8 +4345,8 @@ def _video_speech_rules_core(story_style: str, narrative: str, cast: list, scene
     这里只管具体句子怎么念：口型、自言自语、谁的声音。"""
     import project_manager
 
-    if story_style == "step_story":
-        story_style = "story_speak"  # 短故事 = 没有讲员的故事对话：下面的逻辑一样，只是没有讲员
+    if story_style == "step_story":  # t266: 旧存值（短故事）→ 故事对话
+        story_style = "story_speak"
     real = [s for s in scenes if isinstance(s, dict)]
     if real and all(project_manager.scene_is_story_act(s) for s in real):
         story_style = "story_act"  # 场景本身是 Story Act 生成的（只有 story_content）
@@ -6970,14 +6976,14 @@ Output: as json array like
 [
     {
         "caption": "Scene title; for 1st scene, give the title for the whole-story",
-        "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/english/贾雨村 | 讲员：voice-name",
+        "actor": "woman/mature/chinese/封氏 | man/youth/english/贾雨村 | H voice-name",
         "speaking": "Actor's speaking line, as the 1st person's perspective",
         "visual": "Visual elements of the image, give (animation) development of the scene to guid the viewer's attention",
         "voiceover": "Host/narrator's introduction / elaborate / summary, as the outsider's perspective"
     },
     {
         "caption": "Scene title",
-        "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/english/贾雨村 | 讲员：voice-name",
+        "actor": "woman/mature/chinese/封氏 | man/youth/english/贾雨村 | H voice-name",
         "speaking": "Actor's speaking line, as the 1st person's perspective",
         "visual": "Visual elements of the image, give (animation) development of the scene to guid the viewer's attention",
         "voiceover": "Host/narrator's introduction / elaborate-insight / summary, as the outsider's perspective"
@@ -8736,21 +8742,24 @@ def scene_dialogue_budget_block() -> str:
 
 
 # t174u: 人物编号整篇故事固定（四个后端共用，跟在对话长度规则后面）
+# t280: actor 不写 人物N： 标签，<N> = 这一场 actor 里的位置；同一个人同一段描述、同样的先后
 SCENE_SPEAKER_ID_RULE = """
-*** 人物编号：整个故事固定，一个人一个号（这一条优先于上面所有关于 <N> 和 actor 编号的写法）
-    ** 第一场按开口先后编号：先说话的是 人物1（<1>），第二个说话的是 人物2（<2>）。
-    ** 后面每一场，同一个人永远用同一个号和同一段描述（性别/年龄段/族裔/名字），即使他这一场先开口。所以第二场可以用 <2> 开头。
-    ** 只有真正新出场、不同的人才用下一个没用过的号（人物3…）。故事用一小组固定的人物：前面出现过的朋友、家人，后面再出现就还是原来那个号。
-    ** actor 写这一场出现的人，按号从小到大排（人物1 在 人物2 前面），用和 speaking 一样的 人物N。
+*** 说话人编号：<N> 就是这一场 actor 里的第 N 个人（这一条优先于上面所有关于 <N> 和 actor 编号的写法）
+    ** actor 里不写「人物N：」这类标签：每个人只写 性别/年龄段/族裔/名字（括号里写这一场的表现）；讲员写成 H、空格、再写形象。
+    ** 同一个人整篇故事永远用同一段描述（性别/年龄段/族裔/名字），名字、年龄段都不换。
+    ** 第一场按开口先后排：先说话的人排第一（<1>），第二个说话的排第二（<2>）。
+    ** 后面每一场保持同样的先后：同样的人按同样的顺序列在 actor 里，所以同一个人还是同一个 <N>，即使他这一场先开口也不换位置，所以第二场可以用 <2> 开头。前面的人这一场不在时，后面的人往前补位：<N> 只数这一场 actor 里的人。
+    ** 只有真正新出场、不同的人才加在后面。故事用一小组固定的人物：前面出现过的朋友、家人，后面再出现就用原来那段描述。
     ** 例子（同样两个人，三场）：
-       第1场 speaking："<1> 都兩點了，你還在滑？<2> 睡不著。"　actor："人物1：man/youth/chinese/阿杰 | 人物2：man/mature/chinese/小林"
-       第2场 speaking："<2> 我是不是很失敗？<1> 你昨天還說要改履歷。"　actor："人物1：man/youth/chinese/阿杰 | 人物2：man/mature/chinese/小林"
-       第3场 speaking："<1> 出來走走吧。<2> 好像輕鬆一點了。"　actor："人物1：man/youth/chinese/阿杰 | 人物2：man/mature/chinese/小林"
-*** SPEAKER NUMBERS ARE FIXED FOR THE WHOLE STORY (overrides any earlier rule about <N> and actor numbering)
-    ** Scene 1: number people by who speaks first: the first speaker is 人物1 (<1>), the second is 人物2 (<2>).
-    ** Every later scene: the same person keeps the same number and the same description (gender / age / ethnicity / name), even when they speak first, so scene 2 may open with <2>.
-    ** Only a genuinely new, different person gets the next unused number (人物3 ...). Keep a small fixed cast: a friend or family member who returns is the same 人物N as before.
-    ** actor lists the people in that scene in number order (人物1 before 人物2), with the same 人物N as in speaking.
+       第1场 speaking："<1> 都兩點了，你還在滑？<2> 睡不著。"　actor："man/youth/chinese/阿杰 | man/mature/chinese/小林"
+       第2场 speaking："<2> 我是不是很失敗？<1> 你昨天還說要改履歷。"　actor："man/youth/chinese/阿杰 | man/mature/chinese/小林"
+       第3场 speaking："<1> 出來走走吧。<2> 好像輕鬆一點了。"　actor："man/youth/chinese/阿杰 | man/mature/chinese/小林"
+*** SPEAKER NUMBERS: <N> IS THE N-TH PERSON IN THIS SCENE'S actor (overrides any earlier rule about <N> and actor numbering)
+    ** No label such as 人物N： in actor: write each person as gender/age band/ethnicity/name (this scene's note in parentheses); the 讲员 is written H, a space, then the look.
+    ** The same person keeps exactly the same description (gender / age / ethnicity / name) in every scene.
+    ** Scene 1: order people by who speaks first: the first speaker is listed first (<1>), the second speaker second (<2>).
+    ** Every later scene keeps that order: the same people are listed in the same order, so a person keeps the same <N> even when they speak first, and scene 2 may open with <2>. When an earlier person is not in the scene, the others move up: <N> counts only the people in this scene's actor.
+    ** Only a genuinely new, different person is added after them. Keep a small fixed cast: a friend or family member who returns uses the same description as before.
 *** 画面动作（visual）：一场大约 10 秒的对话，人物最多只做一个大的位置变化（例如走过去坐下），其余是表情和小动作；只写 actor 里的人，不另加人。
     ** Visual: a ~10 s dialogue scene has at most one big change of position (e.g. walking over and sitting down); the rest is expression and small gestures. Only the people in actor appear; add nobody else.
 """
@@ -9133,7 +9142,7 @@ def attach_video_prompt_file(scene: dict, path: str) -> None:
 
 def build_cast_fix_prompt(scene: dict, actor_rows: list, visual_style: str = "", fyi: str = "", text: str = "keep") -> str:
     """t197u: 图片修改 · 补全/修正人物。图 1 = 当前场景图，后面是每位人物的肖像图（actor_rows 的 image_no）。
-    按场景描述（visual）和讲话（speaking，<1>/<2> → 人物1/人物2）检查图里的人：缺的补上，错的按肖像和描述改正；
+    按场景描述（visual）和讲话（speaking，<N> → actor 里第 N 个人，t280 按位置对，讲员也算一位）检查图里的人：缺的补上，错的按肖像和描述改正；
     构图、背景、光线、画风、比例不动，不加多余的人。"""
     import re
 
@@ -9141,24 +9150,25 @@ def build_cast_fix_prompt(scene: dict, actor_rows: list, visual_style: str = "",
     visual = str(sc.get("visual") or "").strip()
     speaking = str(sc.get("speaking") or "").strip()
     rows = [dict(r, name=str(r.get("name") or "").split("/")[-1].strip() or r.get("name")) for r in (actor_rows or []) if isinstance(r, dict)]
-    by_no = {}
-    for r in rows:
-        m = re.search(r"(\d+)", str(r.get("label") or ""))
-        if m:
-            by_no.setdefault(m.group(1), r)
+    from utility import actor_format as _actor_format  # t281: 新写法称呼 + 位置（不写 人物N）
+
+    full = [r for r in (actor_rows or []) if isinstance(r, dict)]
+    # t280: <N> = 第 N 个出场的人（rows 就是按 actor 顺序、不出现的已去掉），讲员也占一个位置
+    by_no = {str(i): r for i, r in enumerate(rows, 1)}
 
     def _who(n: str) -> str:
         r = by_no.get(n)
-        return f"{r.get('label')} ({r.get('name')})" if r else f"人物{n}"
+        return _actor_format.ref_who(full[int(n) - 1], pos=int(n)) if r else f"person {n}"
 
     speak = re.sub(r"<(\d+)>\s*", lambda m: "\n" + _who(m.group(1)) + ": ", speaking).strip()
-    cast = [f"- {r.get('label')} = {r.get('name')}: reference portrait is Image {r.get('image_no')}" for r in rows]
+    cast = [f"- {_actor_format.ref_who(full[i - 1], pos=i)}: reference portrait is Image {r.get('image_no')}"
+            for i, r in enumerate(rows, 1)]
     n = len(rows)
     parts = [
         "TASK: Fix the characters in Image 1 (the current scene image). Edit Image 1; do not draw a new picture.",
         "Image 1 = the scene image to correct. The other images are character reference portraits:\n" + "\n".join(cast),
         f"The scene must contain exactly these {n} character(s), no more and no fewer:\n"
-        + "\n".join(f"- {r.get('label')} ({r.get('name')})" for r in rows),
+        + "\n".join(f"- {_actor_format.ref_who(full[i - 1], pos=i)}" for i, _r in enumerate(rows, 1)),
     ]
     if visual:
         parts.append("SCENE DESCRIPTION (what happens, who is where, actions and interaction):\n" + visual)

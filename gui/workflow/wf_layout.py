@@ -524,7 +524,7 @@ class LayoutMixin:
         )
         self.scene_style.set(config_prompt.SCENE_STYLE_LABELS[0])
         self.scene_style.pack(side=tk.LEFT, padx=(0, 0))
-        # 故事风格（短故事 / 播客 / 故事对话 / 故事表演；旧的主持人节目读作故事表演）：决定生场视频提示里谁说话、讲员出不出镜。
+        # 故事风格（播客 / 故事对话 / 故事表演；旧的主持人节目读作故事表演）：决定生场视频提示里谁说话、讲员出不出镜。
         self.story_style = ttk.Combobox(
             look_row2,
             width=18,

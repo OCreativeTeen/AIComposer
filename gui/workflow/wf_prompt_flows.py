@@ -863,7 +863,9 @@ class PromptFlowsMixin:
             sent: set = set()  # 当前对话里已经发过的形象图
 
             def who(r):
-                return f"{r.get('label') or '人物'} {r.get('name') or ''}".strip()
+                from utility.actor_format import ref_who  # t281: 新写法称呼（H 讲员 / 人物不带 人物N）+ 位置
+
+                return ref_who(r).strip()
 
             def scene_rows(job):
                 meta = job[3] if len(job) > 3 and isinstance(job[3], dict) else {}

@@ -1,5 +1,5 @@
 """t263: 讲员的情况永远由真实数据决定（没有「不知道」）；场景生成必须先有人物；播客和故事对话是两回事；
-短故事 / 故事对话共用说话规则；故事表演没有「叙述场景」。
+故事对话（t266: 短故事已并入，步数 0 或 1–6 共用说话规则）；故事表演没有「叙述场景」。
 
 需要真实 config / downloader 的检查在子进程里跑，不装桩，只读，不写任何项目 / 列表数据。"""
 import json
@@ -21,7 +21,7 @@ from utility import cast_preset as cpr  # noqa: E402
 from utility import narration_modes as nm  # noqa: E402
 
 CASES = (nm.HOST_PORTRAIT, nm.HOST_VOICEOVER, nm.HOST_NONE)
-LABELS = {"短故事": "step_story", "播客": "podcast", "故事对话": "story_speak", "故事表演": "story_act"}
+LABELS = {"播客": "podcast", "故事对话": "story_speak", "故事表演": "story_act"}  # t266: 短故事已并入故事对话
 HOST = "讲员：woman/mature/chinese/秦"
 PEOPLE = "人物1：man/youth/chinese/阿明（低头） | 人物2：woman/youth/chinese/小美"
 
@@ -69,7 +69,6 @@ out = {}
 for mode in ("podcast", "story_speak", "story_act"):
     out[mode] = [cp._video_host_case(mode, [sc], True), cp._video_host_case(mode, [sc], False),
                  cp._video_host_case(mode, [no_host], True)]
-out["step_story"] = cp._video_host_case("step_story", [sc], True)  # 短故事没有讲员
 fin = {}
 cp.host_portrait_finder = lambda *a, **k: (lambda row: "x.png")
 fin["yes"] = cp._video_host_case("podcast", [sc])  # 不给 -> 现查
@@ -82,7 +81,6 @@ print(json.dumps(out, ensure_ascii=False))
 """)
         for mode in ("podcast", "story_speak", "story_act"):
             self.assertEqual(res[mode], [nm.HOST_PORTRAIT, nm.HOST_VOICEOVER, nm.HOST_NONE], mode)
-        self.assertEqual(res["step_story"], nm.HOST_NONE)
         self.assertEqual(res["finder"], {"yes": nm.HOST_PORTRAIT, "no": nm.HOST_VOICEOVER, "boom": nm.HOST_VOICEOVER})
 
     def test_voiceover_host_keeps_actor_positions_for_dialogue_modes(self):
@@ -136,7 +134,6 @@ class SceneGenerationNeedsActors(unittest.TestCase):
         for key in ("story_speak", "story_act"):  # 讲员可有可无
             self.assertTrue(cpr.validate_cast_for_mode(key, PEOPLE)[0])
             self.assertTrue(cpr.validate_cast_for_mode(key, HOST + " | " + PEOPLE)[0])
-        self.assertTrue(cpr.validate_cast_for_mode("step_story", PEOPLE)[0])
         self.assertTrue(cpr.validate_cast_for_mode("", "")[0])  # 不是这四种方式：不检查
 
     def test_every_entry_point_is_guarded(self):
@@ -157,7 +154,7 @@ fake = type("F", (), {"_channel_config_key": lambda s: "counseling", "language":
 HOST = "讲员：woman/mature/chinese/秦"
 P = "人物1：man/youth/chinese/阿明（低头） | 人物2：woman/youth/chinese/小美"
 out = {"blocked": {}, "prompts": {}}
-for lab in ("播客", "故事对话", "故事表演", "短故事"):
+for lab in ("播客", "故事对话", "故事表演"):
     for name, cast in (("none", None), ("empty", ""), ("host_only", HOST)):
         try:
             d.MediaGUIManager._generate_scene_content_from_notebooklm_prompt(fake, {"analyzed_content": "一封旧信", "story_actors": cast}, lab)
@@ -175,15 +172,15 @@ print(json.dumps(out, ensure_ascii=False))
                 self.assertIn("「人物设置」", v, k)
         for lab, key in (("播客", "podcast"), ("故事表演", "story_act"), ("故事对话", "story_speak")):
             self.assertIn("「人物设置」", res["blocked"][lab + "/none"])
-        self.assertNotEqual(res["blocked"]["短故事/host_only"], "NOT BLOCKED")  # 短故事讲员不算人物：0 个人物
+        self.assertNotEqual(res["blocked"]["故事对话/host_only"], "NOT BLOCKED")  # 讲员不算人物：0 个人物
         for lab, key in LABELS.items():
             for case in CASES:
                 p = res["prompts"][lab + "/" + case]
-                use = nm.HOST_NONE if key == "step_story" else case
+                use = case
                 for rule in (nm.speaking_rule(key, use), nm.performance_rule(key, use)):
                     self.assertEqual(p.count(rule), 1, (lab, case))
                 for other in CASES:
-                    if other != use and key != "step_story":
+                    if other != use:
                         self.assertNotIn(nm.speaking_rule(key, other), p, (lab, case, other))
                 self.assertEqual(p.count(nm.RULES_BLOCK_HEAD), 1, (lab, case))
                 self.assertNotIn("(a)", nm.speaking_rule(key, use))
@@ -249,12 +246,15 @@ print(json.dumps(pn.build_program_cast_block(vd, "播客", "slides", "panel", ho
 
 
 class ShortStoryAndStoryDialogueShareRules(unittest.TestCase):
+    """t266: 短故事已并入故事对话；步数（0 / 1–6）只改结构（场景数），说话 / 表演规则和讲员的写法不变。"""
+
     def test_same_rule_text_without_a_host(self):
+        # 旧存值 step_story 读作故事对话：规则就是故事对话那一份
         self.assertEqual(nm.speaking_rule("step_story"), nm.speaking_rule("story_speak", nm.HOST_NONE))
         self.assertEqual(nm.performance_rule("step_story"), nm.performance_rule("story_speak", nm.HOST_NONE))
         self.assertEqual(nm.rules_block("step_story"), nm.rules_block("story_speak", nm.HOST_NONE))
-        for h in CASES:  # 短故事永远没有讲员
-            self.assertEqual(nm.speaking_rule("step_story", h), nm.speaking_rule("step_story"))
+        for h in CASES:
+            self.assertEqual(nm.speaking_rule("step_story", h), nm.speaking_rule("story_speak", h))
         # 故事对话有讲员时，只多一小句讲员的话
         base = nm.speaking_rule("story_speak", nm.HOST_NONE)
         for h in (nm.HOST_PORTRAIT, nm.HOST_VOICEOVER):
@@ -262,16 +262,21 @@ class ShortStoryAndStoryDialogueShareRules(unittest.TestCase):
             self.assertTrue(with_host.startswith(base.split(" Cast here:")[0]), h)
 
     def test_only_structural_differences_remain(self):
-        """短故事和故事对话的区别只在结构：短故事固定场景数、没有讲员（模板里写明）；故事对话按集分、可以有讲员。"""
-        step = cc.COUNSELING_STORY_STEP
-        self.assertIn(cc.STEP_STORY_NO_HOST_MARK, step)
-        self.assertNotIn(cc.STEP_STORY_NO_HOST_MARK, cc.COUNSELING_SERIES_STORY_SPEAK)
-        self.assertIn("*** EPISODES:", cc.COUNSELING_SERIES_STORY_SPEAK)
-        out4 = cc.resolve_dynamic_scene_template(cc.STEP_STORY_LABEL, step, {"steps": 4})
-        out2 = cc.resolve_dynamic_scene_template(cc.STEP_STORY_LABEL, step, {"steps": 2})
-        self.assertNotEqual(out4, out2)  # 场景数是短故事的结构参数
-        self.assertEqual(out4.count(nm.speaking_rule("step_story")), 1)
-        self.assertEqual(out2.count(nm.speaking_rule("step_story")), 1)
+        """步数 0 = 按集规划（系列模板）；步数 1–6 = 固定场景数（一个故事）。讲员的规则两边一致：有讲员保留，没有讲员不写。"""
+        free = cc.COUNSELING_SERIES_STORY_SPEAK
+        self.assertNotIn(cc.STEP_STORY_NO_HOST_MARK, free)
+        self.assertIn("*** EPISODES:", free)
+        for host in CASES:
+            out0 = cc.resolve_dynamic_scene_template("故事对话", free, {"steps": 0, "host_case": host})
+            out4 = cc.resolve_dynamic_scene_template("故事对话", free, {"steps": 4, "host_case": host})
+            out2 = cc.resolve_dynamic_scene_template("故事对话", free, {"steps": 2, "host_case": host})
+            self.assertNotEqual(out4, out2)  # 场景数是步数的结构参数
+            self.assertNotEqual(out4, out0)
+            for out in (out0, out4, out2):
+                self.assertEqual(out.count(nm.speaking_rule("story_speak", host)), 1, host)
+                self.assertEqual(out.count(nm.performance_rule("story_speak", host)), 1, host)
+            # 有讲员：固定 N 场的模板里讲员还在；没有讲员：写明没有讲员
+            self.assertEqual(cc.STEP_STORY_NO_HOST_MARK in out4, host == nm.HOST_NONE, host)
 
     def test_program_window_uses_the_same_text(self):
         res = _real(r'''
@@ -279,13 +284,12 @@ import json
 from gui.dl import prompts_notebooklm as pn
 P = "人物1：man/youth/chinese/阿明 | 人物2：woman/youth/chinese/小美"
 print(json.dumps({lab: pn.build_program_cast_block({"story_actors": P}, lab, "slides", "panel", host_case="none")
-                  for lab in ("短故事", "故事对话")}, ensure_ascii=False))
+                  for lab in ("短故事", "Step Story", "故事对话")}, ensure_ascii=False))
 ''')
-        short, dia = res["短故事"], res["故事对话"]
-        for rule in (nm.speaking_rule("step_story"), nm.performance_rule("step_story")):
-            self.assertEqual(short.count(rule), 1)
-            self.assertEqual(dia.count(rule), 1)
-        self.assertEqual(short.replace("Narration", ""), dia.replace("Narration", ""))
+        for old in ("短故事", "Step Story"):  # t266: 旧的短故事 / Step Story 读作故事对话，节目生成里一字不差
+            self.assertEqual(res[old], res["故事对话"], old)
+        for rule in (nm.speaking_rule("story_speak", nm.HOST_NONE), nm.performance_rule("story_speak", nm.HOST_NONE)):
+            self.assertEqual(res["故事对话"].count(rule), 1)
 
 
 class NoNarratorScenes(unittest.TestCase):
@@ -329,7 +333,7 @@ class InvariantsStillHold(unittest.TestCase):
             self.assertNotIn("永远不许加任何字幕！永远不许加任何字幕！", fixed, key)
 
     def test_self_talk_rule_and_tag_stripped_before_tts(self):
-        for key in ("step_story", "story_speak"):
+        for key in ("step_story", "story_speak"):  # step_story = 旧存值，读作故事对话
             for h in CASES:
                 self.assertIn(nm.SELF_TALK_RULE, nm.speaking_rule(key, h), (key, h))
         from utility.speaking_marks import parse_speaking_turns

@@ -4,14 +4,18 @@
 - 双击卡片：预览 / 修改（讲员从音色表里选；人物填 性别/年龄段/民族/名字），可贴图作为形象。
 - 双击空白处：加一个讲员或人物。
 - 卡片获得焦点后按 Ctrl+V：把剪贴板里的图存成这一位的形象图。Delete：删掉这一位（点一下卡片选中，再按 Delete；编辑窗里没有删除按钮）。
+- t280: 单击 = 只选这一枚；Ctrl+单击 = 加选 / 取消选（选中的卡片蓝底）。Delete 删掉所有选中的（先问一次）；讲员也可以删。
+  「人物合并」（在「动态生成人物」下面）：选了 2 个以上人物才能按；讲员不参加合并。
+- t280: 人物预览窗里「生成肖像」：Strata 按所有场景里这一位的描述 + 地域 / 时代 / 舞台写提示词，Grok 文生图（utility/portrait_gen）。
 
-名单用和场景 ``actor`` 字段相同的文字格式（``讲员：xxx | 人物1：woman/mature/chinese/封氏``），
+名单用和场景 ``actor`` 字段相同的文字格式（t280 新写法：``H xxx | woman/mature/chinese/封氏``；旧的 讲员： / 人物N： 照样认），
 解析 / 拼写都走 project_manager 里现成的函数，所以和工作流里的名单完全一样。
 """
 from __future__ import annotations
 
 import os
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 
 import config
@@ -30,10 +34,48 @@ def portrait_stem(name: str) -> str:
     return stem.strip(" .")
 
 
-def cast_rows(actor_text: str) -> list:
-    """名单文字 → ``[{role, label, body}]``，去掉「不出现」的讲员。"""
+# t279: 人物栏 = 整个故事的名单：最多 10 个人物 + 1 个讲员（每一场的 actor 还是最多 4 个人）。
+# 两行，每行 5 个人物；讲员（H）在最左边单独一格、占两行。卡片上的编号只是显示：人物N → N，讲员 → H。
+CHIPS_PER_ROW = 5
+CHIP_ROWS = 2
+REF_WIDTH = 1000  # 量字宽时按人物栏 1000px 宽算（还没摆出来 / 测试里）
+CHIP_EXTRA_PX = 28  # 一枚卡片除了字以外占的宽：字两边 6+6、标签自己的边 3+3、卡片边框 1+1、焦点框 2+2、卡片之间 2+2
+ROW_MARGIN_PX = 8  # 人物栏框子自己的边，留一点
+HOST_TEXT_MAX_PX = 120  # 讲员那一格的字最多这么宽
+
+
+def chip_text(row: dict) -> str:
+    """t279: 卡片上的完整文字：``1 贾雨村（man/mature/chinese）``、``H <讲员>``（编号只是显示；t280: 存的文字是新写法，讲员 ``H …``，人物不带标签）。"""
+    body = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+    sid = project_manager.actor_display_id(row)
+    if row.get("role") == "host":
+        return f"H {body}" if body else "H"
+    parts = [p for p in body.split("/") if p]
+    name = parts[3] if len(parts) >= 4 else ""
+    look = "/".join(parts[:3]) if parts else body
+    head = f"{sid} " if sid else ""
+    return f"{head}{name}（{look}）" if name else f"{head.strip()}（{look}）"
+
+
+def fit_text(text: str, font, max_px: int) -> str:
+    """量字宽：放不下就从后面截掉，末尾写 ``..``。"""
+    text = text or ""
+    if max_px <= 0 or font.measure(text) <= max_px:
+        return text
+    while text and font.measure(text + "..") > max_px:
+        text = text[:-1]
+    return text + ".."
+
+
+def person_text_px(total_px: int, host_px: int = 0) -> int:
+    """一行 5 个人物时，每枚人物卡片里的字最多多宽（总宽减去讲员那一格，平分成 5 份，再减掉卡片自己的边）。"""
+    return max(30, int((max(total_px, 200) - host_px - ROW_MARGIN_PX) / CHIPS_PER_ROW) - CHIP_EXTRA_PX)
+
+
+def cast_rows(actor_text: str, max_present: int = project_manager.CAST_MAX_PRESENT) -> list:
+    """名单文字 → ``[{role, label, body}]``，去掉「不出现」的讲员。t279: 最多 10 个人物 + 1 个讲员。"""
     rows = []
-    for row in project_manager.actor_entries(actor_text or ""):
+    for row in project_manager.actor_entries(actor_text or "", max_present, project_manager.CAST_MAX_PEOPLE):
         body = (row.get("body") or "").strip()
         if not body or project_manager.actor_is_absent(body):
             continue
@@ -49,14 +91,26 @@ class StoryActorPanel(ttk.Frame):
     ``channel_path``：可调用，返回频道目录 program/<频道>（t444u：翻候选肖像先用它的 avatar/<风格>/）。
     """
 
+    # t279: 名单最多留几个人：10 个人物 + 1 个讲员（动态 / 不动态一样）。
+    max_present = project_manager.CAST_MAX_PRESENT
+
     def __init__(self, master, *, text: str = "", on_change=None, person_dir=None, style=None,
-                 on_row_edit=None, on_row_delete=None, on_reorder=None, channel_path=None):
+                 on_row_edit=None, on_row_delete=None, on_reorder=None, channel_path=None, max_present=None,
+                 on_merge=None, portrait_context=None):
         super().__init__(master)
+        # t280: 人物合并：on_merge(选中的行（第一个选中的在前）, 新的 性别/年龄/族裔/名字) 改所有场景；
+        # portrait_context() -> {"scenes": [...], "setting": "...", "style": "..."}（生成肖像用）
+        self._on_merge = on_merge
+        self._portrait_context = portrait_context
+        self._selected: list = []  # 选中的卡片，按选的先后
+        self._merge_btn = None
+        if max_present:
+            self.max_present = int(max_present)
         # 改 / 删一个演员时通知外面（STORY 预览：同步改所有场景的 actor / speaking）
         self._on_row_edit = on_row_edit
         self._on_row_delete = on_row_delete
         self._on_reorder = on_reorder
-        self._text = project_manager.normalize_actor_text(text or "")
+        self._text = self._normalize(text)
         self._on_change = on_change
         self._person_dir = person_dir
         self._style = style
@@ -66,17 +120,29 @@ class StoryActorPanel(ttk.Frame):
         self._drag_moved = False
         self._drag_x = 0
         self._skip_release = False
-        self.row = tk.Frame(self, bg="#f4f4f4", relief="groove", bd=1, height=28)
+        self._tip_win = None
+        self._fit_width = 0
+        self.row = tk.Frame(self, bg="#f4f4f4", relief="groove", bd=1)
         self.row.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.row.bind("<Double-Button-1>", lambda _e: self._add_actor())
+        self.row.bind("<Configure>", self._on_row_resize, add="+")
+        # t279: 两行（每行 5 个人物），框子一直是两行高；讲员在第 0 列，人物在第 1–5 列平分
+        line_h = self._chip_height()
+        for r in range(CHIP_ROWS):
+            self.row.grid_rowconfigure(r, minsize=line_h)
+        for c in range(1, CHIPS_PER_ROW + 1):
+            self.row.grid_columnconfigure(c, weight=1, uniform="cast_chip")
         self._render()
 
     # ---------- 名单 ----------
     def get_text(self) -> str:
         return self._text
 
+    def _normalize(self, text: str) -> str:
+        return project_manager.normalize_actor_text(text or "", self.max_present, project_manager.CAST_MAX_PEOPLE)
+
     def set_text(self, text: str, *, notify: bool = True) -> None:
-        self._text = project_manager.normalize_actor_text(text or "")
+        self._text = self._normalize(text)
         self._render()
         if notify and callable(self._on_change):
             try:
@@ -85,7 +151,7 @@ class StoryActorPanel(ttk.Frame):
                 print(f"人物栏：保存名单失败 {exc}")
 
     def host_name(self) -> str:
-        for row in cast_rows(self._text):
+        for row in cast_rows(self._text, self.max_present):
             if row.get("role") == "host":
                 return project_manager.split_actor_motion(row.get("body") or "")[0]
         return ""
@@ -95,28 +161,97 @@ class StoryActorPanel(ttk.Frame):
 
     # ---------- 卡片 ----------
     def _render(self) -> None:
+        self._tip(None, False)
         for child in self.row.winfo_children():
             child.destroy()
         self._chips = []
-        rows = cast_rows(self._text)
+        self._selected = []
+        self._update_merge_btn()
+        rows = cast_rows(self._text, self.max_present)
         if not rows:
             hint = tk.Label(self.row, text="（没有人物：双击这里添加讲员 / 人物）", bg="#f4f4f4", fg="#777")
-            hint.pack(side=tk.LEFT, padx=6, pady=2)
+            hint.grid(row=0, column=0, columnspan=CHIPS_PER_ROW + 1, sticky="w", padx=6, pady=2)
             hint.bind("<Double-Button-1>", lambda _e: self._add_actor())
             return
         for row in rows:
             self._pack_chip(row)
+        self._layout_chips()
 
     @staticmethod
     def _chip_text(row: dict) -> str:
-        body = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
-        if row.get("role") == "host":
-            return f"讲员 {body}" if body else "讲员"
-        parts = [p for p in body.split("/") if p]
-        name = parts[3] if len(parts) >= 4 else ""
-        look = "/".join(parts[:3]) if parts else body
-        label = row.get("label") or "人物"
-        return f"{label} {name}（{look}）" if name else f"{label}（{look}）"
+        return chip_text(row)
+
+    def _chip_height(self) -> int:
+        try:
+            return tkfont.nametofont("TkDefaultFont").metrics("linespace") + 12
+        except tk.TclError:
+            return 26
+
+    def _avail_width(self) -> int:
+        try:
+            width = int(self.row.winfo_width())
+        except tk.TclError:
+            width = 0
+        return width if width > 200 else REF_WIDTH
+
+    def _layout_chips(self) -> None:
+        """t279: 讲员在第 0 列占两行；人物按顺序排成两行，每行 5 个（第 1–5 列）；字放不下就截成 ``..``。"""
+        for chip in self._chips:
+            chip.grid_forget()
+        persons = [c for c in self._chips if c._actor_entry.get("role") != "host"]
+        host = next((c for c in self._chips if c._actor_entry.get("role") == "host"), None)
+        if host is not None:
+            host.grid(row=0, column=0, rowspan=CHIP_ROWS, sticky="nsw", padx=(2, 2), pady=2)
+        for j, chip in enumerate(persons):
+            chip.grid(row=j // CHIPS_PER_ROW, column=1 + j % CHIPS_PER_ROW, sticky="w", padx=(2, 2), pady=2)
+        self._fit_labels()
+
+    def _fit_labels(self) -> None:
+        width = self._avail_width()
+        self._fit_width = width
+        host = next((c for c in self._chips if c._actor_entry.get("role") == "host"), None)
+        host_px = 0
+        try:
+            if host is not None:
+                font = tkfont.Font(font=host._actor_text_label.cget("font"))
+                host_px = min(font.measure(host._actor_full), HOST_TEXT_MAX_PX) + CHIP_EXTRA_PX
+            for chip in self._chips:
+                label = chip._actor_text_label
+                font = tkfont.Font(font=label.cget("font"))
+                limit = HOST_TEXT_MAX_PX if chip is host else person_text_px(width, host_px)
+                text = fit_text(chip._actor_full, font, limit)
+                if label.cget("text") != text:
+                    label.configure(text=text)
+        except tk.TclError:
+            pass
+
+    def _on_row_resize(self, _event=None) -> None:
+        width = self._avail_width()
+        if abs(width - self._fit_width) > 8:
+            self._fit_labels()
+
+    def _tip(self, chip, show: bool) -> None:
+        """t279: 卡片上的字被截了时，鼠标放上去显示完整文字。"""
+        win = getattr(self, "_tip_win", None)
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+            self._tip_win = None
+        if not show or chip is None:
+            return
+        try:
+            if chip._actor_text_label.cget("text") == chip._actor_full:
+                return
+            win = tk.Toplevel(chip)
+            win.wm_overrideredirect(True)
+            tk.Label(win, text=chip._actor_full, bg="#ffffe0", relief="solid", bd=1,
+                     wraplength=520, justify=tk.LEFT).pack()
+            win.wm_geometry(f"+{chip.winfo_rootx()}+{chip.winfo_rooty() + chip.winfo_height() + 2}")
+            self._tip_win = win
+        except tk.TclError:
+            pass
 
     def _pack_chip(self, row: dict) -> None:
         text = self._chip_text(row)
@@ -128,28 +263,122 @@ class StoryActorPanel(ttk.Frame):
         label = tk.Label(chip, text=text, bg="white", fg=fg, cursor="fleur", anchor="w")
         label.pack(fill=tk.BOTH, expand=True, padx=6, pady=1)
         chip._actor_entry = dict(row)
-        chip.pack(side=tk.LEFT, padx=(2, 2), pady=2)
+        chip._actor_full = text
+        chip._actor_text_label = label
+        for widget in (chip, label):
+            widget.bind("<Enter>", lambda _e, c=chip: self._tip(c, True), add="+")
+            widget.bind("<Leave>", lambda _e, c=chip: self._tip(c, False), add="+")
         for widget in (chip, label):
             widget.bind("<ButtonPress-1>", self._press)
+            widget.bind("<Control-Button-1>", self._ctrl_press)  # t280: Ctrl+单击 加选 / 取消选
             widget.bind("<B1-Motion>", self._motion)
             widget.bind("<ButtonRelease-1>", self._release)
             widget.bind("<Double-Button-1>", self._double)
         chip.bind("<FocusIn>", lambda _e, c=chip, l=label: self._focus(c, l, True))
         chip.bind("<FocusOut>", lambda _e, c=chip, l=label: self._focus(c, l, False))
-        chip.bind("<Delete>", lambda _e, c=chip: self._delete_chip(c))
-        chip.bind("<BackSpace>", lambda _e, c=chip: self._delete_chip(c))
+        chip.bind("<Delete>", lambda _e, c=chip: self._delete_selected(c))
+        chip.bind("<BackSpace>", lambda _e, c=chip: self._delete_selected(c))
         chip.bind("<Control-v>", lambda _e, c=chip: self._paste_to_chip(c))
         chip.bind("<Control-V>", lambda _e, c=chip: self._paste_to_chip(c))
         self._chips.append(chip)
 
     @staticmethod
     def _focus(chip, label, on: bool) -> None:
-        bg = "#9fc5ff" if on else "white"
+        """t280: 焦点只画边框；蓝底表示「选中」（_paint）。"""
         try:
-            chip.configure(bg=bg, highlightbackground="#1a73e8" if on else "white")
-            label.configure(bg=bg)
+            chip.configure(highlightbackground="#1a73e8" if on else "white")
         except tk.TclError:
             pass
+
+    # ---------- t280: 选中（单击 / Ctrl+单击） ----------
+    SELECT_BG = "#9fc5ff"
+
+    def _paint(self) -> None:
+        for chip in self._chips:
+            bg = self.SELECT_BG if chip in self._selected else "white"
+            try:
+                chip.configure(bg=bg)
+                chip._actor_text_label.configure(bg=bg)
+            except tk.TclError:
+                pass
+
+    def _select(self, chips) -> None:
+        self._selected = [c for c in chips if c in self._chips]
+        self._paint()
+        self._update_merge_btn()
+
+    def selected_indexes(self) -> list:
+        """选中的卡片在名单里的位置（按选的先后）。"""
+        return [self._chips.index(c) for c in self._selected if c in self._chips]
+
+    def _ctrl_press(self, event) -> str:
+        chip = self._chip_of(event.widget)
+        if chip is None or chip not in self._chips:
+            return "break"
+        sel = list(self._selected)
+        if chip in sel:
+            sel.remove(chip)
+        else:
+            sel.append(chip)
+        self._select(sel)
+        try:
+            chip.focus_set()
+        except tk.TclError:
+            pass
+        self._drag_index = None
+        self._drag_moved = False
+        return "break"
+
+    def _merge_indexes(self) -> list:
+        rows = self._rows_from_chips()
+        return [i for i in self.selected_indexes() if i < len(rows) and rows[i].get("role") != "host"]
+
+    def can_merge(self) -> bool:
+        return len(self._merge_indexes()) >= 2
+
+    def attach_merge_button(self, btn) -> None:
+        """「人物合并」按钮：选了 2 个以上人物才能按。"""
+        self._merge_btn = btn
+        self._update_merge_btn()
+
+    def _update_merge_btn(self) -> None:
+        btn = getattr(self, "_merge_btn", None)
+        if btn is None:
+            return
+        try:
+            btn.state(["!disabled"] if self.can_merge() else ["disabled"])
+        except (tk.TclError, AttributeError):
+            pass
+
+    def merge_selected(self):
+        """打开合并窗（按「人物合并」）。返回窗口（测试用）；不能合并返回 None。"""
+        idx = self._merge_indexes()
+        if len(idx) < 2:
+            messagebox.showinfo("人物合并", "先选 2 个以上人物（单击选一个，Ctrl+单击加选）。讲员不参加合并。", parent=self)
+            return None
+        rows = self._rows_from_chips()
+        return CastMergeDialog(self, [rows[i] for i in idx], on_done=lambda body, ix=tuple(idx): self._apply_merge(list(ix), body))
+
+    def _apply_merge(self, indexes: list, body: str) -> None:
+        from utility import cast_merge
+
+        rows = self._rows_from_chips()
+        body = (body or "").strip()
+        if not body or len(indexes) < 2:
+            return
+        # 名单里已经有一个和新名字一样的人（没选上）：也并进来，免得出现两个同样的人
+        new_key = cast_merge.default_key({"role": "person", "body": body})
+        for i, r in enumerate(rows):
+            if i not in indexes and r.get("role") != "host" and cast_merge.default_key(r) == new_key:
+                indexes = indexes + [i]
+        picked = [dict(rows[i]) for i in indexes]
+        self._merge_assets(picked, body)  # t281: 肖像和声音也并过来
+        if callable(self._on_merge):
+            try:
+                self._on_merge(picked, body)
+            except Exception as exc:  # noqa: BLE001
+                print(f"人物栏：合并时同步场景失败 {exc}")
+        self.set_text(project_manager.format_actor_entries(cast_merge.merge_cast_rows(rows, indexes, body)))
 
     def _chip_of(self, widget):
         while widget is not None and widget not in self._chips:
@@ -163,20 +392,29 @@ class StoryActorPanel(ttk.Frame):
                 chip.focus_set()
             except tk.TclError:
                 pass
+            if chip in self._chips:
+                self._select([chip])  # t280: 单击 = 只选这一枚
         self._drag_index = self._chips.index(chip) if chip in self._chips else None
+        if chip is not None and chip in self._chips and chip._actor_entry.get("role") == "host":
+            self._drag_index = None  # t279: 讲员固定在最左那一格，不拖
         self._drag_moved = False
         self._drag_x = event.x_root
+        self._drag_y = event.y_root
 
     def _motion(self, event) -> None:
         src = self._drag_index
         if src is None or src >= len(self._chips):
             return
-        if not self._drag_moved and abs(event.x_root - self._drag_x) < 6:
+        if not self._drag_moved and max(abs(event.x_root - self._drag_x),
+                                        abs(event.y_root - getattr(self, "_drag_y", event.y_root))) < 6:
             return
         best, target = None, None
-        for i, chip in enumerate(self._chips):
-            center = chip.winfo_rootx() + max(chip.winfo_width(), 1) / 2
-            dist = abs(event.x_root - center)
+        for i, chip in enumerate(self._chips):  # t279: 两行，按到卡片中心的距离（横竖都算）找最近的人物
+            if chip._actor_entry.get("role") == "host":
+                continue
+            cx = chip.winfo_rootx() + max(chip.winfo_width(), 1) / 2
+            cy = chip.winfo_rooty() + max(chip.winfo_height(), 1) / 2
+            dist = (event.x_root - cx) ** 2 + (event.y_root - cy) ** 2
             if best is None or dist < best:
                 best, target = dist, i
         if target is None or target == src:
@@ -184,10 +422,7 @@ class StoryActorPanel(ttk.Frame):
         self._drag_moved = True
         self._chips.insert(target, self._chips.pop(src))
         self._drag_index = target
-        for chip in self._chips:
-            chip.pack_forget()
-        for chip in self._chips:
-            chip.pack(side=tk.LEFT, padx=(2, 2), pady=2)
+        self._layout_chips()
 
     def _release(self, _event) -> None:
         moved = self._drag_moved
@@ -212,16 +447,49 @@ class StoryActorPanel(ttk.Frame):
             self._edit_actor(self._chips.index(chip))
         return "break"
 
+    def _merge_assets(self, picked: list, body: str) -> dict:
+        """t281: 合并时肖像 / 声音也并：留第一个选中的人的，他没有就用后面第一个有的；
+        别的肖像改名 .bakN 备份（不删）；声音表里旧的记录留着，只给合并后的人记上。"""
+        from utility import cast_merge
+
+        out = {}
+        try:
+            out["portrait"] = cast_merge.merge_portrait_files(
+                [self.portrait_path(r) for r in picked], self.portrait_dest({"role": "person", "body": body}))
+        except Exception as exc:  # noqa: BLE001
+            print(f"人物合并：肖像没有并好 {exc}")
+        try:
+            out["voice"] = cast_merge.merge_voice_settings(
+                project_manager.PROJECT_CONFIG, [r.get("body") for r in picked], body)
+            if out["voice"].get("changed"):
+                project_manager.save_project_config(parent=self.winfo_toplevel())
+        except Exception as exc:  # noqa: BLE001
+            print(f"人物合并：声音没有并好 {exc}")
+        return out
+
     def _delete_chip(self, chip) -> str:
+        """删一枚（旧入口）：等于只选它再删。"""
         if chip not in self._chips:
             return "break"
-        idx = self._chips.index(chip)
+        self._select([chip])
+        return self._delete_selected(chip)
+
+    def _delete_selected(self, chip=None) -> str:
+        """t280: Delete：删掉所有选中的卡片（讲员也可以删），先问一次。"""
+        sel = [c for c in self._selected if c in self._chips]
+        if chip is not None and chip in self._chips and chip not in sel:
+            sel = [chip]
+        if not sel:
+            return "break"
         rows = self._rows_from_chips()
-        who = self._chip_text(rows[idx])
-        if messagebox.askyesno("人物", f"从名单里删掉「{who}」吗？", parent=self):
-            self._notify_row("delete", rows[idx])
-            rows.pop(idx)
-            self.set_text(project_manager.format_actor_entries(rows))
+        idx = sorted(self._chips.index(c) for c in sel)
+        who = "、".join(f"「{self._chip_text(rows[i])}」" for i in idx)
+        if messagebox.askyesno("人物", f"从名单里删掉{who}吗？（所有场景里的这些人和他们的台词也会去掉）", parent=self):
+            for i in idx:
+                self._notify_row("delete", rows[i])
+            from utility.cast_merge import remove_cast_rows
+
+            self.set_text(project_manager.format_actor_entries(remove_cast_rows(rows, idx)))
         return "break"
 
     def _notify_row(self, what: str, old_row: dict, new_row: dict | None = None) -> None:
@@ -234,6 +502,21 @@ class StoryActorPanel(ttk.Frame):
             print(f"演员栏：同步场景失败 {exc}")
 
     # ---------- 形象图 ----------
+    def portrait_context(self) -> dict:
+        """t280: 生成肖像用：{"scenes", "setting", "style"}（外面没给就只有风格）。"""
+        ctx = {}
+        if callable(self._portrait_context):
+            try:
+                ctx = dict(self._portrait_context() or {})
+            except Exception as exc:  # noqa: BLE001
+                print(f"人物栏：读场景失败 {exc}")
+                ctx = {}
+        ctx.setdefault("scenes", [])
+        ctx.setdefault("setting", "")
+        if not ctx.get("style"):
+            ctx["style"] = self._style_now()
+        return ctx
+
     def _style_now(self) -> str:
         try:
             return (self._style() if callable(self._style) else "") or ""
@@ -273,6 +556,21 @@ class StoryActorPanel(ttk.Frame):
             except Exception:  # noqa: BLE001
                 return ""
         return config.find_image_by_stem(self._person_folder(), portrait_stem(body)) or ""
+
+    def library_dest(self, row: dict) -> str:
+        """t281: 「生成肖像」存的地方 = 频道的肖像库 program/<频道>/avatar/<画面风格>/<性别_年龄_族裔_名字>.png
+        （左右键翻的候选就从这里读；风格文件夹名按已有的对上，不分大小写，没有就新建）。
+        不知道频道时存进通用库 D:\\AI_MEDIA\\avatar\\<画面风格>\\。"""
+        from utility.portrait_candidates import match_style_folder
+
+        body = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+        stem = portrait_stem(body)
+        if not stem:
+            return ""
+        token = config.visual_style_token(self._style_now()) or ""
+        root = self.channel_avatar_dir() or config.AVATAR_PATH
+        folder = (match_style_folder(root, token) or token) if token else ""
+        return os.path.join(root, folder, stem + ".png") if folder else os.path.join(root, stem + ".png")
 
     def portrait_dest(self, row: dict) -> str:
         body = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
@@ -347,9 +645,90 @@ class StoryActorPanel(ttk.Frame):
         else:
             self._notify_row("edit", rows[index], new_row)
             rows[index] = new_row
-        if len(rows) > 4:
-            messagebox.showinfo("人物", "一场最多四个人（含讲员），多出来的不会进画面。", parent=self)
+        cap = project_manager.CAST_MAX_PEOPLE  # t279: 人物栏最多 10 个人物（讲员另算，只有 1 个）
+        kept, n_person = [], 0
+        for r in rows:
+            if r.get("role") != "host":
+                n_person += 1
+                if n_person > cap:
+                    continue
+            kept.append(r)
+        if len(kept) != len(rows):
+            rows = kept
+            messagebox.showinfo(
+                "人物", f"人物栏最多 {cap} 个人物（讲员另算），多出来的没有加。一场的画面里还是最多 4 个人。", parent=self)
         self.set_text(project_manager.format_actor_entries(rows))
+
+
+class CastMergeDialog(tk.Toplevel):
+    """t280: 人物合并窗：性别 / 年龄段 / 族裔 三个下拉 + 名字（按第一个选中的人预填）。确定 = on_done(新的 id)；取消什么都不做。"""
+
+    def __init__(self, panel, rows: list, *, on_done):
+        super().__init__(panel.winfo_toplevel())
+        self.panel = panel
+        self.on_done = on_done
+        self.title("人物合并")
+        self.transient(panel.winfo_toplevel())
+        self.resizable(False, False)
+        first = (rows[0].get("body") if rows else "") or ""
+        g, a, e, n = self.prefill(first)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        names = "\n".join("· " + chip_text(r) for r in rows)
+        ttk.Label(frm, text="把这些人合并成一个人（所有场景都改成这一位）：", font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
+        ttk.Label(frm, text=names, justify=tk.LEFT, foreground="#333").pack(anchor="w", pady=(4, 8))
+        grid = ttk.Frame(frm)
+        grid.pack(anchor="w")
+        self.gender_var = tk.StringVar(value=g)
+        self.age_var = tk.StringVar(value=a)
+        self.eth_var = tk.StringVar(value=e)
+        self.name_var = tk.StringVar(value=n)
+        for col, (lbl, var, vals) in enumerate((("性别", self.gender_var, GENDERS), ("年龄段", self.age_var, AGES),
+                                                ("族裔", self.eth_var, ETHNICITIES))):
+            ttk.Label(grid, text=lbl).grid(row=0, column=col, sticky="w", padx=(0, 6))
+            ttk.Combobox(grid, textvariable=var, values=vals, width=11, state="readonly").grid(
+                row=1, column=col, sticky="w", padx=(0, 6))
+        ttk.Label(grid, text="名字").grid(row=0, column=3, sticky="w")
+        self.name_entry = ttk.Entry(grid, textvariable=self.name_var, width=18)
+        self.name_entry.grid(row=1, column=3, sticky="w")
+        ttk.Label(frm, text="合并后放在第一个选中的人的位置；每一场原来的括号说明保留。", foreground="#555").pack(anchor="w", pady=(8, 0))
+        btns = ttk.Frame(frm)
+        btns.pack(pady=(10, 0))
+        ttk.Button(btns, text="确定", command=self._ok).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side=tk.LEFT, padx=6)
+        self.bind("<Return>", lambda _e: self._ok())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+        self.name_entry.focus_set()
+
+    @staticmethod
+    def prefill(body: str) -> tuple:
+        """``woman/mature/chinese/名字（…）`` → (性别, 年龄段, 族裔, 名字)；不认识的用默认值。"""
+        from utility.cast_merge import split_id
+
+        base = project_manager.split_actor_motion((body or "").strip())[0]
+        parts = [p.strip() for p in base.split("/")]
+        parsed = split_id(base)
+        g = parts[0] if parts and parts[0] in GENDERS else (parsed.get("gender") if parsed.get("gender") in GENDERS else "woman")
+        a = parts[1] if len(parts) > 1 and parts[1] in AGES else (parsed.get("age") if parsed.get("age") in AGES else "mature")
+        e = parts[2] if len(parts) > 2 and parts[2] in ETHNICITIES else (parsed.get("eth") if parsed.get("eth") in ETHNICITIES else "chinese")
+        n = parts[3] if len(parts) > 3 and parts[3] else (parsed.get("name") or "")
+        return g, a, e, n
+
+    def body(self) -> str:
+        name = (self.name_var.get() or "").replace("|", "").replace("/", "").strip()
+        return f"{self.gender_var.get()}/{self.age_var.get()}/{self.eth_var.get()}/{name}" if name else ""
+
+    def _ok(self) -> None:
+        body = self.body()
+        if not body:
+            messagebox.showwarning("人物合并", "先填名字。", parent=self)
+            return
+        self.destroy()
+        self.on_done(body)
 
 
 class ActorEditDialog(tk.Toplevel):
@@ -422,6 +801,8 @@ class ActorEditDialog(tk.Toplevel):
         self.btns = ttk.Frame(frm)
         ttk.Button(self.btns, text="贴图 (Ctrl+V)", command=self._paste).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(self.btns, text="用这张", command=self._use_picked).pack(side=tk.LEFT, padx=(0, 6))
+        self.gen_btn = ttk.Button(self.btns, text="生成肖像", command=self._gen_portrait)  # t280
+        self.gen_btn.pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(self.btns, text="确认", command=self._ok).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(self.btns, text="取消", command=self.destroy).pack(side=tk.LEFT)
 
@@ -551,10 +932,69 @@ class ActorEditDialog(tk.Toplevel):
         except Exception:  # noqa: BLE001
             pass
 
+    def show_candidate(self, path: str) -> None:
+        """t281: 大图翻到 path 这张候选（刚生成的肖像）；候选里没有就放在最前面。"""
+        if not path or not os.path.isfile(path):
+            return
+        key = os.path.normcase(os.path.abspath(path))
+        items = list(self.browser.items)
+        k = next((i for i, p in enumerate(items) if os.path.normcase(os.path.abspath(p)) == key), -1)
+        if k < 0:
+            items.insert(0, path)
+            k = 0
+        self.browser.items = items
+        self.browser.pos = k
+        self.browser.show()
+
     def _paste(self) -> str:
         if self.panel.paste_portrait(self._row(), parent=self):
             self._show_portrait()
         return "break"
+
+    def _gen_portrait(self, *, runner=None) -> None:
+        """t280: 生成肖像：Strata 写提示词（所有场景里这一位的描述 + 地域 / 时代 / 舞台 + 风格）→ Grok 文生图
+        → 存成这一位的形象图（原来的 .bak 备份）→ 显示。讲员不用（讲员形象按音色表）。"""
+        row = self._row()
+        if row.get("role") == "host":
+            messagebox.showinfo("生成肖像", "讲员的形象按音色表固定，不生成。", parent=self)
+            return
+        body = project_manager.split_actor_motion((row.get("body") or "").strip())[0]
+        dest = self.panel.library_dest(row)  # t281: 存进频道肖像库（当前画面风格），左右键能翻到
+        if not body or len([b for b in body.split("/") if b.strip()]) < 4 or not dest:
+            messagebox.showwarning("生成肖像", "先填好 性别 / 年龄 / 族裔 / 名字。", parent=self)
+            return
+        from utility import portrait_gen
+
+        ctx = self.panel.portrait_context()
+        try:
+            self.gen_btn.state(["disabled"])
+        except tk.TclError:
+            pass
+        self.hint_var.set("生成肖像：Strata 写提示词 → Grok 出图（手动窗口里可以贴图）…")
+
+        def job():
+            return portrait_gen.generate_portrait(body, ctx.get("scenes") or [], dest,
+                                                  setting=ctx.get("setting") or "", style=ctx.get("style") or "",
+                                                  ratio=ctx.get("ratio") or "")
+
+        def done(res):
+            try:
+                if not self.winfo_exists():
+                    return
+                self.gen_btn.state(["!disabled"])
+            except tk.TclError:
+                return
+            if res.get("ok"):
+                self._ident = None
+                self._show_portrait()
+                self.show_candidate(res.get("path") or "")
+                self.hint_var.set(f"已生成肖像，存进频道肖像库：{res.get('path')}。"
+                                  "「用这张」或确认 = 设为这一位的肖像。")
+            else:
+                self.hint_var.set("")
+                messagebox.showwarning("生成肖像", res.get("error") or "没有生成。", parent=self)
+
+        (runner or portrait_gen.run_in_background)(self, job, done)
 
     def _ok(self) -> None:
         row = self._row()

@@ -187,7 +187,10 @@ class SpanAudioMixin:
             row = active[speaker - 1]
             body = (row.get("body") or "").strip()
             voice = project_manager.resolve_actor_voice(body) or voice
-            who = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
+            # t279: 显示短编号（人物N → N，讲员 → H）加名字
+            base = project_manager.split_actor_motion(body)[0]
+            parts = [p for p in base.split("/") if p]
+            who = f"{project_manager.actor_display_id(row)} {parts[3] if len(parts) >= 4 else base}".strip() or "这一段"
         text = (section.get("text") or "").strip()
         key = f"sec{index}"
         choice = self._ask_span_action(title, who, voice, float(start), float(end), bool(text), index)

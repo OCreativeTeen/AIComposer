@@ -599,7 +599,7 @@ def _run_gemini_scene_generation() -> tuple[bool, str]:
         )
     if expected < 1:
         return False, (
-            "还不知道要生成几个场景。请先在 SCENE 发 scnlm 选好 LM（如 4 Step Story），再 scnge。"
+            "还不知道要生成几个场景。请先在 SCENE 发 scnlm 选好 LM（如 4 Step Story = 故事对话固定 4 场；故事对话本身是自由规划，场数不固定），再 scnge。"
         )
 
     clear_gemini_scenes_pick()
@@ -941,14 +941,9 @@ def scene_lm_choice_labels_fallback() -> list[str]:
     if seen:
         return seen
     return [
-        "Short Story",
-        "2 Step Story",
-        "3 Step Story",
-        "4 Step Story",
         "Mini Story",
         "Long Story",
         "Content to Scenes",
-        "短故事",
         "播客",
         "故事对话",
         "故事表演",

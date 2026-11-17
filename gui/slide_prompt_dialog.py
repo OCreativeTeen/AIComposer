@@ -246,7 +246,7 @@ def open_slide_prompt_dialog(
     「注意 / FYI」（节目生成窗里标题是「内容主题」）：用户临时补充的短说明，勾上才放在提示词最前面；
     历史存在 ``saved_choice['fyi_history']``。内容主题会另外写进 NotebookLM 自定义框，不勾也送。
 
-    t448u（节目生成）：给了 ``program_mode``（主窗口场景生成方式：短故事 / 播客 / 故事对话 / 故事表演）
+    t448u（节目生成）：给了 ``program_mode``（主窗口场景生成方式：播客 / 故事对话 / 故事表演）
     就不显示任何风格单选，只读显示这个方式，叙事方式由它决定（``story_style`` 是主窗口不是这四种时的后备）。
     t262: 谁说话、人物怎么演的规则是 utility/narration_modes 的原文（和场景生成、视频生成同一份）；故事表演里讲员的情况
     （有肖像出镜 / 没肖像画外音 / 没有讲员）由 ``get_host_case(source, scenes)`` 按真实 actor 和肖像查出来。
@@ -308,7 +308,7 @@ def open_slide_prompt_dialog(
         narrative_var.set(_mode_narr)
     else:
         _narr_box, narr_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
-    program_key = _mode_key if program_mode is not None else ""  # t262: 节目生成的方式（短故事 / 播客 / 故事对话 / 故事表演）
+    program_key = _mode_key if program_mode is not None else ""  # t262: 节目生成的方式（播客 / 故事对话 / 故事表演）
 
     def _program_host_case(source: str = "panel", scenes=None):
         if program_mode is None or not callable(get_host_case):

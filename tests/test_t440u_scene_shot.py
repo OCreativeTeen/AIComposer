@@ -60,7 +60,7 @@ class PrepShotTest(unittest.TestCase):
 class WiringTest(unittest.TestCase):
     def test_generation_after_merge(self):
         src = _src("gui/downloader.py")
-        gen = src[src.index("config_channel.merge_episode_scenes("):src.index("            def apply():")]
+        gen = src[src.index("config_channel.normalize_scene_episodes("):src.index("            def apply():")]
         self.assertIn("ensure_scene_shots(scenes)", gen)
         self.assertLess(gen.index("align_story_speakers(scenes)"), gen.index("ensure_scene_shots(scenes)"))
 

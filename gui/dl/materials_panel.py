@@ -228,6 +228,10 @@ class MaterialsPanel(ttk.Frame):
 
     ``{"kind": pdf|image|audio|video|transcript, "path": str, "title": str, "detail": str,
        "select": material_var value or "", "placeholder": bool}``
+
+    t267: PDF 行（``pages`` > 0 且给了 ``on_pdf_range``）右边有「开始页」「结束页」两个数字框（``page_start`` / ``page_end``）。
+    数字框一改就调 ``on_pdf_range(entry, which, start, end) -> (start, end, detail_text)``：调用方夹范围（开始 ≤ 结束、1..总页数）、
+    记下、保存，这里把两个框和说明文字换成它返回的值。不重建列表（重建会把正在点的数字框销毁）。
     """
 
     def __init__(
@@ -243,8 +247,14 @@ class MaterialsPanel(ttk.Frame):
         on_analyze: Callable[[dict], None] | None = None,
         on_delete: Callable[[dict], None] | None = None,
         on_reorder_images: Callable[[list[str]], None] | None = None,
+        on_pdf_range: Callable[[dict, str, int, int], tuple] | None = None,
+        hint: bool = True,
+        on_focus: Callable[[dict], None] | None = None,
     ) -> None:
         super().__init__(master)
+        self._on_focus = on_focus  # t277: 点中一行（含空位）后通知调用方（STORY 窗的提示行跟着变）
+        self._on_pdf_range = on_pdf_range
+        self.range_spins: dict[str, dict] = {}  # PDF 路径 → {"start": Spinbox, "end": Spinbox}
         self._on_reorder_images = on_reorder_images
         self._drag: dict | None = None  # t214u: 图片行拖动排序
         self._drop_line: tk.Frame | None = None
@@ -264,13 +274,13 @@ class MaterialsPanel(ttk.Frame):
         self.player = Player()
         self._last_click = (None, 0.0)  # t207u: (行的 key, 时间) —— 单击会重建列表，双击靠时间判断
 
-        ttk.Label(
-            self,
-            text="把 PDF、图片、音频或 mp4 拖到这里：PDF 换掉原来的，图片加进列表，音频/视频换掉原来的。"
-            "单击选作生成材料，双击用默认程序打开（看图 / PDF / 播放音视频 / 文字稿），右键更多操作（拷到剪贴板等）；选中后按 Delete 删除（文件保留）。",
-            font=("TkDefaultFont", 8),
-            foreground="gray30",
-        ).pack(anchor=tk.W, pady=(0, 2))
+        # t277: 原来那一长行说明（放不下被截掉）缩成一行；STORY 窗传 hint=False，自己在材料行下面放跟着选中变的提示。
+        self.hint_label = None
+        if hint:
+            from gui.dl.material_hint import NONE as _HINT_NONE
+
+            self.hint_label = ttk.Label(self, text=_HINT_NONE, font=("TkDefaultFont", 8), foreground="gray30")
+            self.hint_label.pack(anchor=tk.W, pady=(0, 2))
         box = tk.Frame(self, bd=1, relief=tk.SUNKEN, bg=_NORMAL_BG)
         box.pack(fill=tk.BOTH, expand=True)
         self.canvas = tk.Canvas(box, height=height, bg=_NORMAL_BG, highlightthickness=0)
@@ -303,6 +313,7 @@ class MaterialsPanel(ttk.Frame):
             child.destroy()
         self._photos.clear()
         self._rows.clear()
+        self.range_spins.clear()
         try:
             entries = list(self._get_entries() or [])
         except Exception as exc:
@@ -344,6 +355,14 @@ class MaterialsPanel(ttk.Frame):
             analyze_btn = ttk.Button(row, text="分析", width=5,
                                      command=lambda en=entry: self._on_analyze(en))
             analyze_btn.pack(side=tk.RIGHT, padx=(4, 2))
+        if (
+            self._on_pdf_range
+            and kind == "pdf"
+            and entry.get("path")
+            and not entry.get("placeholder")
+            and int(entry.get("pages") or 0) > 0
+        ):
+            widgets.extend(self._add_range_controls(row, entry, detail))
         if kind in ("audio", "video") and entry.get("path"):
             play_btn = ttk.Button(row, text="▶", width=3)
             play_btn.configure(command=lambda e=entry, b=play_btn: self._toggle_play(e, b))
@@ -353,8 +372,8 @@ class MaterialsPanel(ttk.Frame):
         # t207u: 单击选材料会让调用方 refresh() 整个列表（控件全重建），Tk 的 <Double-Button-1> 永远到不了
         # 新控件；所以双击在 _click 里按时间 + 同一行判断。所有子控件都绑上（缩略图、标题、说明、行本身）。
         def _bind_all(w):
-            if isinstance(w, ttk.Button):
-                return
+            if isinstance(w, (ttk.Button, ttk.Spinbox)) or getattr(w, "_aic_skip_bind", False):
+                return  # 按钮 / 页范围数字框自己处理点击，不当成「点了这一行」
             w.bind("<Button-1>", lambda e, en=entry: self._click(en, e))
             # 控件没被重建时，第二下会匹配 <Double-Button-1>（不再触发 <Button-1>），同样交给 _click 计时判断
             w.bind("<Double-Button-1>", lambda e, en=entry: self._click(en, e))
@@ -367,6 +386,60 @@ class MaterialsPanel(ttk.Frame):
         self._rows.append((entry, widgets))
         if entry.get("path") and kind in ("pdf", "image", "audio", "video"):
             self._load_thumb_async(kind, entry["path"], thumb)
+
+    def _add_range_controls(self, row: tk.Frame, entry: dict, detail_label: tk.Label) -> list:
+        """PDF 行右边的「开始页 [n]  结束页 [m]」。返回要跟着行一起涂选中底色的控件。"""
+        total = int(entry.get("pages") or 0)
+        start = int(entry.get("page_start") or 1)
+        end = int(entry.get("page_end") or total)
+        box = tk.Frame(row, bg=_NORMAL_BG)
+        box._aic_skip_bind = True  # type: ignore[attr-defined]
+        box.pack(side=tk.RIGHT, padx=(4, 6))
+        vars_ = {"start": tk.StringVar(value=str(start)), "end": tk.StringVar(value=str(end))}
+        painted: list = [box]
+        spins = {}
+        for col, (which, caption) in enumerate((("start", "开始页"), ("end", "结束页"))):
+            lab = tk.Label(box, text=caption, bg=_NORMAL_BG, font=("TkDefaultFont", 8), fg="gray30")
+            lab.grid(row=0, column=col * 2, padx=(6 if col else 0, 2))
+            painted.append(lab)
+            spin = ttk.Spinbox(
+                box, from_=1, to=total, width=4, wrap=False, textvariable=vars_[which],
+                command=lambda w=which: self._commit_range(entry, w, vars_, detail_label),
+            )
+            spin.grid(row=0, column=col * 2 + 1)
+            spin.bind("<Return>", lambda _e, w=which: self._commit_range(entry, w, vars_, detail_label))
+            spin.bind("<FocusOut>", lambda _e, w=which: self._commit_range(entry, w, vars_, detail_label))
+            spins[which] = spin
+        self.range_spins[os.path.normcase(os.path.abspath(entry.get("path") or ""))] = spins  # 给测试看
+        return painted
+
+    def _commit_range(self, entry: dict, which: str, vars_: dict, detail_label: tk.Label) -> None:
+        """数字框改了（点箭头 / 回车 / 离开输入框）：交给调用方夹范围并保存，再把结果写回两个框。"""
+        if not self._on_pdf_range:
+            return
+        total = int(entry.get("pages") or 0)
+        cur_s = int(entry.get("page_start") or 1)
+        cur_e = int(entry.get("page_end") or total)
+        try:
+            typed = int(str(vars_[which].get()).strip())
+        except (ValueError, tk.TclError):
+            typed = cur_s if which == "start" else cur_e  # 乱填：退回原来的
+        start = typed if which == "start" else cur_s
+        end = typed if which == "end" else cur_e
+        try:
+            s, e, text = self._on_pdf_range(entry, which, start, end)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ PDF 页范围没有保存：{exc}")
+            s, e, text = cur_s, cur_e, None
+        entry["page_start"], entry["page_end"] = s, e
+        try:
+            vars_["start"].set(str(s))
+            vars_["end"].set(str(e))
+            if text is not None:
+                entry["detail"] = text
+                detail_label.configure(text=text)
+        except tk.TclError:
+            pass  # 这一行已经被重建销毁了
 
     def _load_thumb_async(self, kind: str, path: str, label: tk.Label) -> None:
         def work():
@@ -457,7 +530,15 @@ class MaterialsPanel(ttk.Frame):
             self.selected = sel
             self._paint_selection()
             self._on_select(entry)
+        self._notify_focus(entry)
         return "break"
+
+    def _notify_focus(self, entry: dict) -> None:
+        if self._on_focus:
+            try:
+                self._on_focus(entry)
+            except Exception:  # noqa: BLE001
+                pass
 
     def select_entry(self, entry: dict) -> None:
         """t406u: 右键「选作生成材料」= 单击选中：记成点中的那一行（语音 / 视频概览就用这一个文件），涂色，再通知调用方。"""
@@ -468,6 +549,7 @@ class MaterialsPanel(ttk.Frame):
         self.selected = entry.get("select") or ""
         self._paint_selection()
         self._on_select(entry)
+        self._notify_focus(entry)
 
     def _double(self, entry: dict):
         print(f"📂 材料双击：{entry.get('kind') or '?'} · {entry.get('path') or '（没有文件）'}")

@@ -133,7 +133,11 @@ def grok_gemini_cases() -> list:
 # t373u: intentionally re-taken — every Grok / Gemini image-edit prompt now starts with the
 # "ART STYLE LOCK (rule 1, most important):" line, and the people-extract wording keeps the picture's art style.
 # (Before t373u: ba6d90e4d3be804a2cc4deae8aac0f0e307e8a8cdd81fca6ebf5517c64a68ec2, unchanged since pre-t356u.)
-GROK_GEMINI_DIGEST = "24d15f7b4f36112f4f554b2189cbee219b678e0dcb62ae40301abbe876ed04b8"
+# (Before t280: 24d15f7b4f36112f4f554b2189cbee219b678e0dcb62ae40301abbe876ed04b8; t280 only rewords the ``Actors`` field
+#  description for the new actor format: ``H <look>`` = 讲员, no 人物N labels.)
+# (Before t281: a278196cbf3a83d95a9fe4b9afda9eb713abfad6c80e5e37fdd349630743dee6; t281 only renames the reference-portrait
+#  people: ``人物1 = 封氏`` / ``人物1 (封氏)`` -> ``woman/mature/chinese/封氏 (actor position 1)``, 讲员 -> ``H <look>``.)
+GROK_GEMINI_DIGEST = "91bfb6b5ab66bde5ce4ceea80e76cf7cd1c506fec3b2697c0f77e9a087caee2a"
 
 
 def _body(prompt: str) -> str:

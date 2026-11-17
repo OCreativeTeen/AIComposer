@@ -1,4 +1,4 @@
-"""t258 / t262 / t263: 叙事方式（短故事 / 播客 / 故事对话 / 故事表演）——预览窗口（场景生成、节目生成）和魔法工作流「生场视频」窗口共用的唯一一张表。
+"""t258 / t262 / t263 / t266: 叙事方式（播客 / 故事对话 / 故事表演）——预览窗口（场景生成、节目生成）和魔法工作流「生场视频」窗口共用的唯一一张表。
 
 这里只放：选项的存值和中文名、旧存值（旧标签 / 旧 key / 旧叙事风格）怎么认、每种方式「说话」和「表演」的规则文字。
 三个地方（场景生成、节目生成、视频生成）都从这里取同一份规则文字，所以同一个方式三边一字不差。
@@ -7,7 +7,9 @@ t263: 没有「不知道」的情况。人物栏（场景生成、节目生成�
 都是真实数据，所以每一处都选定 HOST_PORTRAIT / HOST_VOICEOVER / HOST_NONE 中的一种，规则文字只写这一种：
   * 故事表演：有讲员 → 每一场都由讲员讲解（有肖像出镜，没有肖像只是画外音）；没有讲员 → 整个节目没人说话。
   * 播客：讲员（主持）+ 嘉宾（人物）讨论这个故事，不演故事；与故事对话不同。
-  * 短故事 / 故事对话：共用同一份说话 / 表演规则（人物互相对话）；故事对话里如果有讲员，只多一句讲员的说明。
+  * 故事对话：人物互相对话；如果有讲员，讲员只做简短旁白（开场 / 过渡 / 收尾）。
+t266: 短故事已并入故事对话（步数 0 = 按故事需要规划场景，1–6 = 固定场景数）；旧存值一律当故事对话读。
+     故事对话不管几步，说话 / 表演规则和讲员的写法都是同一份。
 文字里不能出现花括号（预览的提示词会被 format）。本文件不 import 任何别的本项目模块（config ↔ utility 不能循环）。
 """
 
@@ -15,9 +17,8 @@ from __future__ import annotations
 
 import re
 
-# 顺序 = 预览窗口下拉的顺序（短故事在最前，因为它是新项目的默认）。
+# 顺序 = 预览窗口下拉的顺序。
 MODES = (
-    ("step_story", "短故事"),
     ("podcast", "播客"),
     ("story_speak", "故事对话"),
     ("story_act", "故事表演"),
@@ -31,7 +32,6 @@ DEFAULT_MODE = "podcast"
 
 # 叙事方式对应提示词里的叙事形式（narrative）。
 NARRATIVE = {
-    "step_story": "story",
     "podcast": "narration",
     "story_speak": "story",
     "story_act": "story",
@@ -42,12 +42,13 @@ NARRATIVE = {
 # 旧的「生场视频」叙事风格存值（video_prompt.narrative）→ 方式（迁移用）。tech / exec 以前并进主持人节目，现在读作故事表演。
 LEGACY_NARRATIVE_TO_MODE = {"narration": "podcast", "story": "story_speak", "tech": "story_act", "exec": "story_act"}
 
-# 旧文字 → key（旧 Series · X 标签、Story Only / Story Speak / Story Act、Step Story / Short Story / N Step Story；
-# 主持人节目 / Counselor / 技术方案汇报 / 高管简报 → 故事表演）
+# 旧文字 → key（旧 Series · X 标签、Story Only / Story Speak / Story Act、Step Story / Short Story / N Step Story
+# → 故事对话；主持人节目 / Counselor / 技术方案汇报 / 高管简报 → 故事表演）
 _LEGACY_TEXT_TO_MODE = {
     "tech": "story_act", "exec": "story_act", "技术方案汇报": "story_act", "高管简报": "story_act",
     "主持人节目": "story_act", "主持人節目": "story_act", "counselor": "story_act",
-    "短故事": "step_story", "step story": "step_story", "short story": "step_story",
+    "短故事": "story_speak", "step story": "story_speak", "short story": "story_speak",
+    "step_story": "story_speak", "story_mini": "story_speak",
 }
 
 # 讲员的情况（由真实数据决定，没有「不知道」）：
@@ -62,8 +63,8 @@ SELF_TALK_RULE = (
     "scene; the tag itself is never read aloud."
 )
 
-# ---- 短故事 / 故事对话：共用同一份规则（人物互相对话）。短故事没有讲员；故事对话有讲员时只多一句讲员的说明。----
-_DIALOGUE_LABEL = "短故事 / 故事对话"
+# ---- 故事对话（步数 0 或 1–6 都一样）：人物互相对话；有讲员时讲员只做简短旁白。----
+_DIALOGUE_LABEL = "故事对话"
 _DIALOGUE_SPEAKING = (
     _DIALOGUE_LABEL + " · SPEAKING: the 人物 (the story's characters) carry the story by talking to each other, said "
     "aloud in the scene like a film or TV drama; every line is spoken only by its labeled 人物, one voice at a time. "
@@ -189,16 +190,15 @@ def _podcast_performance(host) -> str:
 
 # 每个方式一行说明（给界面蓝字 / 备注用）。
 _NOTES = {
-    "step_story": "短故事：两个人物互相对话（和故事对话同一份说话 / 表演规则），没有讲员；固定场景数。",
     "podcast": "播客：讲员（主持）和嘉宾讨论这个故事，不演故事；和故事对话不同。",
-    "story_speak": "故事对话：人物互相对话来讲故事；有讲员时讲员只做简短旁白。",
+    "story_speak": "故事对话：人物互相对话来讲故事；有讲员时讲员只做简短旁白。步数 0 = 按故事需要规划场景，1–6 = 固定场景数。",
     "story_act": ("故事表演：人物只演不说、只有音效；有讲员 → 每一场都由讲员讲解"
                   "（有肖像出镜，没有肖像是画外音）；没有讲员 → 没人说话。"),
 }
 
 
 def normalize(value) -> str:
-    """存值 / 标签（中文名；旧写法 "Series . Podcast"、Story Only、Step Story、tech / exec、Counselor、主持人节目 …）→ key；认不出返回空。
+    """存值 / 标签（中文名；旧写法 "Series . Podcast"、Story Only、Step Story / 短故事（→ 故事对话）、tech / exec、Counselor、主持人节目 …）→ key；认不出返回空。
 
     旧的 tech / exec（技术方案汇报 / 高管简报）和 Counselor / 主持人节目 一律 → story_act（故事表演）。"""
     text = re.sub(r"\s+", " ", str(value or "")).strip().lower().replace("·", ".")
@@ -210,7 +210,7 @@ def normalize(value) -> str:
     if text in _LEGACY_TEXT_TO_MODE:
         return _LEGACY_TEXT_TO_MODE[text]
     if re.fullmatch(r"[1-9] ?step story", text):
-        return "step_story"
+        return "story_speak"
     if "podcast" in text:
         return "podcast"
     if "counselor" in text or "主持人节目" in text or "主持人節目" in text:
@@ -241,13 +241,11 @@ def _host(value) -> str:
 
 def speaking_rule(value, host=HOST_NONE) -> str:
     """这个方式「谁说话」的规则原文（场景生成、节目生成、视频生成三处都用这一份）。
-    host = 讲员的情况（HOST_*）；没给 = 没有讲员。短故事没有讲员，永远按没有讲员写。"""
+    host = 讲员的情况（HOST_*）；没给 = 没有讲员。"""
     key = normalize(value)
     if not key:
         return ""
     host = _host(host)
-    if key == "step_story":
-        return _dialogue_speaking(HOST_NONE)
     if key == "story_speak":
         return _dialogue_speaking(host)
     if key == "podcast":
@@ -261,8 +259,6 @@ def performance_rule(value, host=HOST_NONE) -> str:
     if not key:
         return ""
     host = _host(host)
-    if key == "step_story":
-        return _dialogue_performance(HOST_NONE)
     if key == "story_speak":
         return _dialogue_performance(host)
     if key == "podcast":
@@ -279,12 +275,12 @@ def scene_data_rule(value, host=HOST_NONE) -> str:
     """只在场景生成里用：讲员写进场景数据（actor / speaking / visual）的方式。没有讲员就没有这一条。"""
     key = normalize(value)
     host = _host(host)
-    if not key or key == "step_story" or host == HOST_NONE:
+    if not key or host == HOST_NONE:
         return ""
     shown = ("The 讲员 has a 肖像, so ``visual`` shows the 讲员 on screen." if host == HOST_PORTRAIT else
              "The 讲员 has no 肖像, so ``visual`` never shows the 讲员, and the video step plays the 讲员's lines as a voice-over.")
     where = "in every scene" if key == "story_act" else "in every scene where the 讲员 speaks"
-    return ("Scene data: the 讲员 is listed first in ``actor`` (position 1) " + where
+    return ("Scene data: the 讲员 is listed first in ``actor`` (position 1), written H, a space, then the look, " + where
             + ", and the 讲员's lines are marked ``<1>``. " + shown)
 
 

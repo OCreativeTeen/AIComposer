@@ -857,7 +857,7 @@ def scene_count_from_prompt_text(prompt: str) -> int:
 def grok_tab_count_for_prompt_choice(label: str) -> int:
     """Map LM 提示选项 → 场景数 / Grok Imagine 标签数。
 
-    ``N Step Story`` → N（2–6）；其它（Short / Mini / Long / Talk …）→ 1。
+    ``N Step Story`` → N（2–6；t266: = 故事对话固定 N 场）；其它（Short / Mini / Long / Talk / 故事对话 …）→ 1。
     ``scnlm`` 选完即可用，不必等长 prompt 刷新或解析剪贴板。
     """
     raw = (label or "").strip()

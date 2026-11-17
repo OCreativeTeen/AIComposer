@@ -316,7 +316,7 @@ _DIALOGUE_MODE_PROMPTS = {
     ** This block overrides every host, actor, and speaking rule written above.
     ** There is no voiceover field.
     ** Every scene is the third-party narrator alone.
-    ** actor is exactly 讲员 plus the host look already named in this prompt. No 人物.
+    ** actor is exactly H, a space, then the host look already named in this prompt (H = 讲员). No 人物.
     ** speaking is the narrator's line. Mark it <1>, or leave the marker off when only one person speaks.
     ** There is no second speaker.
 """,
@@ -2589,9 +2589,9 @@ CHANNEL_CONFIG = {
         },
 
         "scenes_prompt_choices": [
-            (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),  # t205u: 第一个 = 新条目默认
+            # t266: 短故事已并入故事对话（步数 0 = 自由规划，1–6 = 固定场景数）；新条目默认选故事对话（config_channel.default_scene_prompt_label）
             (config_channel.SERIES_STYLE_LABELS["podcast"], config_channel.COUNSELING_TALK_SCENES),  # t447u: 播客
-                (config_channel.SERIES_STYLE_LABELS["story_speak"], config_channel.COUNSELING_SERIES_STORY_SPEAK),  # 故事对话
+            (config_channel.SERIES_STYLE_LABELS["story_speak"], config_channel.COUNSELING_SERIES_STORY_SPEAK),  # 故事对话
             (config_channel.SERIES_STYLE_LABELS["story_act"], config_channel.COUNSELING_SERIES_STORY_ACT),  # 故事表演
         ],
 
@@ -2662,12 +2662,11 @@ CHANNEL_CONFIG = {
         },
 
         "scenes_prompt_choices": [
-            ("Comic to Scenes", config_channel.COMIC_STRIP_SCENES),
-            ("Reshape Episode", config_channel.COMIC_RESHAPE_SCENES),
-            ("Expand Episode", config_channel.COMIC_EXPAND_SCENES),
-            ("Condense · 2 Acts", config_channel.comic_condense_prompt(2)),
-            ("Condense · 3 Acts", config_channel.comic_condense_prompt(3)),
-            ("Condense · 4 Acts", config_channel.comic_condense_prompt(4)),
+            # t272: 连环画 / 所有 topic（含 Chinese_AncientStory）的「叙事方式」= 和 counseling 完全一样的三种共用方式；
+            # 不再有 Comic to Scenes 这类频道自己的方式。PDF 一页一场是「PDF 来源」的做法（场景生成时按选中页数规定），不是叙事方式。
+            (config_channel.SERIES_STYLE_LABELS["podcast"], config_channel.COUNSELING_TALK_SCENES),
+            (config_channel.SERIES_STYLE_LABELS["story_speak"], config_channel.COUNSELING_SERIES_STORY_SPEAK),
+            (config_channel.SERIES_STYLE_LABELS["story_act"], config_channel.COUNSELING_SERIES_STORY_ACT),
         ],
 
         "channel_prompt": {

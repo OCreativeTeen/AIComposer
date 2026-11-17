@@ -66,8 +66,10 @@ def _clear_old_outputs(out_dir: str, pattern: str) -> None:
 
 
 # ---------------------------------------------------------------- PDF
-def extract_pdf_images(pdf_path: str, out_dir: str = "", *, log=print) -> list:
-    """PDF 里有图的页抽成 png。返回 [{"path", "source": "pdf", "page"}]（按页序）。"""
+def extract_pdf_images(pdf_path: str, out_dir: str = "", *, log=print, pages=None) -> list:
+    """PDF 里有图的页抽成 png。返回 [{"path", "source": "pdf", "page"}]（按页序）。
+
+    ``pages`` = None 整份；``(开始页, 结束页)``（1 起、含两端）= 只抽选中的页（t267）。页码 / 文件名仍是原文档的页码（p012.png = 第 12 页）。"""
     import fitz  # PyMuPDF
 
     out_dir = out_dir or working_dir_for(pdf_path)
@@ -77,7 +79,11 @@ def extract_pdf_images(pdf_path: str, out_dir: str = "", *, log=print) -> list:
     out = []
     skipped = 0
     with fitz.open(pdf_path) as doc:
-        for pno in range(doc.page_count):
+        first, last = 0, doc.page_count - 1
+        if pages:
+            first = min(max(int(pages[0]) - 1, 0), max(doc.page_count - 1, 0))
+            last = min(max(int(pages[1]) - 1, first), doc.page_count - 1)
+        for pno in range(first, last + 1):
             page = doc[pno]
             prect = page.rect
             parea = max(1.0, prect.width * prect.height)
@@ -109,7 +115,8 @@ def extract_pdf_images(pdf_path: str, out_dir: str = "", *, log=print) -> list:
                 path = os.path.join(out_dir, f"p{n:03d}_{k}.png")
                 page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=r).save(path)
                 out.append({"path": path, "source": "pdf", "page": n})
-    log(f"[图片对场景] PDF {os.path.basename(pdf_path)}：抽出 {len(out)} 张图，跳过只有文字的 {skipped} 页 → {out_dir}")
+    span = f"（第 {first + 1}–{last + 1} 页）" if pages else ""
+    log(f"[图片对场景] PDF {os.path.basename(pdf_path)}{span}：抽出 {len(out)} 张图，跳过只有文字的 {skipped} 页 → {out_dir}")
     return out
 
 
@@ -228,6 +235,23 @@ def _strata_vision(image_path: str, timeout_s: float = VISION_TIMEOUT_S) -> str:
                                                 {"role": "user", "content": content}])
     req["max_tokens"] = 700
     resp = _strata_client(timeout_s).chat.completions.create(**req)
+    return _clean(resp.choices[0].message.content if resp and resp.choices else "")
+
+
+def strata_scene_vision(image_path: str, system: str, user: str, timeout_s: float | None = None) -> str:
+    """t272: 一页 PDF（已渲染成图）+ 场景提示词（system）+ 这一页的说明（user）→ Strata 的回答文字（一个场景的 JSON）。
+    和 _strata_vision 同一套 Strata 看图调用：LLMApi._strata_request + prompt_polish._strata_client + _image_data_url；
+    只是 system / user 由场景生成给，回答长度用 Strata 的默认上限（不限到 700 字）。"""
+    from utility import llm_api
+    from utility.prompt_polish import _clean, _image_data_url, _strata_client
+
+    api = llm_api.LLMApi(llm_api.STRATA)
+    api.manual_fallback = False
+    content = [{"type": "text", "text": user},
+               {"type": "image_url", "image_url": {"url": _image_data_url(image_path, 1280)}}]
+    req = api._strata_request(llm_api.STRATA, [{"role": "system", "content": system},
+                                                {"role": "user", "content": content}])
+    resp = _strata_client(timeout_s or llm_api.STRATA_SCENE_TIMEOUT_S).chat.completions.create(**req)
     return _clean(resp.choices[0].message.content if resp and resp.choices else "")
 
 
@@ -458,8 +482,8 @@ def apply_matches(current: list, snapshot: list, matches: dict) -> tuple:
 
 
 def run_match(material_path: str, source: str, scenes: list, *, out_dir: str = "", log=print, progress=None,
-              vision_ask=None, judge=None, extract=None) -> dict:
-    """后台线程里跑：抽图 → Strata 看图 → 顺序匹配。不改 ``scenes``。
+              vision_ask=None, judge=None, extract=None, pages=None) -> dict:
+    """后台线程里跑：抽图 → Strata 看图 → 顺序匹配。不改 ``scenes``。``pages``：PDF 只抽这几页（t267）。
     返回 {"images": [...], "matches": {下标: [image]}, "out_dir", "described", "failed"}。"""
     out_dir = out_dir or working_dir_for(material_path)
     progress = progress or (lambda _m: None)
@@ -467,7 +491,7 @@ def run_match(material_path: str, source: str, scenes: list, *, out_dir: str = "
     if extract is not None:
         images = extract(material_path, out_dir)
     elif source == "pdf":
-        images = extract_pdf_images(material_path, out_dir, log=log)
+        images = extract_pdf_images(material_path, out_dir, log=log, pages=pages)
     else:
         images = extract_video_slides(material_path, out_dir, log=log, progress=progress)
     for img in images:
@@ -640,14 +664,65 @@ def extract_scene_frames(video_path: str, scenes: list, out_dir: str = "", *, lo
         cap.release()
 
 
-def auto_ref_matches(kind: str, path: str, scenes: list, *, log=print, progress=None, pdf_run=None, video_run=None) -> dict:
+def render_page_images(pdf_path: str, pages=None, out_dir: str = "", *, log=print) -> list:
+    """t275: 选中的每一页整页渲染成一张 pNNN.png（页码 = 原文档的页码），按页序返回 [{"path", "source": "pdf", "page"}]。
+    不看内容、不跳过只有文字的页（一页一个场景时，页和场景一一对应）。图放在 working/<材料文件名>/pages/ 下，
+    不碰「图片对场景」抽图用的那个目录。"""
+    import fitz  # PyMuPDF
+
+    out_dir = out_dir or os.path.join(working_dir_for(pdf_path), "pages")
+    os.makedirs(out_dir, exist_ok=True)
+    _clear_old_outputs(out_dir, r"^p\d{3,}\.png$")
+    zoom = PDF_DPI / 72.0
+    out = []
+    with fitz.open(pdf_path) as doc:
+        first, last = 0, doc.page_count - 1
+        if pages:
+            first = min(max(int(pages[0]) - 1, 0), max(doc.page_count - 1, 0))
+            last = min(max(int(pages[1]) - 1, first), doc.page_count - 1)
+        for pno in range(first, last + 1):
+            path = os.path.join(out_dir, f"p{pno + 1:03d}.png")
+            doc[pno].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False).save(path)
+            out.append({"path": path, "source": "pdf", "page": pno + 1})
+    log(f"[场景配图] PDF {os.path.basename(pdf_path)}：第 {first + 1}–{last + 1} 页，每页一张图 → {out_dir}")
+    return out
+
+
+def direct_page_matches(pdf_path: str, scenes: list, *, pages=None, out_dir: str = "", log=print, progress=None,
+                        render=None) -> dict:
+    """t275: 一页一个场景生成的 PDF：选中范围的第 k 页 → 第 k 场的 ref_images，不看图、不用 Strata 判断。
+    页数和场景数不一样（模型多写 / 少写了场景）就不配（返回 {}），免得错位；要配图请手动用「图片对场景」。"""
+    if progress:
+        progress("渲染每一页…")
+    images = (render or render_page_images)(pdf_path, pages, out_dir, log=log)
+    if not images:
+        log("[场景配图] PDF 没有页，不配图")
+        return {}
+    if len(images) != len(scenes):
+        log(
+            f"[场景配图] 选中 {len(images)} 页但有 {len(scenes)} 个场景，页和场景对不上，没有按页配图"
+            "（要配图：在 PDF 资源上右键 → 图片对场景）"
+        )
+        return {}
+    for img in images:
+        img["material"] = pdf_path
+    log(f"[场景配图] 一页一个场景：第 {images[0].get('page')}–{images[-1].get('page')} 页 → 第 1–{len(images)} 场（直接对应，不用 Strata 判断）")
+    return {k: [img] for k, img in enumerate(images)}
+
+
+def auto_ref_matches(kind: str, path: str, scenes: list, *, log=print, progress=None, pdf_run=None, video_run=None,
+                     pages=None, direct: bool = False, pdf_direct=None) -> dict:
     """生成场景以后按来源自动配图，返回 {场景下标: [image]}（不改 scenes）。
-    PDF：抽图 + Strata 顺序匹配；视频：按每场起止取中段一帧；其他来源（文字 / 音频 / 信息图）不动。"""
+    PDF 一页一个场景（direct）：第 k 页直接对第 k 场，不用 Strata；视频：按每场起止取中段一帧；
+    其他来源（文字 / 音频 / 信息图 / 把 PDF 当文字内容）不动。PDF 的「抽图 + Strata 顺序匹配」只在用户手动触发时跑（run_match）。"""
     kind = str(kind or "").strip().lower()
     if not path or not os.path.isfile(path) or not scenes:
         return {}
+    if kind == "pdf" and direct:
+        return (pdf_direct or direct_page_matches)(path, scenes, pages=pages, log=log, progress=progress) or {}
     if kind == "pdf":
-        res = (pdf_run or run_match)(path, "pdf", scenes, log=log, progress=progress)
+        extra = {"pages": pages} if pages else {}  # t267: PDF 选了页范围才带上（没选 = 整份，调用方式和以前一样）
+        res = (pdf_run or run_match)(path, "pdf", scenes, log=log, progress=progress, **extra)
         if not res.get("images"):
             log(f"[场景配图] PDF {os.path.basename(path)} 里没有图片，不配图")
         return res.get("matches") or {}
@@ -657,7 +732,7 @@ def auto_ref_matches(kind: str, path: str, scenes: list, *, log=print, progress=
 
 
 def start_auto_attach(after, kind: str, path: str, scenes: list, *, get_current, commit, log=print,
-                      matcher=None, thread=True) -> bool:
+                      matcher=None, thread=True, pages=None, direct: bool = False) -> bool:
     """后台算 ``auto_ref_matches``，算完在 Tk 线程（``after(ms, fn)`` 轮询）里：
     current = get_current() → apply_matches → 有新图就 commit(current, added)。不需要做的来源返回 False。"""
     import copy
@@ -670,7 +745,10 @@ def start_auto_attach(after, kind: str, path: str, scenes: list, *, get_current,
 
     def _work():
         try:
-            holder["matches"] = (matcher or auto_ref_matches)(kind, path, snapshot, log=log) or {}
+            extra = {"pages": pages} if pages else {}  # t267: PDF 页范围
+            if direct:
+                extra["direct"] = True  # t275: 一页一个场景：第 k 页直接对第 k 场
+            holder["matches"] = (matcher or auto_ref_matches)(kind, path, snapshot, log=log, **extra) or {}
         except Exception as exc:  # noqa: BLE001
             holder["error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
         holder["done"] = True
@@ -698,7 +776,7 @@ def start_auto_attach(after, kind: str, path: str, scenes: list, *, get_current,
             return
         after(500, _poll)
 
-    log(f"[场景配图] 来源是{'PDF' if kind == 'pdf' else '视频'}，后台开始配图：{os.path.basename(path)}")
+    log(f"[场景配图] 来源是{'PDF（一页一个场景，按页直接对应）' if kind == 'pdf' else '视频'}，后台开始配图：{os.path.basename(path)}")
     if thread:
         threading.Thread(target=_work, daemon=True, name="auto-ref-images").start()
     else:

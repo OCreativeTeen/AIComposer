@@ -102,9 +102,15 @@ def append_program_media(item: dict, kind: str, path: str) -> list[str]:
         path = os.path.abspath(path)
     except (OSError, ValueError):
         pass
-    current = [p for p in get_program_media_list(item, kind) if not same_media_path(p, path)]
+    before = get_program_media_list(item, kind)
+    current = [p for p in before if not same_media_path(p, path)]
     current.insert(0, path)
     item[field] = current
+    if kind == KIND_SLIDES and len(current) == len(before) + 1:
+        # t267: 任何路径新进来的 PDF 都从第 1 页到最后一页：不留这个路径上可能残存的旧页范围
+        from utility import pdf_range
+
+        pdf_range.forget(item, path)
     return current
 
 
@@ -115,6 +121,10 @@ def remove_program_media(item: dict, kind: str, path: str) -> list[str]:
     if not field:
         return []
     current = [p for p in get_program_media_list(item, kind) if not same_media_path(p, path)]
+    if kind == KIND_SLIDES:
+        from utility import pdf_range  # t267: PDF 去掉了，它的页范围一起去掉
+
+        pdf_range.forget(item, path)
     # 空列表表示「用户删光了」，和「字段根本没写」（旧数据被别的保存冲掉）要分开：
     # 写入列表时，缺了的字段会从磁盘补回，空列表则按删除处理。
     item[field] = current
@@ -295,6 +305,15 @@ def merge_missing_program_media(incoming: dict, existing: dict) -> dict:
             continue
         if field in existing:
             incoming[field] = existing[field]
+            if kind == KIND_SLIDES:
+                # t271: PDF 的页范围和 slide 是一对——slide 从旧行补回来，它的页范围一起补回来
+                # （incoming 自己有 pdf_page_ranges 就以它为准）
+                from utility.pdf_range import RANGES_KEY
+
+                if RANGES_KEY in existing and RANGES_KEY not in incoming:
+                    import copy
+
+                    incoming[RANGES_KEY] = copy.deepcopy(existing[RANGES_KEY])
     return incoming
 
 

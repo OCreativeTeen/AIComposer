@@ -1,8 +1,9 @@
 """t174u: 场景生成后，人物编号按整个故事统一。
 
-提示词要求：同一个人整篇故事用同一个 人物N / <N>，actor 按编号从小到大列出这一场的人。
+提示词要求（t174u；t280 起 actor 不写 人物N：）：同一个人整篇故事用同一个 <N>，actor 按编号从小到大列出这一场的人。
 程序里 <N> = 这一场 actor 里的第 N 个人（配音、形象图、MiniMax 说话人都按这个对），
 所以这里只做两件事，不删任何内容：
+（t280: 新写法的 actor 不带 人物N：，这一步只对旧写法的回复起作用，写回去的是新写法。）
 1) actor 按 人物N 从小到大重排（<N> 不变，只是顺序对上）；
 2) 这一场缺了前面的编号（例如只有 人物2）时，把这一场的 <N> 和 人物N 改成 1..k，
    不然配音会找不到人。改过的场景和前后描述不一致的人都写进 notes 提醒。
@@ -67,10 +68,10 @@ def align_story_speakers(scenes: list) -> tuple:
         pos = {k: i for i, (k, _b) in enumerate(ordered, 1)}
         if all(pos[k] == k for k in pos):
             if labeled != ordered:
-                sc["actor"] = " | ".join(f"人物{k}：{b}" for k, b in ordered)
+                sc["actor"] = " | ".join(b for _k, b in ordered)  # t280: 写新写法（不带 人物N：）
             continue
         # 缺了前面的编号：这一场改成 1..k
-        sc["actor"] = " | ".join(f"人物{pos[k]}：{b}" for k, b in ordered)
+        sc["actor"] = " | ".join(b for _k, b in ordered)  # t280: 写新写法（不带 人物N：）
         remapped = []
         for turn in parse_speaking_turns(speaking):
             turn.speaker = pos.get(turn.speaker, turn.speaker)

@@ -172,6 +172,15 @@ class StorySummaryImpl:
         """将 ``video_detail`` 同步进 ``channel_videos`` 并写入 ``channel_list_json``。"""
         if not isinstance(video_detail, dict):
             return False
+        try:  # t280: 存的时候场景 actor 和人物栏改成新写法（只改标签）
+            import project_manager as _pm
+
+            if isinstance(video_detail.get("scene_content"), list):
+                _pm.migrate_scene_actors(video_detail["scene_content"])
+            if isinstance(video_detail.get("story_actors"), str):
+                video_detail["story_actors"] = _pm.migrate_actor_text(video_detail["story_actors"])
+        except Exception as _e:  # noqa: BLE001
+            print(f"⚠️ actor 新写法迁移失败（照原样保存）：{_e}")
         list_path = (getattr(self.downloader, "channel_list_json", None) or "").strip()
         if not list_path:
             show_auto_close_popup(

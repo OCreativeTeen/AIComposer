@@ -35,7 +35,9 @@ def _topic_reassign():
 
 class LabelTest(unittest.TestCase):
     def test_new_names(self):
-        self.assertEqual(cc.STEP_STORY_LABEL, "短故事")
+        # t266: 短故事已并入故事对话；STEP_STORY_LABEL 只剩 FlyLink 的「固定步数故事」，不再叫短故事
+        self.assertNotIn("短故事", cc.STEP_STORY_LABEL)
+        self.assertNotIn("短故事", cc.SERIES_STYLE_LABELS.values())
         self.assertEqual(
             [cc.SERIES_STYLE_LABELS[k] for k in ("podcast", "story_speak", "story_act")],
             ["播客", "故事对话", "故事表演"],
@@ -49,7 +51,8 @@ class LabelTest(unittest.TestCase):
             ("主持人节目", "故事表演"), ("Counselor", "故事表演"),  # t262: 旧的主持人节目读作故事表演
             ("Series · Story Speak", "故事对话"), ("Series · Story Only", "故事对话"),
             ("Series . Story Only", "故事对话"), ("Series · Story Act", "故事表演"),
-            ("Step Story", "短故事"), ("3 Step Story", "短故事"), ("Short Story", "短故事"),
+            ("Step Story", "故事对话"), ("3 Step Story", "故事对话"), ("Short Story", "故事对话"),  # t266
+            ("短故事", "故事对话"),
             ("故事表演", "故事表演"), ("Mini Story", "Mini Story"), ("", ""),
         ):
             self.assertEqual(cc.canonical_prompt_label(old), new, old)
@@ -58,13 +61,16 @@ class LabelTest(unittest.TestCase):
         self.assertTrue(cc.is_series_label("播客"))
         self.assertTrue(cc.is_series_label("故事表演"))
         self.assertTrue(cc.is_series_label("Series . Podcast"))
-        self.assertFalse(cc.is_series_label("短故事"))
+        self.assertTrue(cc.is_series_label("短故事"))  # t266: 旧存值读作故事对话
+        self.assertEqual(cc.series_style_key("短故事"), "story_speak")
         self.assertFalse(cc.is_series_label("Series something else"))
         self.assertEqual(cc.series_style_key("主持人节目"), "story_act")  # t262
         self.assertEqual(cc.series_style_key("Series · Story Only"), "story_speak")
-        self.assertTrue(cc.is_step_story_label("短故事"))
-        self.assertTrue(cc.is_step_story_label("Step Story"))
-        self.assertTrue(cc.is_step_story_label("4 Step Story"))
+        # t266: is_step_story_label 只认 FlyLink 的「固定步数故事」；旧的短故事 / Step Story / N Step Story 是故事对话 + 步数
+        self.assertTrue(cc.is_step_story_label(cc.STEP_STORY_LABEL))
+        for old in ("短故事", "Step Story", "4 Step Story"):
+            self.assertFalse(cc.is_step_story_label(old), old)
+            self.assertEqual(cc.series_style_key(old), "story_speak", old)
 
     def test_counseling_choices_use_chinese(self):
         src = (ROOT / "config.py").read_text(encoding="utf-8")
@@ -74,16 +80,17 @@ class LabelTest(unittest.TestCase):
 
 
 class StoryStyleTest(unittest.TestCase):
-    def test_four_chinese_styles(self):
-        # t258: 视频窗口和预览窗口同一张表：短故事 / 播客 / 故事对话 / 故事表演（预览下拉的顺序）；t262: 主持人节目已并入故事表演
-        self.assertEqual([k for k, _ in cp.STORY_STYLE_CHOICES],
-                         ["step_story", "podcast", "story_speak", "story_act"])
-        self.assertEqual(list(cp.STORY_STYLE_LABELS), ["短故事", "播客", "故事对话", "故事表演"])
+    def test_three_chinese_styles(self):
+        # t258: 视频窗口和预览窗口同一张表：播客 / 故事对话 / 故事表演（预览下拉的顺序）；t262: 主持人节目已并入故事表演；t266: 短故事已并入故事对话
+        self.assertEqual([k for k, _ in cp.STORY_STYLE_CHOICES], ["podcast", "story_speak", "story_act"])
+        self.assertEqual(list(cp.STORY_STYLE_LABELS), ["播客", "故事对话", "故事表演"])
 
     def test_normalize(self):
         for v, k in (("播客", "podcast"), ("主持人节目", "story_act"), ("故事对话", "story_speak"),
                      ("故事表演", "story_act"), ("tech", "story_act"), ("exec", "story_act"),
-                     ("高管简报", "story_act"), ("技术方案汇报", "story_act"), ("短故事", "step_story"),
+                     ("高管简报", "story_act"), ("技术方案汇报", "story_act"), ("短故事", "story_speak"),
+                     ("Step Story", "story_speak"), ("3 Step Story", "story_speak"), ("step_story", "story_speak"),
+                     ("story_mini", "story_speak"),  # t266: 旧存值都读作故事对话
                      ("Series · Counselor", "story_act"), ("counselor", "story_act"),
                      ("Series . Podcast", "podcast"), ("Series · Story Only", "story_speak")):
             self.assertEqual(cp.normalize_story_style(v), k, v)
@@ -159,7 +166,8 @@ class CastPresetTest(unittest.TestCase):
         self.assertEqual(cpr.mode_for_label("播客"), "podcast")
         self.assertEqual(cpr.mode_for_label("Series . Podcast"), "podcast")
         self.assertEqual(cpr.mode_for_label("故事表演"), "story_act")
-        self.assertEqual(cpr.mode_for_label("短故事"), "step_story")
+        self.assertEqual(cpr.mode_for_label("短故事"), "story_speak")  # t266: 短故事已并入故事对话
+        self.assertEqual(cpr.mode_for_label("3 Step Story"), "story_speak")
         self.assertEqual(cpr.mode_for_label("Mini Story"), "")
 
     def test_validate(self):
@@ -167,7 +175,7 @@ class CastPresetTest(unittest.TestCase):
         one = "讲员：woman/mature/chinese | 人物1：woman/mature/chinese/林芳"
         self.assertTrue(cpr.validate_cast_for_mode("story_speak", two)[0])
         self.assertFalse(cpr.validate_cast_for_mode("story_act", one)[0])
-        self.assertFalse(cpr.validate_cast_for_mode("step_story", "讲员：x | 人物1：woman/kids/chinese/a")[0])
+        self.assertFalse(cpr.validate_cast_for_mode("story_speak", "讲员：x | 人物1：woman/kids/chinese/a")[0])
         self.assertTrue(cpr.validate_cast_for_mode("podcast", one)[0])
         self.assertFalse(cpr.validate_cast_for_mode("podcast", "讲员：woman/mature/chinese")[0])
         # t263: 播客 = 讲员（主持）+ 嘉宾；只有人物没有讲员不行，并且告诉用户去按「人物设置」
@@ -186,7 +194,7 @@ class CastPresetTest(unittest.TestCase):
         self.assertEqual(got, ["woman/mature/chinese/林芳（妻子）", "man/senior/chinese/林伯（父亲）",
                                "woman/kids/chinese/小雨（女儿）"])
         self.assertEqual(len(cpr.parse_cast_reply(reply, "podcast")), 1)
-        self.assertEqual(len(cpr.parse_cast_reply(reply, "step_story")), 2)
+        self.assertEqual(len(cpr.parse_cast_reply(reply, "story_act")), 3)
 
     def test_preset_and_reroll_history(self):
         seen = []
@@ -198,8 +206,8 @@ class CastPresetTest(unittest.TestCase):
         vd = {}
         text, people = cpr.preset_cast("story_act", "一对夫妻的冷战", narrator="woman/mature/chinese",
                                        history=cpr.cast_history(vd), generate=fake)
-        self.assertEqual(text, "讲员：woman/mature/chinese | 人物1：woman/mature/chinese/林芳（妻子） | "
-                               "人物2：man/mature/chinese/陈强（丈夫）")
+        self.assertEqual(text, "H woman/mature/chinese | woman/mature/chinese/林芳（妻子） | "
+                               "man/mature/chinese/陈强（丈夫）")  # t280: 新写法（讲员 H …，人物不带 人物N：）
         self.assertIn("故事表演", seen[0][0])
         self.assertNotIn("already used", seen[0][1])
         cpr.remember_cast(vd, people)
@@ -211,10 +219,14 @@ class CastPresetTest(unittest.TestCase):
         self.assertEqual(vd["cast_history"][0], " | ".join(people))
         self.assertEqual(len(vd["cast_history"]), 2)
 
-    def test_step_story_has_no_host(self):
-        text, _ = cpr.preset_cast("step_story", "x", narrator="woman/mature/chinese",
+    def test_step_story_mode_is_gone(self):
+        # t266: 短故事已并入故事对话，人物设置没有 step_story 这个方式了；故事对话（任何步数）带讲员
+        self.assertNotIn("step_story", cpr.MODE_RULES)
+        with self.assertRaises(ValueError):
+            cpr.preset_cast("step_story", "x", narrator="n", generate=lambda s, u: "没有人物")
+        text, _ = cpr.preset_cast("story_speak", "x", narrator="woman/mature/chinese",
                                   generate=lambda s, u: "人物1：woman/kids/chinese/甲（姐姐）\n人物2：man/kids/chinese/乙（弟弟）")
-        self.assertNotIn("讲员", text)
+        self.assertTrue(text.startswith("H woman/mature/chinese | "))  # t280: 新写法（讲员 H …，人物不带 人物N：）
 
     def test_bad_reply_raises(self):
         with self.assertRaises(ValueError):
@@ -226,21 +238,22 @@ class CastPresetTest(unittest.TestCase):
         self.assertEqual(cpr.MODE_RULES["podcast"][:3], (True, 1, 1))
         self.assertEqual(cpr.MODE_RULES["story_speak"][:3], (True, 2, 3))
         self.assertEqual(cpr.MODE_RULES["story_act"][:3], (True, 2, 3))
-        self.assertEqual(cpr.MODE_RULES["step_story"][:3], (False, 2, 2))
+        self.assertNotIn("step_story", cpr.MODE_RULES)
 
 
 class ProgramModeTest(unittest.TestCase):
     def test_follow_main_window(self):
         f = cpr.program_mode_narrative
-        # t262: 节目生成四种方式（短故事是自己的一种）；谁说话由共用规则给，所以叙事形式都是 story；主持人节目读作故事表演
+        # t266: 节目生成三种方式（短故事已并入故事对话）；谁说话由共用规则给，所以叙事形式都是 story；主持人节目读作故事表演
         self.assertEqual(f("播客"), ("播客", "podcast", "story"))
         self.assertEqual(f("主持人节目"), ("故事表演", "story_act", "story"))
         self.assertEqual(f("Series · Counselor"), ("故事表演", "story_act", "story"))
         self.assertEqual(f("故事对话"), ("故事对话", "story_speak", "story"))
         self.assertEqual(f("故事表演"), ("故事表演", "story_act", "story"))
-        self.assertEqual(f("短故事"), ("短故事", "step_story", "story"))
+        self.assertEqual(f("短故事"), ("故事对话", "story_speak", "story"))
         self.assertEqual(f("Series . Podcast"), ("播客", "podcast", "story"))
-        self.assertEqual(f("Step Story"), ("短故事", "step_story", "story"))
+        self.assertEqual(f("Step Story"), ("故事对话", "story_speak", "story"))
+        self.assertEqual(f("4 Step Story"), ("故事对话", "story_speak", "story"))
         self.assertEqual(f("Mini Story", "story_act"), ("故事表演", "story_act", "story"))
         self.assertEqual(f("Mini Story", "tech"), ("故事表演", "story_act", "story"))
         self.assertEqual(f("", None), ("播客", "podcast", "story"))

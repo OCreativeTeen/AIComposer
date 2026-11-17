@@ -204,7 +204,7 @@ def speaking_actor_slots(scene, n_actors: int = 0) -> set:
 def split_actors_by_speaking(scene) -> tuple:
     """t357u: (要提取的, 不提取的)，都是去重后的项目人物（不含讲员）。
 
-    要提取 = 在这一场 actor 栏里（人物1/人物2…）**并且**讲话里有他的台词。同一个人在 actor 栏出现两次时，
+    要提取 = 在这一场 actor 栏里（第 1 / 第 2 个人…）**并且**讲话里有他的台词。同一个人在 actor 栏出现两次时，
     任何一次有台词都算。没有 slot 的行（老数据）不作限制，照旧提取。
     """
     actors = actors_from_scene(scene)

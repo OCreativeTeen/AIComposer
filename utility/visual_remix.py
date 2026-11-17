@@ -24,8 +24,8 @@ same language and script as the original. Output only the rewritten description.
 
 # t199u: 有讲话时追加的规则（图片版和纯文字版都用）
 VISUAL_DIALOGUE_RULES = """
-另外，用户还会给你这一场的「讲话」（<1> 是人物1 说的，<2> 是人物2 说的，以此类推）和人物名单。视觉要和讲话一拍一拍地同步：
-- 按讲话的顺序写，每一句（或每一段）对应一拍：<2> 说到某件事时，人物2 在做什么、人物1 怎么反应；接着 <1> 回答时，人物1 做什么……
+另外，用户还会给你这一场的「讲话」（<1> 是人物名单里第 1 个人说的，<2> 是第 2 个人说的，以此类推）和人物名单。视觉要和讲话一拍一拍地同步：
+- 按讲话的顺序写，每一句（或每一段）对应一拍：<2> 说到某件事时，第 2 个人在做什么、第 1 个人怎么反应；接着 <1> 回答时，第 1 个人做什么……
   句子的先后就是动作的先后。用人物的名字，不要写 <1> <2> 这种标记。
 - 至少有一处具体、可信的动作 / 手势 / 视线 / 道具或环境变化，直接对应某一句话的内容（例如说到「打勾」时用手指在空中或纸上打勾；
   说「我陪你」时把手搭到对方手上）。说话的人和听的人都要有反应。
@@ -59,7 +59,7 @@ def _user_text(visual: str, names=(), language_label: str = "", speaking: str = 
     if names:
         note += "这一场的人物：" + "、".join(names) + "。\n"
         if (speaking or "").strip():
-            note += "说话人对应：" + "，".join(f"<{i}> = 人物{i} {n}" for i, n in enumerate(names, 1)) + "。\n"
+            note += "说话人对应：" + "，".join(f"<{i}> = 第{i}个人 {n}" for i, n in enumerate(names, 1)) + "。\n"
     if language_label:
         note += f"输出语言：{language_label}。\n"
     if (speaking or "").strip():
@@ -109,7 +109,7 @@ def remix_visual_text(visual: str, *, names=(), language_label: str = "", speaki
 # Shared by Remix (double-click 视觉) and new-project cover/scene-image analysis.
 
 ACTORS_FROM_IMAGE_SYSTEM = """你是视频分镜编辑。用户给你一张起始画面、人物名单（可含已有括号）、可选的讲话。
-只输出 JSON（不要别的文字、不要 ```）：{"actors": {"1": "人物1 在这一场的样子", "2": "..."}, "new_actors": {}}
+只输出 JSON（不要别的文字、不要 ```）：{"actors": {"1": "第 1 个人在这一场的样子", "2": "..."}, "new_actors": {}}
 规则（t223u 人物优先）：
 - 先定人物：actors 键是人物序号（与说话人 <N> 对应）；非空描述的人数应等于讲话里出现过的不同 <N>（再加上要补的缺失说话人）。
 - 已有的 actor 括号（衣着、左/右/座位）是谁是谁的唯一准则。用括号里的衣着与座位去图里对人；不得把左右换反，不得用视觉原文里的左右去改座位。
@@ -217,7 +217,7 @@ def correct_actors_from_image(image_path: str, *, names=(), actor_text: str = ""
     if (speaking or "").strip():
         body += "讲话（按顺序）：\n" + speaking.strip() + "\n\n"
         body += "说话人对应：" + "，".join(
-            f"<{i}> = 人物{i} {n}" for i, n in enumerate(names, 1)) + "。\n"
+            f"<{i}> = 第{i}个人 {n}" for i, n in enumerate(names, 1)) + "。\n"
     body += "人物序号与已有括号：\n" + (_existing_actor_paren_lines(actor_text, names) or "（无）")
     body += miss_note
     user = [
@@ -319,7 +319,7 @@ def _split_group_user_text(visual: str, parts, names=(), language_label: str = "
     note = ""
     if names:
         note += "这一场的人物：" + "、".join(names) + "。\n"
-        note += "说话人对应：" + "，".join(f"<{i}> = 人物{i} {n}" for i, n in enumerate(names, 1)) + "。\n"
+        note += "说话人对应：" + "，".join(f"<{i}> = 第{i}个人 {n}" for i, n in enumerate(names, 1)) + "。\n"
     if language_label:
         note += f"输出语言：{language_label}。\n"
     note += "这一场原来的视觉描述：\n" + (visual or "").strip() + "\n\n"

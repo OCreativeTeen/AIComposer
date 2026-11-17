@@ -69,7 +69,7 @@ def _resolve_combined_prompt_template(
         for i, (lbl, tpl) in enumerate(choices):
             if (lbl or "").strip() == want:
                 return (lbl, tpl, i)
-        # t447u: 旧名（Step Story、Series · Podcast …）→ 现在的中文名再找一次
+        # t447u: 旧名（Step Story、短故事、Series · Podcast …）→ 现在的中文名再找一次（t266: 短故事 → 故事对话）
         want = config_channel.canonical_prompt_label(want)
         for i, (lbl, tpl) in enumerate(choices):
             if (lbl or "").strip() == want:
@@ -116,12 +116,38 @@ def _story_cast_text(video_detail: dict):
     return cast if isinstance(cast, str) else None
 
 
-def build_cast_block(actor_text) -> str:
+def cast_max_present(video_detail) -> int:
+    """人物栏名单最多留几个人。t279: 动态 / 不动态都是 10 个人物 + 1 个讲员（每一场的 actor 还是最多 4 个人）。"""
+    return project_manager.CAST_MAX_PRESENT
+
+
+def _dynamic_cast_text(video_detail, mode: str = "") -> str:
+    """t272: 勾了「动态生成人物」时，提示词里加的那一段（可以按出场加新人物，t279: 最多 10 个，id 前后一致）；没勾 = 空串。"""
+    from utility import cast_preset
+
+    if not cast_preset.dynamic_cast_enabled(video_detail):
+        return ""
+    return cast_preset.dynamic_cast_block(_story_cast_text(video_detail) or "", mode,
+                                          fresh=cast_preset.is_fresh_view(video_detail))  # t276
+
+
+def _fresh_cast_empty(video_detail) -> bool:
+    """t276: 动态生成人物、原来的人物栏不用、而且还没找到任何人（整份一次生成 / 第一页）。"""
+    from utility import cast_preset
+
+    return cast_preset.is_fresh_view(video_detail) and not (_story_cast_text(video_detail) or "").strip()
+
+
+FRESH_CAST_LIST_LINE = ("Cast list: none fixed in advance. Every person (and a 讲员 only where the mode needs one) "
+                        "comes from this material; see DYNAMIC CAST.")
+
+
+def build_cast_block(actor_text, max_present: int = project_manager.CAST_MAX_PRESENT) -> str:
     """把人物栏名单写成提示词里的 CAST 段：讲员有没有、几个人物、各自的样子，按人物栏顺序。"""
     if actor_text is None:
         return "(No cast was chosen in the Story window. Use the host rules written above.)"
     rows = []
-    for row in project_manager.actor_entries(actor_text or ""):
+    for row in project_manager.actor_entries(actor_text or "", max_present, project_manager.CAST_MAX_PEOPLE):
         body = (row.get("body") or "").strip()
         if not body or project_manager.actor_is_absent(body):
             continue
@@ -136,19 +162,19 @@ def build_cast_block(actor_text) -> str:
         lines.append("Cast list: EMPTY. Nobody is chosen.")
     else:
         lines.append("Cast list, in the order the user arranged it (gender/age band/ethnicity/name):")
-        n = 0
-        for r in rows:
+        for r in rows:  # t280: 新写法：讲员 = H …，人物不带 人物N：
             body = project_manager.split_actor_motion(r.get("body") or "")[0]
-            if r.get("role") == "host":
-                lines.append(f"  - 讲员：{body}")
-            else:
-                n += 1
-                lines.append(f"  - 人物{n}：{body}")
+            lines.append(("  - H " if r.get("role") == "host" else "  - ") + body)
     lines.append(
         "Use exactly these people with exactly these looks in ``actor``. Do not invent another 讲员. "
         "Do not change anyone's gender, age band, or ethnicity. Extra minor people from the story may appear "
         "only when the material requires them, and they never replace a listed person."
     )
+    if len(rows) > project_manager.ACTOR_MAX_PRESENT:  # t279: 人物栏可以到 10 个人物，一场还是最多 4 个
+        lines.append(
+            "This list is the cast of the whole story. One scene's ``actor`` still holds at most four people: "
+            "in each scene write only the listed people who are in that scene."
+        )
     return "\n    ".join(lines)
 
 
@@ -191,7 +217,9 @@ def _notebooklm_prompt_context_from_video_detail(
         "category": cat,
         "subtype": sub,
         "narrator": _scene_prompt_narrator(vd),
-        "cast": build_cast_block(_story_cast_text(vd)),
+        "cast": _join_blocks(
+            FRESH_CAST_LIST_LINE if _fresh_cast_empty(vd) else build_cast_block(_story_cast_text(vd), cast_max_present(vd)),
+            _dynamic_cast_text(vd)),
     }
 
 
@@ -205,6 +233,24 @@ def story_setting_region_era(video_detail) -> tuple:
         (getattr(project_manager, "LAST_SETTING_REGION", "") or "").strip(),
         (getattr(project_manager, "LAST_SETTING_ERA", "") or "").strip(),
     )
+
+
+def story_setting_context(video_detail) -> str:
+    """t280: Story 窗的 地域 / 时代 + 故事舞台，写成一两句英文（Strata 每页、人物归拢、肖像提示词用）。都没有返回 ""。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    bits = []
+    phrase = story_setting_phrase(vd)
+    if phrase:
+        bits.append(f"The story takes place in {phrase}.")
+    try:
+        from utility import story_stage as _ss
+
+        line = _ss.short_line(_ss.info_from(vd))
+    except Exception:  # noqa: BLE001
+        line = ""
+    if line:
+        bits.append(line)
+    return " ".join(bits)
 
 
 def story_setting_phrase(video_detail) -> str:
@@ -224,18 +270,33 @@ def story_cast_summary(video_detail) -> str:
     return " | ".join(p.strip() for p in cast.replace("\n", "|").split("|") if p.strip())
 
 
+def _join_blocks(first: str, extra: str) -> str:
+    return first if not extra else first + "\n    " + extra.replace("\n", "\n    ")
+
+
 def _story_cast_rules_block(video_detail) -> str:
     """模板里没有 {cast} 时追加的统一人物段:名单、关系、谁说话、怎么出镜。"""
     cast = _story_cast_text(video_detail)
     if cast is None:
         return ""
+    if _fresh_cast_empty(video_detail):  # t276: 动态生成人物：原来的人物栏不发给模型
+        head = (
+            "*** CAST (no cast is fixed: the people come from this material)\n"
+            f"    {FRESH_CAST_LIST_LINE}\n"
+            "    ** Write people in ``actor`` as ``H <look>`` or ``gender/age band/ethnicity/name`` "
+            "(full look id, the person's story name).\n"
+        )
+    else:
+        head = (
+            "*** CAST CHOSEN BY THE USER (overrides any other wording about the host or the people below)\n"
+            f"    {build_cast_block(cast, cast_max_present(video_detail))}\n"
+            + "    ** Use exactly these people with exactly these looks in ``actor``: ``H <look>`` or "
+            "``gender/age band/ethnicity/name``. Do not invent another host or change a look. "
+            "Story people that the material needs and the list lacks may be added with a full look id.\n"
+        )
     return (
-        "*** CAST CHOSEN BY THE USER (overrides any other wording about the host or the people below)\n"
-        f"    {build_cast_block(cast)}\n"
-        "    ** Use exactly these people with exactly these looks in ``actor``: ``讲员:<look>`` or "
-        "``人物N:gender/age band/ethnicity/name``. Do not invent another host or change a look. "
-        "Story people that the material needs and the list lacks may be added with a full look id.\n"
-        "    ** RELATIONSHIPS. From gender, age band, ethnicity and name decide who they are to each other before "
+        head
+        + "    ** RELATIONSHIPS. From gender, age band, ethnicity and name decide who they are to each other before "
         "writing (girl + adult man: daughter and father; boy + adult woman: son and mother; two adults of similar "
         "age and opposite gender: usually a couple; senior + child: grandparent and grandchild; a shared family name "
         "strengthens a family tie). Build every scene, line and action on that relationship and keep it the same.\n"
@@ -245,8 +306,9 @@ def _story_cast_rules_block(video_detail) -> str:
         "four people in ``actor``, at most three of them speak. Never write <4>. A voice-over that nobody on "
         "screen speaks is not given to a listed person.\n"
         "    ** After each id in ``actor`` add parentheses for THIS scene: emotion and action, e.g. "
-        "``人物1:woman/mature/chinese/名字(焦虑,低头搓手)``. They are not part of the id and must match ``visual``.\n"
+        "``woman/mature/chinese/名字(焦虑,低头搓手)``. They are not part of the id and must match ``visual``.\n"
         "    ** ``visual`` shows where everyone in ``actor`` is and what they do, consistent with their looks."
+        + (("\n    " + _dynamic_cast_text(video_detail).replace("\n", "\n    ")) if _dynamic_cast_text(video_detail) else "")
     )
 
 
@@ -259,7 +321,7 @@ _PROGRAM_OUTPUT_NAMES = {
 
 
 def program_mode_key(mode_label: str) -> str:
-    """t262: 节目生成的方式 key：step_story / podcast / story_speak / story_act（短故事是自己的一种，不再并进故事对话；
+    """t262: 节目生成的方式 key：podcast / story_speak / story_act（t266: 短故事已并入故事对话，旧的短故事 / Step Story 读作 story_speak；
     旧的主持人节目 / Counselor 读作 story_act）；认不出返回 ""。名字和规则都来自 utility/narration_modes。"""
     key = _narration_modes.normalize(config_channel.canonical_prompt_label(mode_label))
     if key:
@@ -278,13 +340,16 @@ def scene_host_case(video_detail, style: str | None = None) -> str:
     return config_prompt.program_host_case([cast] if cast else [], style=style)
 
 
-def scene_cast_check(video_detail, prompt_label: str) -> tuple:
-    """场景生成前的人物检查（播客 / 故事对话 / 故事表演 / 短故事）：返回 (ok, 说明)。
-    人物栏是空的 → 说明里指向「人物设置」。其它场景生成方式不看人物栏，永远 ok。"""
+def scene_cast_check(video_detail, prompt_label: str, honor_dynamic: bool = True) -> tuple:
+    """场景生成前的人物检查（播客 / 故事对话 / 故事表演；故事对话不管步数是 0 还是 1–6 都一样）：返回 (ok, 说明)。
+    人物栏是空的 → 说明里指向「人物设置」。其它场景生成方式不看人物栏，永远 ok。
+    t272: 这一条勾了「动态生成人物」（honor_dynamic）→ 人物可以边生成边加，不检查人数，永远 ok。"""
     from utility import cast_preset
 
     mode = cast_preset.mode_for_label((prompt_label or "").strip())
     if not mode:
+        return True, ""
+    if honor_dynamic and cast_preset.dynamic_cast_enabled(video_detail):
         return True, ""
     return cast_preset.validate_cast_for_mode(mode, _story_cast_text(video_detail) or "")
 
@@ -292,7 +357,7 @@ def scene_cast_check(video_detail, prompt_label: str) -> tuple:
 def build_program_cast_block(video_detail, mode_label: str = "", output: str = "slides",
                              cast_source: str = "panel", host_case: str | None = None) -> str:
     """NotebookLM 生成节目(幻灯片/信息图/音频概述/视频概述)用:人物名单 + 场景生成方案对应的人物规则。
-    t262: 谁说话、人物怎么演的规则是 utility/narration_modes 的原文（短故事 / 播客 / 故事对话 / 故事表演），
+    t262: 谁说话、人物怎么演的规则是 utility/narration_modes 的原文（播客 / 故事对话 / 故事表演），
     和场景生成、视频生成同一份，一字不差。
 
     ``cast_source``:"scenes" = content.pdf 是场景内容且场景里写了 actor,以场景里的人物为准(预览窗名单只补空);
@@ -382,7 +447,7 @@ def _without_host_cast(video_detail):
     cast = _story_cast_text(vd)
     if cast is None:
         return vd
-    rows = [r for r in project_manager.actor_entries(cast) if r.get("role") != "host"]
+    rows = [r for r in project_manager.cast_entries(cast) if r.get("role") != "host"]  # t279
     out = dict(vd)
     out["story_actors"] = project_manager.format_actor_entries(rows)
     out.pop("narrator", None)
@@ -410,7 +475,8 @@ def _build_notebooklm_prompt_for_row(
     """
     no_host = config_channel.STEP_STORY_NO_HOST_MARK in (template or "")
     if no_host:
-        # t103u: Step Story = Story Speak 分步版,只有人物对话:从人物栏名单里去掉讲员
+        # t103u: 固定步数的「没有讲员」写法（人物栏里本来就没有讲员的故事对话 N 步；FlyLink 固定步数故事）:只有人物对话:从人物栏名单里去掉讲员。
+        # t266: 人物栏里有讲员的故事对话 N 步用的是讲员写法（模板里没有这句标记），讲员留在名单里。
         video_detail = _without_host_cast(video_detail)
     ctx = _notebooklm_prompt_context_from_video_detail(
         mgr, video_detail, instruction=instruction
@@ -679,7 +745,9 @@ def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: 
     line += (
         f" One scene per page, in page order: exactly {n} scenes. "
         "Do not merge two pages, do not split one page, do not add a scene, do not drop one. "
-        "The scene count equals the page count."
+        "The scene count equals the page count. Scene k is page k of this PDF, so the array order is the page order. "
+        "A page with nobody in it still gets its scene (an empty actor is allowed). Every scene's speaking, visual and "
+        "actor follow the narration mode rules of this prompt."
     )
     if config_channel.is_series_label(label):
         line += (
